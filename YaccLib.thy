@@ -1,0 +1,11 @@
+theory
+  YaccLib
+imports
+  Main
+begin 
+SML_file\<open>mlyacc-polyml/mlyacc-lib/base.sig\<close> 
+SML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
+SML_file\<open>mlyacc-polyml/mlyacc-lib/lrtable.sml\<close>
+SML_file\<open>mlyacc-polyml/mlyacc-lib/stream.sml\<close>   
+SML_file\<open>mlyacc-polyml/mlyacc-lib/parser2.sml\<close>
+end
