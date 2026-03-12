@@ -1,0 +1,12 @@
+# make
+bin/
+*.o
+*.poly
+# doc
+doc/mlyacc-polyml.pdf
+# mlyacc
+*.grm.sml
+*.grm.sig
+*.grm.desc
+# mllex
+*.lex.sml
