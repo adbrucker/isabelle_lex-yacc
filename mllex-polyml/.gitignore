@@ -1,0 +1,10 @@
+# binary files
+bin/
+*.o
+# test
+ml.lex.sml
+# doc
+*.aux
+*.log
+*.pdf
+*.toc
