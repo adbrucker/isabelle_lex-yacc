@@ -2,8 +2,11 @@ theory
   Calc 
 imports
   LexYacc
+keywords
+  "calc" :: diag
 begin
 
+text\<open>The calculator example from the ml-lex distribution.\<close>
 ml_lex_yacc
   with_lex\<open>
 structure Tokens = Tokens
@@ -95,6 +98,76 @@ fun lookup "bogus" = 10000
                          end)
 \<close>
 
+SML_export \<open>structure LrParser = struct open LrParser end\<close>
+text\<open>
+  Loading the Join function into ML, which is a slight duplication of code 
+  avoiding exporting a functor (which seems to be fiddly).\<close> 
+ML_file\<open>mlyacc-polyml/mlyacc-lib/base.sig\<close> 
+ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close> 
+
+text\<open>Linking lexer and parser\<close>
+ML\<open>
+structure Calc : sig
+	           val parse_string : string -> int
+                 end   = 
+struct
+
+  structure CalcLrVals =
+    CalcLrValsFun(structure Token = LrParser.Token)
+
+  structure CalcLex =
+    CalcLexFun(structure Tokens = CalcLrVals.Tokens)
+
+  structure CalcParser =
+    Join(structure LrParser = LrParser
+	 structure ParserData = CalcLrVals.ParserData
+	 structure Lex = CalcLex)
+
+   fun invoke lexstream =
+      let fun print_error (s,i:int,_) =
+              error ("Error, line " ^ (Int.toString i) ^ ", " ^ s)
+       in CalcParser.parse(0,lexstream,print_error,())
+      end
+
+ fun parse_fp lexer =  let
+    val dummyEOF = CalcLrVals.Tokens.EOF(0,0)
+    fun loop lexer =
+      let
+        val _ = (CalcLex.UserDeclarations.pos := (0);())
+        val (res,lexer) = invoke lexer
+        val (nextToken,lexer) = CalcParser.Stream.get lexer
+      in if CalcParser.sameToken(nextToken,dummyEOF) then ((),res) else loop lexer end
+  in #2(loop lexer)
+  end
+
+ fun parse_string input = let
+       val parsed = Unsynchronized.ref false
+       fun input_string _  = if !parsed then "" else (parsed := true ;input)
+             val lexer = CalcParser.makeLexer input_string
+     in
+       the (parse_fp lexer)
+     end
+
+end
+\<close>
+
+text\<open>A first test on the ML-level\<close>
+
+ML\<open>Calc.parse_string "3 + 4"\<close>
+
+
+text\<open>Defining a simple Isar-toplevel command\<close>
+ML\<open>
+fun calc expression thy = 
+    let val _ = writeln(Int.toString (Calc.parse_string expression)) in  thy end
+
+val _ = Outer_Syntax.command @{command_keyword "calc"}
+        "A simple inline calculator" 
+        (Parse.cartouche  >> (fn expression => Toplevel.theory (calc expression)))
+\<close>
+
+calc\<open>1+3\<close>
 
 
 end
+
