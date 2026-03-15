@@ -49,7 +49,7 @@ section\<open>Glue Layer\<close>
 ML\<open>
 structure MlLexYacc = struct
 
-  fun generate lex_input yacc_input thy =
+  fun generate name lex_input yacc_input thy =
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
         val input_path = (Path.append input_path (Path.make ["input"]))
@@ -68,24 +68,31 @@ structure MlLexYacc = struct
           |> map (fn Antiquote.Text tok => tok 
                    | _ => error "Unexpected antiquote in generated code")
         val flags: ML_Compiler.flags =
-           {environment = ML_Env.SML_export, redirect = false, verbose = true, catch_all = true,
+           {environment = ML_Env.SML_export, redirect = false, verbose = false, catch_all = true,
             debug = NONE, writeln = writeln, warning = warning}
         val thy' = Context.theory_map (
           ML_Context.exec (fn () => 
             ML_Compiler.eval flags Position.none toks
           )
         ) thy
+
+        (* add automaton description to virtual file system *)
+        val yacc_desc = File.read (Path.ext "grm.desc" input_path)
+        val path_desc = (Path.make ["lex_yacc", name^".grm.desc"])
+        val _ = Export.export thy (Path.binding0 path_desc) 
+                                  (Bytes.contents_blob (Bytes.string yacc_desc))
+        val _ = writeln(Export.message thy path_desc)
       in
         thy'
       end);
 end
-\<close>  
+\<close>
 
 ML\<open>
 val _ = Outer_Syntax.command @{command_keyword "ml_lex_yacc"}
         "Generate and load SML parser based on lex/yacc specifications." 
-        ((\<^keyword>\<open>with_lex\<close> -- Parse.cartouche -- \<^keyword>\<open>and_yacc\<close> -- Parse.cartouche) 
-      >> (fn (((_,lex_spec), _), yacc_spec) =>
-          Toplevel.theory (fn thy => MlLexYacc.generate lex_spec yacc_spec thy)))
-\<close>  
+        ((Parse.name --  \<^keyword>\<open>with_lex\<close> -- Parse.cartouche -- \<^keyword>\<open>and_yacc\<close> -- Parse.cartouche) 
+      >> (fn ((((name,_),lex_spec), _), yacc_spec) =>
+          Toplevel.theory (fn thy => MlLexYacc.generate name lex_spec yacc_spec thy)))
+\<close>
 end

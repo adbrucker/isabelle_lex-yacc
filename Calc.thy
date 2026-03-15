@@ -7,7 +7,7 @@ keywords
 begin
 
 text\<open>The calculator example from the ml-lex distribution.\<close>
-ml_lex_yacc
+ml_lex_yacc "calc"
   with_lex\<open>
 structure Tokens = Tokens
 
