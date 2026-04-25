@@ -43,6 +43,13 @@ SML_file\<open>mlyacc-polyml/src/link.sml\<close>
 SML_export \<open>structure MlYaccExe = struct val run = ParseGen.parseGen end\<close> 
 
 
+text\<open>Runtime Setup\<close>
+SML_import \<open>structure Position = struct open Position end\<close>
+SML_import \<open>structure Markup = struct open Markup end\<close>
+ML_file\<open>mlyacc-polyml/mlyacc-lib/base.sig\<close>
+ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
+
+
 section\<open>Glue Layer\<close>
 
 
