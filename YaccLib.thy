@@ -27,10 +27,18 @@ structure Isabelle_lex_yacc = struct
       val _ = ctxt := Context.the_local_context ()
     in () end
 
+  (* Helper: Explodes the source but strips the \<open> and \<close> markers so positions align with source_content *)
+  fun get_inner_syms source =
+    let
+      val syms = Input.source_explode source
+    in
+      if length syms >= 2 then List.take (tl syms, length syms - 2) else syms
+    end
+
   fun get_pos yypos =
     let
-      val syms = Input.source_explode (!src)
-      val pos_vec = Vector.fromList syms
+      val inner_syms = get_inner_syms (!src)
+      val pos_vec = Vector.fromList inner_syms
       val idx = yypos - 1
     in
       if Vector.length pos_vec = 0 then Input.pos_of (!src)
@@ -54,9 +62,9 @@ structure Isabelle_lex_yacc = struct
 
   fun get_line_col p =
     let
-      val syms = Input.source_explode (!src)
-      val pos_vec = Vector.fromList syms
-      val input_text = Input.text_of (!src)
+      val inner_syms = get_inner_syms (!src)
+      val pos_vec = Vector.fromList inner_syms
+      val (input_text, _) = Input.source_content (!src)
       val target_offset = Position.offset_of p
 
       fun is_target pos =
@@ -104,7 +112,7 @@ structure Isabelle_lex_yacc = struct
 
   fun parse_source parse makeLexer get sameToken EOF source =
     let
-      val input_text = Input.text_of source
+      val (input_text, _) = Input.source_content source
       
       fun invoke lexstream =
         parse (0, lexstream, print_error, ())
@@ -138,9 +146,7 @@ structure Isabelle_lex_yacc = struct
     "fun eof () = Tokens.EOF(Position.none, Position.none)\n"
 
   fun linker name = 
-    "structure "^name^": sig\n"^
-    "  val parse_source : Proof.context -> Input.source -> int\n"^
-    "end =\n"^
+    "structure "^name^" =\n"^
     "struct\n"^
     "  structure "^name^"LrVals =\n"^
     "    "^name^"LrValsFun(structure Token = LrParser.Token)\n"^

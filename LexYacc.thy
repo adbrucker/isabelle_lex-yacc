@@ -40,7 +40,6 @@ SML_file\<open>mlyacc-polyml/src/bootstrap/yacc.lex.sml\<close>
 
 text\<open>Final linking and export\<close>
 SML_file\<open>mlyacc-polyml/src/link.sml\<close>
-
 SML_export \<open>structure MlYaccExe = struct val run = ParseGen.parseGen end\<close> 
 
 
@@ -51,16 +50,14 @@ ML_file\<open>mlyacc-polyml/mlyacc-lib/base.sig\<close>
 ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
 
 
-ML\<open>
 
-open Input
-\<close>
+
 
 section\<open>Glue Layer\<close>
 ML\<open>
 
 structure MlLexYacc = struct
-  fun generate_new verbose expert name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
+  fun generate_new verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
         val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("", Position.none) 
@@ -93,7 +90,7 @@ structure MlLexYacc = struct
         val _ = MlLexExe.run (File.platform_path lex_file)
         val ctxt = Proof_Context.init_global thy
 
-        val _ = Isabelle_lex_yacc.set yacc_defs ctxt  
+        (* val _ = Isabelle_lex_yacc.set yacc_defs ctxt *) 
         val _ = MlYaccExe.run (File.platform_path yacc_file)
         val _ = Isabelle_lex_yacc.reset()  
 
@@ -116,7 +113,7 @@ structure MlLexYacc = struct
         ) thy
 
         val link_sml = Isabelle_lex_yacc.linker name
-        val thy'' = if expert 
+        val thy'' = if expert orelse no_linking 
                     then thy'
                     else let 
 
@@ -139,8 +136,11 @@ structure MlLexYacc = struct
                 then let
                   val dir_name = "lex_yacc"
                   fun path_of ext = (Path.make [dir_name, name^"."^ext])
-                  val yacc_desc = File.read (Path.ext "grm.desc" input_path)
-                  val _ = Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string yacc_desc))
+                  val grm_desc_path = (Path.ext "grm.desc" input_path)
+                  val _ = if File.exists grm_desc_path 
+                          then let val txt = File.read (Path.ext "grm.desc" input_path) in 
+                                Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
+                          end else {} 
                   val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec))
                   val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec))
                   val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
@@ -187,9 +187,10 @@ in
             let
               val is_verbose = member (op =) opts "verbose"
               val is_expert = member (op =) opts "expert" 
+              val is_no_linking = member (op =) opts "no_linking" 
             in
               Toplevel.theory (fn thy => 
-                MlLexYacc.generate_new is_verbose is_expert name 
+                MlLexYacc.generate_new is_verbose is_expert is_no_linking name 
                   lex_user lex_defs lex_rules 
                   yacc_user yacc_defs yacc_rules thy)
             end)
