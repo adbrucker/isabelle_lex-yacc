@@ -1,5 +1,5 @@
 theory 
-  Calc 
+  CalcExpert
 imports
   LexYacc
 keywords
@@ -7,15 +7,13 @@ keywords
 begin
 
 
-
-ml_lex_yacc[verbose, expert] "calc"
-  with_lex\<open>
+ml_lex_yacc [verbose, expert] "Calc" where
+lex_user_declarations\<open>
 structure Tokens = Tokens
 type pos = Position.T
 type svalue = Tokens.svalue
 type ('a,'b) token = ('a,'b) Tokens.token
 type lexresult= (svalue,pos) token
-
 
 val pos_lookup = ref (fn (yypos: int) => Position.none)
 
@@ -35,13 +33,14 @@ fun tok_val (yypos, yytext, markup, name, cons, value) =
 
 fun eof () = Tokens.EOF(Position.none, Position.none)
 fun error' (e, p: Position.T, _) = () 
-
-%%
+\<close>
+lex_definitions\<open>
 %header (functor CalcLexFun(structure Tokens: Calc_TOKENS));
 alpha=[A-Za-z];
 digit=[0-9];
 ws = [\ \t\r];
-%%
+\<close>
+lex_rules\<open>
 \n       => (lex());
 {ws}+    => (lex());
 
@@ -61,12 +60,11 @@ ws = [\ \t\r];
 "/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", Tokens.DIV));
 .        => (lex());
 \<close>
-and_yacc\<open>
+and yacc_user_declarations\<open>
 fun lookup "bogus" = 10000
   | lookup s = 0
-
-%%
-
+\<close>
+yacc_definitions\<open>
 %eop EOF SEMI
 %pos Position.T
 
@@ -87,8 +85,8 @@ fun lookup "bogus" = 10000
 %noshift EOF
 %value ID ("bogus")
 %verbose
-%%
-
+\<close>
+yacc_rules\<open>
   START : PRINT EXP (print (Int.toString EXP);
                      print "\n";
                      SOME EXP)

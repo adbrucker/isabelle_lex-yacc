@@ -6,15 +6,13 @@ keywords
   "calc" :: diag
 begin
 
-
-
-ml_lex_yacc[verbose] "calc"
-  with_lex\<open>
-%header (functor CalcLexFun(structure Tokens: Calc_TOKENS));
+ml_lex_yacc [verbose] "Calc" where
+lex_definitions\<open>
 alpha=[A-Za-z];
 digit=[0-9];
 ws = [\ \t\r];
-%%
+\<close>
+lex_rules\<open>
 \n       => (lex());
 {ws}+    => (lex());
 
@@ -34,12 +32,11 @@ ws = [\ \t\r];
 "/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", Tokens.DIV));
 .        => (lex());
 \<close>
-and_yacc\<open>
+and yacc_user_declarations\<open>
 fun lookup "bogus" = 10000
   | lookup s = 0
-
-%%
-
+\<close>
+yacc_definitions\<open>
 %eop EOF SEMI
 %pos Position.T
 
@@ -51,7 +48,6 @@ fun lookup "bogus" = 10000
       SEMI | EOF | CARAT | DIV | SUB
 %nonterm EXP of int | START of int option
 
-%name Calc
 
 %subst PRINT for ID
 %prefer PLUS TIMES DIV SUB
@@ -60,8 +56,8 @@ fun lookup "bogus" = 10000
 %noshift EOF
 %value ID ("bogus")
 %verbose
-%%
-
+\<close>
+yacc_rules\<open>
   START : PRINT EXP (print (Int.toString EXP);
                      print "\n";
                      SOME EXP)
@@ -77,42 +73,6 @@ fun lookup "bogus" = 10000
                                 | e (m,l) = m*e(m,l-1)
                          in e (EXP1,EXP2)
                          end)
-\<close>
- 
-text\<open>Linking lexer and parser and establishing PIDE position lookups\<close>
-ML\<open>
-structure Calc: sig
-  val parse_source : Proof.context -> Input.source -> int
-end =
-struct
-
-  structure CalcLrVals =
-    CalcLrValsFun(structure Token = LrParser.Token)
-
-  structure CalcLex =
-    CalcLexFun(structure Tokens = CalcLrVals.Tokens)
-
-  structure CalcParser =
-    Join(
-      structure LrParser = LrParser
-      structure ParserData = CalcLrVals.ParserData
-      structure Lex = CalcLex
-    )
-
-  fun parse_source ctxt source =
-    let 
-      val _ = CalcLex.UserDeclarations.set source ctxt 
-    in
-      Isabelle_lex_yacc.parse_source
-        CalcParser.parse
-        CalcParser.makeLexer
-        CalcParser.Stream.get
-        CalcParser.sameToken
-        CalcLrVals.Tokens.EOF
-        source      
-    end
-
-end
 \<close>
 
 text\<open>Defining a simple Isar-toplevel command\<close>

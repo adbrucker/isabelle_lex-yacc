@@ -2,10 +2,9 @@ theory LexYacc
   imports 
   YaccLib
 keywords "ml_lex_yacc" :: thy_decl
-   and "with_lex"::quasi_command
-   and "and_yacc"::quasi_command
-
-begin
+    and  "lex_user_declarations" "lex_definitions" "lex_rules" 
+    "yacc_user_declarations" "yacc_definitions" "yacc_rules" :: quasi_command
+begin 
 
 section\<open>ML Lex\<close>
 SML_file \<open>mllex-polyml/LexGen.sml\<close>
@@ -52,30 +51,49 @@ ML_file\<open>mlyacc-polyml/mlyacc-lib/base.sig\<close>
 ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
 
 
+ML\<open>
+
+open Input
+\<close>
+
 section\<open>Glue Layer\<close>
 ML\<open>
 
 structure MlLexYacc = struct
-
-  fun generate verbose expert name lex_src yacc_src thy =
+  fun generate_new verbose expert name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
-        val (lex_input, lex_pos) = Input.source_content lex_src
-        val (yacc_input, _) = Input.source_content  yacc_src
+        val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("", Position.none) 
+        val (lex_defs_str, lex_defs_pos) = Input.source_content lex_defs
+        val (lex_rules_str, lex_rules_pos) = Input.source_content lex_rules
+
+        val (yacc_decl_str, yacc_decl_pos) = case yacc_decl of SOME d => Input.source_content d | NONE => ("", Position.none)
+        val (yacc_defs_str, yacc_defs_pos) = Input.source_content yacc_defs
+        val (yacc_rules_str, yacc_rules_pos) = Input.source_content yacc_rules
+
+        val lex_spec = if expert 
+                       then lex_decl_str^"\n%%\n"^lex_defs_str^"\n%%\n"^lex_rules_str
+                       else Isabelle_lex_yacc.header()^"\n"^
+                            lex_decl_str^"\n%%\n"^
+                            "%header (functor "^name^"LexFun(structure Tokens: "^name^"_TOKENS));\n"^
+                            lex_defs_str^"\n%%\n"^lex_rules_str
+        val yacc_spec = if expert 
+                       then yacc_decl_str^"\n%%\n"^yacc_defs_str^"\n%%\n"^yacc_rules_str
+                       else yacc_decl_str^"\n%%\n"^
+                            "%name "^name^"\n"^
+                            yacc_defs_str^"\n%%\n"^
+                            yacc_rules_str  
+
         val input_path = (Path.append input_path (Path.make ["input"]))
         val lex_file = Path.ext "lex" input_path
         val yacc_file = Path.ext "grm" input_path
-        val trim_leading = String.implode o drop_prefix Char.isSpace o String.explode
-        val lex_input = if expert then lex_input
-                        else if String.isPrefix "%%" (trim_leading lex_input)
-                             then Isabelle_lex_yacc.header()^"\n"^lex_input
-                             else Isabelle_lex_yacc.header()^"\n%%\n"^lex_input
-        val _ = File.write lex_file lex_input
-        val _ = File.write yacc_file yacc_input
+ 
+        val _ = File.write lex_file lex_spec
+        val _ = File.write yacc_file yacc_spec
         val _ = MlLexExe.run (File.platform_path lex_file)
         val ctxt = Proof_Context.init_global thy
 
-        val _ = Isabelle_lex_yacc.set yacc_src ctxt  
+        val _ = Isabelle_lex_yacc.set yacc_defs ctxt  
         val _ = MlYaccExe.run (File.platform_path yacc_file)
         val _ = Isabelle_lex_yacc.reset()  
 
@@ -83,6 +101,7 @@ structure MlLexYacc = struct
         val yacc_sig = File.read (Path.ext "grm.sig" input_path)
         val yacc_sml = File.read (Path.ext "grm.sml" input_path)
         val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml
+
         val toks =
           ML_Lex.read generated_code
           |> map (fn Antiquote.Text tok => tok 
@@ -96,19 +115,48 @@ structure MlLexYacc = struct
           )
         ) thy
 
+        val link_sml = Isabelle_lex_yacc.linker name
+        val thy'' = if expert 
+                    then thy'
+                    else let 
+
+                    val toks =
+                      ML_Lex.read link_sml
+                      |> map (fn Antiquote.Text tok => tok 
+                               | _ => error "Unexpected antiquote in generated code")
+                    val flags: ML_Compiler.flags =
+                       {environment = ML_Env.Isabelle, redirect = false, verbose = false, catch_all = true,
+                        debug = NONE, writeln = writeln, warning = warning}
+                    in
+                      Context.theory_map (
+                        ML_Context.exec (fn () => 
+                          ML_Compiler.eval flags Position.none toks
+                        )
+                      ) thy'
+                    end
+
         val _ = if verbose 
                 then let
+                  val dir_name = "lex_yacc"
+                  fun path_of ext = (Path.make [dir_name, name^"."^ext])
                   val yacc_desc = File.read (Path.ext "grm.desc" input_path)
-                  val path_desc = (Path.make ["lex_yacc", name^".grm.desc"])
-                  val _ = Export.export thy (Path.binding0 path_desc) 
-                                            (Bytes.contents_blob (Bytes.string yacc_desc))
+                  val _ = Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string yacc_desc))
+                  val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec))
+                  val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec))
+                  val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
+                  val _ = Export.export thy (Path.binding0 (path_of "grm.sml")) (Bytes.contents_blob (Bytes.string yacc_sml))
+                  val _ = Export.export thy (Path.binding0 (path_of "grm.sig")) (Bytes.contents_blob (Bytes.string yacc_sig))
+                  val _ = if expert 
+                          then () 
+                          else Export.export thy (Path.binding0 (path_of "link.sml")) (Bytes.contents_blob (Bytes.string link_sml))
                 in
-                  writeln(Export.message thy path_desc)
+                  writeln(Export.message thy (Path.make [dir_name]))
                 end
         else ()
       in
-        thy'
+        thy''
       end);
+
 end
 \<close>
 
@@ -116,19 +164,38 @@ ML \<open>
 local
   val parse_options =
     Scan.optional (\<^keyword>\<open>[\<close> |-- Parse.list Parse.name --| \<^keyword>\<open>]\<close>) []
+
+  (* Parser for the lex specification blocks *)
+  val parse_lex =
+    Scan.optional (\<^keyword>\<open>lex_user_declarations\<close> |-- Parse.input Parse.cartouche >> SOME) NONE --
+    (\<^keyword>\<open>lex_definitions\<close> |-- Parse.input Parse.cartouche) --
+    (\<^keyword>\<open>lex_rules\<close> |-- Parse.input Parse.cartouche)
+
+  (* Parser for the yacc specification blocks *)
+  val parse_yacc =
+    Scan.optional (\<^keyword>\<open>yacc_user_declarations\<close> |-- Parse.input Parse.cartouche >> SOME) NONE --
+    (\<^keyword>\<open>yacc_definitions\<close> |-- Parse.input Parse.cartouche) --
+    (\<^keyword>\<open>yacc_rules\<close> |-- Parse.input Parse.cartouche)
 in
   val _ = Outer_Syntax.command @{command_keyword "ml_lex_yacc"}
           "Generate and load SML parser based on lex/yacc specifications." 
-        ((parse_options -- Parse.name -- \<^keyword>\<open>with_lex\<close> -- Parse.input Parse.cartouche 
-                                      -- \<^keyword>\<open>and_yacc\<close> -- Parse.input Parse.cartouche) 
-        >> (fn (((((opts, name), _), lex_spec), _), yacc_spec) =>
+        (
+          (parse_options -- Parse.name --| \<^keyword>\<open>where\<close> -- 
+           parse_lex --| \<^keyword>\<open>and\<close> -- 
+           parse_yacc)
+        >> (fn (((opts, name), ((lex_user, lex_defs), lex_rules)), ((yacc_user, yacc_defs), yacc_rules)) =>
             let
               val is_verbose = member (op =) opts "verbose"
-              val is_expert = member (op =) opts "expert" orelse member (op =) opts "expert_mode"
+              val is_expert = member (op =) opts "expert" 
             in
               Toplevel.theory (fn thy => 
-                MlLexYacc.generate is_verbose is_expert name lex_spec yacc_spec thy)
-            end))
+                MlLexYacc.generate_new is_verbose is_expert name 
+                  lex_user lex_defs lex_rules 
+                  yacc_user yacc_defs yacc_rules thy)
+            end)
+        )
 end
 \<close>
+
+
 end

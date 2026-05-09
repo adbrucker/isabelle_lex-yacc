@@ -137,6 +137,35 @@ structure Isabelle_lex_yacc = struct
     "type lexresult= (svalue,pos) token\n" ^
     "fun eof () = Tokens.EOF(Position.none, Position.none)\n"
 
+  fun linker name = 
+    "structure "^name^": sig\n"^
+    "  val parse_source : Proof.context -> Input.source -> int\n"^
+    "end =\n"^
+    "struct\n"^
+    "  structure "^name^"LrVals =\n"^
+    "    "^name^"LrValsFun(structure Token = LrParser.Token)\n"^
+    "  structure "^name^"Lex =\n"^
+    "    "^name^"LexFun(structure Tokens = "^name^"LrVals.Tokens)\n"^
+    "  structure "^name^"Parser =\n"^
+    "    Join(\n"^
+    "      structure LrParser = LrParser\n"^
+    "      structure ParserData = "^name^"LrVals.ParserData\n"^
+    "      structure Lex = "^name^"Lex\n"^
+    "    )\n"^
+    "  fun parse_source ctxt source =\n"^
+    "    let\n"^
+    "      val _ = "^name^"Lex.UserDeclarations.set source ctxt\n"^
+    "    in\n"^
+    "      Isabelle_lex_yacc.parse_source\n"^
+    "        "^name^"Parser.parse\n"^
+    "        "^name^"Parser.makeLexer\n"^
+    "        "^name^"Parser.Stream.get\n"^
+    "        "^name^"Parser.sameToken\n"^
+    "        "^name^"LrVals.Tokens.EOF\n"^
+    "        source\n"^
+    "    end\n"^
+    "end\n"
+
 end
 \<close>
 
