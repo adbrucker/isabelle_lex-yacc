@@ -53,16 +53,7 @@ ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
 
 
 section\<open>Glue Layer\<close>
-
-
 ML\<open>
-datatype source = Source of {delimited: bool, text: Symbol_Pos.text, range: Position.range}
-\<close>  
-
-ML\<open>
-fun ackermann(0, n) = n + 1
-  | ackermann(m, 0) = ackermann(m - 1, 1)
-  | ackermann(m, n) = ackermann(m - 1, ackermann(m, n - 1));
 
 structure MlLexYacc = struct
 
@@ -70,14 +61,24 @@ structure MlLexYacc = struct
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
         val (lex_input, lex_pos) = Input.source_content lex_src
-        val (yacc_input, yac_pos) = Input.source_content  yacc_src
+        val (yacc_input, _) = Input.source_content  yacc_src
         val input_path = (Path.append input_path (Path.make ["input"]))
         val lex_file = Path.ext "lex" input_path
         val yacc_file = Path.ext "grm" input_path
+        val trim_leading = String.implode o drop_prefix Char.isSpace o String.explode
+        val lex_input = if expert then lex_input
+                        else if String.isPrefix "%%" (trim_leading lex_input)
+                             then Isabelle_lex_yacc.header()^"\n"^lex_input
+                             else Isabelle_lex_yacc.header()^"\n%%\n"^lex_input
         val _ = File.write lex_file lex_input
         val _ = File.write yacc_file yacc_input
-        val _ = MlLexExe.run lex_pos (File.platform_path lex_file)
+        val _ = MlLexExe.run (File.platform_path lex_file)
+        val ctxt = Proof_Context.init_global thy
+
+        val _ = Isabelle_lex_yacc.set yacc_src ctxt  
         val _ = MlYaccExe.run (File.platform_path yacc_file)
+        val _ = Isabelle_lex_yacc.reset()  
+
         val lex_sml = File.read (Path.ext "lex.sml" input_path)
         val yacc_sig = File.read (Path.ext "grm.sig" input_path)
         val yacc_sml = File.read (Path.ext "grm.sml" input_path)

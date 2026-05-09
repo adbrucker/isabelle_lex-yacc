@@ -5,8 +5,7 @@
 
 signature HEADER =
   sig
-    type pos = {line : int, col : int}
-    val pos : {line : int ref, start : int ref}
+    type pos = Position.T
     val text : string list ref
 
     type inputSource

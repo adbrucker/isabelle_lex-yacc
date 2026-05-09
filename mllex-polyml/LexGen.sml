@@ -224,7 +224,7 @@ end
 
 signature LEXGEN =
   sig
-     val lexGen: Position.T -> string -> unit
+     val lexGen: string -> unit
   end
 
 structure LexGen: LEXGEN =
@@ -1285,7 +1285,7 @@ val skel_mid2 =
 \                          end\n\
 \"
 
-fun lexGen pos (infile) =
+fun lexGen (infile) =
     let val outfile = infile ^ ".sml"
         val () = (InFile := OS.Path.file infile; OutFile := OS.Path.file outfile)
       fun PrintLexer (ends) =

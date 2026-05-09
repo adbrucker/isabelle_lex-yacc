@@ -21,8 +21,7 @@ functor ParseGenParserFun(structure Header : HEADER
                               Header.error source p s
               val stream =  Parser.makeLexer (fn i => (TextIO.inputN(in_str,i)))
                             source
-              val (result,_) = (#line Header.pos := 1; #start Header.pos := 0;
-                                Header.text := nil;
+              val (result,_) = (Header.text := nil;
                                 Parser.parse(15,stream,error,source))
            in (TextIO.closeIn in_str; (result,source))
            end

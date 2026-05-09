@@ -8,7 +8,7 @@
 
 structure Tokens = Tokens
 type svalue = Tokens.svalue
-type pos = Header.pos
+type pos = Position.T
 type ('a,'b) token = ('a,'b) Tokens.token
 type lexresult = (svalue,pos) token
 
@@ -21,10 +21,10 @@ val text = Hdr.text
 
 val pcount = ref 0
 val commentLevel = ref 0
-val actionstart = ref {line = 1, col = 0}
+val actionstart = ref Position.none
 
-fun linePos () = {line = !(#line Hdr.pos), col = 0}
-fun pos pos = {line = !(#line Hdr.pos), col = pos - !(#start Hdr.pos)}
+fun linePos () = Position.none
+fun pos yypos = Isabelle_lex_yacc.get_pos yypos
 
 val eof = fn i => (if (!pcount)>0 then
                         error i (!actionstart)
@@ -56,7 +56,7 @@ end
 fun inc (ri as ref i) = (ri := i+1)
 fun dec (ri as ref i) = (ri := i-1)
 
-fun incLineNum pos = (inc (#line Hdr.pos) ; #start Hdr.pos := pos)
+fun incLineNum pos = ()
 
 %%
 %header (
@@ -74,73 +74,131 @@ id=[A-Za-z]{idchars}*;
 tyvar="'"{idchars}*;
 qualid ={id}".";
 %%
-<INITIAL>"(*"   => (Add yytext; YYBEGIN COMMENT; commentLevel := 1;
+<INITIAL>"(*"   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    Add yytext; YYBEGIN COMMENT; commentLevel := 1;
                     continue(); YYBEGIN INITIAL; continue());
-<A>"(*"         => (YYBEGIN EMPTYCOMMENT; commentLevel := 1; continue());
-<CODE>"(*"      => (Add yytext; YYBEGIN COMMENT; commentLevel := 1;
+<A>"(*"         => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    YYBEGIN EMPTYCOMMENT; commentLevel := 1; continue());
+<CODE>"(*"      => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    Add yytext; YYBEGIN COMMENT; commentLevel := 1;
                     continue(); YYBEGIN CODE; continue());
-<INITIAL>[^(%\013\n]+ => (Add yytext; continue());
-<INITIAL>"%%"    => (YYBEGIN A; HEADER (concat (rev (!text)),pos yypos,pos yypos));
+<INITIAL>[^(%\013\n]+ => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, ("ML_source", []), "ML_source");
+                    Add yytext; continue());
+<INITIAL>"%%"    => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.keyword2, "delimiter");
+                    YYBEGIN A; HEADER (concat (rev (!text)),pos yypos,pos yypos));
 <INITIAL,CODE,COMMENT,F,EMPTYCOMMENT>{eol}  => (Add yytext; incLineNum yypos; continue());
-<INITIAL>.       => (Add yytext; continue());
+<INITIAL>.       => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
+                    Add yytext; continue());
 
 <A>{eol}        => (incLineNum yypos; continue ());
 <A>{ws}+        => (continue());
-<A>of           => (OF(pos yypos,pos yypos));
-<A>for          => (FOR(pos yypos,pos yypos));
-<A>"{"          => (LBRACE(pos yypos,pos yypos));
-<A>"}"          => (RBRACE(pos yypos,pos yypos));
-<A>","          => (COMMA(pos yypos,pos yypos));
-<A>"*"          => (ASTERISK(pos yypos,pos yypos));
-<A>"->"         => (ARROW(pos yypos,pos yypos));
-<A>"%left"      => (PREC(Hdr.LEFT,pos yypos,pos yypos));
-<A>"%right"     => (PREC(Hdr.RIGHT,pos yypos,pos yypos));
-<A>"%nonassoc"  => (PREC(Hdr.NONASSOC,pos yypos,pos yypos));
-<A>"%"[a-z_]+   => (lookup(yytext,pos yypos,pos yypos));
-<A>{tyvar}      => (TYVAR(yytext,pos yypos,pos yypos));
-<A>{qualid}     => (IDDOT(yytext,pos yypos,pos yypos));
-<A>[0-9]+       => (INT (yytext,pos yypos,pos yypos));
-<A>"%%"         => (DELIMITER(pos yypos,pos yypos));
-<A>":"          => (COLON(pos yypos,pos yypos));
-<A>"|"          => (BAR(pos yypos,pos yypos));
-<A>{id}         => (ID ((yytext,pos yypos),pos yypos,pos yypos));
+<A>of           => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword1, "keyword", OF));
+<A>for          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword1, "keyword", FOR));
+<A>"{"          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", LBRACE));
+<A>"}"          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", RBRACE));
+<A>","          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", COMMA));
+<A>"*"          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", ASTERISK));
+<A>"->"         => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", ARROW));
+<A>"%left"      => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.LEFT));
+<A>"%right"     => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.RIGHT));
+<A>"%nonassoc"  => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.NONASSOC));
+<A>"%"[a-z_]+   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.keyword2, "directive");
+                    lookup(yytext,pos yypos,pos yypos));
+<A>{tyvar}      => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_type" yytext, "type", TYVAR, yytext));
+<A>{qualid}     => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_id" yytext, "id", IDDOT, yytext));
+<A>[0-9]+       => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.numeral, "numeral", INT, yytext));
+<A>"%%"         => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", DELIMITER));
+<A>":"          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", COLON));
+<A>"|"          => (Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", BAR));
+<A>{id}         => (Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_id" yytext, "id", ID, (yytext, pos yypos)));
 <A>"("          => (pcount := 1; actionstart := pos yypos;
                     text := nil; YYBEGIN CODE; continue() before YYBEGIN A);
 <A>.            => (UNKNOWN(yytext,pos yypos,pos yypos));
-<CODE>"("       => (inc pcount; Add yytext; continue());
-<CODE>")"       => (dec pcount;
+<CODE>"("       => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
+                    inc pcount; Add yytext; continue());
+<CODE>")"       => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
+                    dec pcount;
                     if !pcount = 0 then
                          PROG (concat (rev (!text)),!actionstart,pos yypos)
                     else (Add yytext; continue()));
-<CODE>"\""      => (Add yytext; YYBEGIN STRING; continue());
-<CODE>[^()"\n\013]+ => (Add yytext; continue());
+<CODE>"\""      => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
+                    Add yytext; YYBEGIN STRING; continue());
+<CODE>[^()"\n\013]+ => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, ("ML_source", []), "ML_source");
+                    Add yytext; continue());
 
-<COMMENT>[(*)]  => (Add yytext; continue());
-<COMMENT>"*)"   => (Add yytext; dec commentLevel;
+<COMMENT>[(*)]  => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
+                    Add yytext; continue());
+<COMMENT>"*)"   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    Add yytext; dec commentLevel;
                     if !commentLevel=0
                          then BOGUS_VALUE(pos yypos,pos yypos)
                          else continue()
                    );
-<COMMENT>"(*"   => (Add yytext; inc commentLevel; continue());
-<COMMENT>[^*()\n\013]+ => (Add yytext; continue());
+<COMMENT>"(*"   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    Add yytext; inc commentLevel; continue());
+<COMMENT>[^*()\n\013]+ => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
+                    Add yytext; continue());
 
-<EMPTYCOMMENT>[(*)]  => (continue());
-<EMPTYCOMMENT>"*)"   => (dec commentLevel;
+<EMPTYCOMMENT>[(*)]  => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
+                    continue());
+<EMPTYCOMMENT>"*)"   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    dec commentLevel;
                           if !commentLevel=0 then YYBEGIN A else ();
                           continue ());
-<EMPTYCOMMENT>"(*"   => (inc commentLevel; continue());
-<EMPTYCOMMENT>[^*()\n\013]+ => (continue());
+<EMPTYCOMMENT>"(*"   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
+                    inc commentLevel; continue());
+<EMPTYCOMMENT>[^*()\n\013]+ => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
+                    continue());
 
-<STRING>"\""    => (Add yytext; YYBEGIN CODE; continue());
-<STRING>\\      => (Add yytext; continue());
-<STRING>{eol}   => (Add yytext; error inputSource (pos yypos) "unclosed string";
+<STRING>"\""    => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
+                    Add yytext; YYBEGIN CODE; continue());
+<STRING>\\      => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
+                    Add yytext; continue());
+<STRING>{eol}   => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
+                    Add yytext; error inputSource (pos yypos) "unclosed string";
                     incLineNum yypos; YYBEGIN CODE; continue());
-<STRING>[^"\\\n\013]+ => (Add yytext; continue());
-<STRING>\\\"    => (Add yytext; continue());
-<STRING>\\{eol} => (Add yytext; incLineNum yypos; YYBEGIN F; continue());
-<STRING>\\[\ \t] => (Add yytext; YYBEGIN F; continue());
+<STRING>[^"\\\n\013]+ => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
+                    Add yytext; continue());
+<STRING>\\\"    => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 2, Markup.string, "string");
+                    Add yytext; continue());
+<STRING>\\{eol} => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
+                    Add yytext; incLineNum yypos; YYBEGIN F; continue());
+<STRING>\\[\ \t] => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
+                    Add yytext; YYBEGIN F; continue());
 
-<F>{ws}         => (Add yytext; continue());
-<F>\\           => (Add yytext; YYBEGIN STRING; continue());
-<F>.            => (Add yytext; error inputSource (pos yypos) "unclosed string";
+<F>{ws}         => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
+                    Add yytext; continue());
+<F>\\           => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
+                    Add yytext; YYBEGIN STRING; continue());
+<F>.            => (
+                    (!Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
+                    Add yytext; error inputSource (pos yypos) "unclosed string";
                     YYBEGIN CODE; continue());

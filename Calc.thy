@@ -8,35 +8,8 @@ begin
 
 
 
-ml_lex_yacc[verbose, expert] "calc"
+ml_lex_yacc[verbose] "calc"
   with_lex\<open>
-structure Tokens = Tokens
-type pos = Position.T
-type svalue = Tokens.svalue
-type ('a,'b) token = ('a,'b) Tokens.token
-type lexresult= (svalue,pos) token
-
-
-val pos_lookup = ref (fn (yypos: int) => Position.none)
-
-val report_token = ref (fn (idx: int, len: int, m: Markup.T, name: string) => ())
-
-fun get_pos yypos = (!pos_lookup) yypos
-
-fun tok (yypos, yytext, markup, name, cons) = 
-    let val p = get_pos yypos
-        val _ = (!report_token) (yypos, String.size yytext, markup, name)
-    in cons (p, p) end
-
-fun tok_val (yypos, yytext, markup, name, cons, value) =
-    let val p = get_pos yypos
-        val _ = (!report_token) (yypos, String.size yytext, markup, name)
-    in cons (value, p, p) end
-
-fun eof () = Tokens.EOF(Position.none, Position.none)
-fun error' (e, p: Position.T, _) = () 
-
-%%
 %header (functor CalcLexFun(structure Tokens: Calc_TOKENS));
 alpha=[A-Za-z];
 digit=[0-9];
@@ -105,16 +78,14 @@ fun lookup "bogus" = 10000
                          in e (EXP1,EXP2)
                          end)
 \<close>
-
-SML_export \<open>structure LrParser = struct open LrParser end\<close>
  
-
 text\<open>Linking lexer and parser and establishing PIDE position lookups\<close>
 ML\<open>
-structure Calc : sig
-           val parse_source : Proof.context -> Input.source -> int
-                 end   = 
+structure Calc: sig
+  val parse_source : Proof.context -> Input.source -> int
+end =
 struct
+
   structure CalcLrVals =
     CalcLrValsFun(structure Token = LrParser.Token)
 
@@ -122,101 +93,25 @@ struct
     CalcLexFun(structure Tokens = CalcLrVals.Tokens)
 
   structure CalcParser =
-    Join(structure LrParser = LrParser
-         structure ParserData = CalcLrVals.ParserData
-         structure Lex = CalcLex)
+    Join(
+      structure LrParser = LrParser
+      structure ParserData = CalcLrVals.ParserData
+      structure Lex = CalcLex
+    )
 
-  fun parse_source ctxt source = let
-        val input_text = Input.text_of source
-        val syms = Input.source_explode source
-        val pos_vec = Vector.fromList syms
-        
-        fun to_index yypos = yypos - 1
+  fun parse_source ctxt source =
+    let 
+      val _ = CalcLex.UserDeclarations.set source ctxt 
+    in
+      Isabelle_lex_yacc.parse_source
+        CalcParser.parse
+        CalcParser.makeLexer
+        CalcParser.Stream.get
+        CalcParser.sameToken
+        CalcLrVals.Tokens.EOF
+        source      
+    end
 
-        fun lookup_fn yypos = 
-            let val idx = to_index yypos in
-              if Vector.length pos_vec = 0 then Input.pos_of source
-              else if idx < 0 then #2 (Vector.sub (pos_vec, 0))
-              else if idx >= Vector.length pos_vec 
-              then #2 (Vector.sub (pos_vec, Vector.length pos_vec - 1))
-              else #2 (Vector.sub (pos_vec, idx))
-            end
-
-        fun report_fn (start_idx, len, markup, token_type) =
-            let
-              fun report_char i =
-                  if i < len then
-                    let val p = lookup_fn (start_idx + i) in
-                      (* apply the syntax highlighting color *)
-                      Context_Position.report ctxt p markup;
-                      (* apply the hover tooltip *)
-                      Context_Position.report_text ctxt p Markup.typing ("Token: " ^ token_type);
-                      report_char (i + 1)
-                    end
-                  else ()
-            in report_char 0 end
-
-        val _ = CalcLex.UserDeclarations.pos_lookup := lookup_fn
-        val _ = CalcLex.UserDeclarations.report_token := report_fn
-
-        fun get_line_col p =
-            let
-              val target_offset = Position.offset_of p
-              fun is_target pos = 
-                  case (Position.offset_of pos, target_offset) of
-                    (SOME o1, SOME o2) => o1 = o2
-                  | _ => false
-              
-              fun find_idx i = 
-                  if i >= Vector.length pos_vec then Vector.length pos_vec
-                  else if is_target (#2 (Vector.sub (pos_vec, i))) then i
-                  else find_idx (i + 1)
-                  
-              val limit = find_idx 0
-              fun scan 0 _ line col = (line, col)
-                | scan n i line col =
-                    if i = limit then (line, col)
-                    else if String.sub (input_text, i) = #"\n" then scan (n-1) (i+1) (line+1) 1
-                    else scan (n-1) (i+1) line (col+1)
-            in scan limit 0 1 1 end
-
-        fun invoke lexstream =
-          let 
-            val start_line = the_default 1 (Position.line_of (Input.pos_of source))
-
-            fun print_error (s, p: Position.T, _) =
-                 let 
-                   val _ = Position.report p Markup.error
-                   val (local_line, col) = get_line_col p
-                   val abs_line = start_line + local_line - 1
-                 in
-                    error ("Parse Error at line " ^ Int.toString abs_line ^ 
-                           ", column " ^ Int.toString (col + 1) ^ ": " ^ s ^ 
-                           Position.here p)
-                 end
-          in 
-            CalcParser.parse(0,lexstream,print_error,())
-          end
-
-        val parsed = Unsynchronized.ref false
-        fun input_string _  = if !parsed then "" else (parsed := true; input_text)
-        val lexer = CalcParser.makeLexer input_string
-        
-        val eof_pos = lookup_fn (String.size input_text + 1)
-        val dummyEOF = CalcLrVals.Tokens.EOF(eof_pos, eof_pos)
-        
-        fun loop lexer =
-          let
-            val (res,lexer) = invoke lexer
-            val (nextToken,lexer) = CalcParser.Stream.get lexer
-          in 
-            if CalcParser.sameToken(nextToken,dummyEOF) 
-            then ((),res) 
-            else loop lexer 
-          end
-      in
-        the (#2 (loop lexer))
-      end
 end
 \<close>
 
@@ -239,6 +134,5 @@ calc\<open>
     3
    * (201 - 7)
 \<close>
-
 
 end

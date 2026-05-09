@@ -7,8 +7,7 @@ functor HeaderFun () : HEADER =
   struct
         val DEBUG = true
 
-        type pos = {line : int, col : int}
-        val pos = {line = ref 1, start = ref 0}
+        type pos = Position.T
         val text = ref (nil: string list)
         type inputSource = {name : string,
                             errStream : TextIO.outstream,
@@ -27,14 +26,20 @@ functor HeaderFun () : HEADER =
         val error = fn {name,errStream, errorOccurred,...} : inputSource =>
               let val pr = pr errStream
               in fn l : pos => fn msg : string =>
-                  (pr name; pr ", line "; pr (Int.toString (#line l)); pr ": Error: ";
+                  (Position.report l Markup.error;
+                   pr name; pr ", line "; 
+                   case Position.line_of l of SOME line => pr (Int.toString line) | NONE => pr "?"; 
+                   pr ": Error: ";
                    pr msg; pr "\n"; errorOccurred := true)
               end
 
         val warn = fn {name,errStream, errorOccurred,...} : inputSource =>
               let val pr = pr errStream
               in fn l : pos => fn msg : string =>
-                  (pr name; pr ", line "; pr (Int.toString (#line l)); pr ": Warning: ";
+                  (Position.report l Markup.warning;
+                   pr name; pr ", line "; 
+                   case Position.line_of l of SOME line => pr (Int.toString line) | NONE => pr "?"; 
+                   pr ": Warning: ";
                    pr msg; pr "\n")
               end
 

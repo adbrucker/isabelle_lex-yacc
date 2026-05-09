@@ -56,7 +56,7 @@ functor ParseGenFun(structure ParseGenParser : PARSE_GEN_PARSER
                       of {say : string -> unit,
                           saydot : string -> unit,
                           sayln : string -> unit,
-                          fmtPos : {line : int, col : int} option -> string,
+                          fmtPos : pos option -> string,
                           pureActions: bool,
                           pos_type : string,
                           arg_type : string,
@@ -483,17 +483,17 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
 
         val term =
          case term
-           of NONE => (error {line = 1, col = 0} "missing %term definition"; nil)
+           of NONE => (error Position.none "missing %term definition"; nil)
             | SOME l => l
 
         val nonterm =
          case nonterm
-          of NONE => (error {line = 1, col = 0} "missing %nonterm definition"; nil)
+          of NONE => (error Position.none "missing %nonterm definition"; nil)
            | SOME l => l
 
         val pos_type =
          case pos_type
-          of NONE => (error {line = 1, col = 0} "missing %pos definition"; "")
+          of NONE => (error Position.none "missing %pos definition"; "")
            | SOME l => l
 
 
@@ -677,7 +677,7 @@ precedences of the rule and the terminal are equal.
                 val addPrec = fn termPrec => fn term as (T i) =>
                    case precData sub i
                    of SOME _ =>
-                     error {line = 1, col = 0} ("multiple precedences specified for terminal " ^
+                     error Position.none ("multiple precedences specified for terminal " ^
                             (termToString term))
                     | NONE => Array.update(precData,i,termPrec)
                 val termPrec = fn ((LEFT,_) ,i) => i
@@ -797,7 +797,10 @@ precedences of the rule and the terminal are equal.
                               Int.toString (col+1), " \"", path, "\"*)"]
             val fmtPos =
                fn NONE => (fmtLineDir {line = !line, col = 0} resultFile) ^ "\n"
-                | SOME pos => fmtLineDir pos specFile
+                | SOME pos => 
+                    case Position.line_of pos of
+                        SOME l => fmtLineDir {line = l, col = 0} specFile
+                      | NONE => ""
             val termvoid = makeUniqueId "VOID"
             val ntvoid = makeUniqueId "ntVOID"
             val hasType = fn s => case symbolType s
@@ -834,7 +837,7 @@ precedences of the rule and the terminal are equal.
             sayln "struct";
             sayln "structure Header = ";
             sayln "struct";
-            say (fmtPos (SOME {line = 1, col = 1}));
+            say (fmtLineDir {line = 1, col = 1} specFile ^ "\n");
             sayln header;
             say (fmtPos NONE);
             sayln "end";
