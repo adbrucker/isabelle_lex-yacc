@@ -104,7 +104,6 @@ yacc_rules\<open>
                          end)
 \<close>
 
-SML_export \<open>structure LrParser = struct open LrParser end\<close>
  
 
 text\<open>Linking lexer and parser and establishing PIDE position lookups\<close>
