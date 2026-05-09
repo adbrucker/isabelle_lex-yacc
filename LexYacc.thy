@@ -60,6 +60,9 @@ structure MlLexYacc = struct
   fun generate_new verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
+        val _ = Option.map ML_Lex.read_source lex_decl
+        val _ = Option.map ML_Lex.read_source yacc_decl
+
         val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("", Position.none) 
         val (lex_defs_str, lex_defs_pos) = Input.source_content lex_defs
         val (lex_rules_str, lex_rules_pos) = Input.source_content lex_rules
@@ -167,13 +170,13 @@ local
 
   (* Parser for the lex specification blocks *)
   val parse_lex =
-    Scan.optional (\<^keyword>\<open>lex_user_declarations\<close> |-- Parse.input Parse.cartouche >> SOME) NONE --
+    Scan.optional (\<^keyword>\<open>lex_user_declarations\<close> |-- Parse.ML_source >> SOME) NONE --
     (\<^keyword>\<open>lex_definitions\<close> |-- Parse.input Parse.cartouche) --
     (\<^keyword>\<open>lex_rules\<close> |-- Parse.input Parse.cartouche)
 
   (* Parser for the yacc specification blocks *)
   val parse_yacc =
-    Scan.optional (\<^keyword>\<open>yacc_user_declarations\<close> |-- Parse.input Parse.cartouche >> SOME) NONE --
+    Scan.optional (\<^keyword>\<open>yacc_user_declarations\<close> |-- Parse.ML_source >> SOME) NONE --
     (\<^keyword>\<open>yacc_definitions\<close> |-- Parse.input Parse.cartouche) --
     (\<^keyword>\<open>yacc_rules\<close> |-- Parse.input Parse.cartouche)
 in
