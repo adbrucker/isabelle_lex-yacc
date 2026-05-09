@@ -18,8 +18,7 @@ open Isabelle_lex_yacc
 structure Tokens = Tokens
 type svalue = Tokens.svalue
 type ('a,'b) token = ('a,'b) Tokens.token
-type lexresult= (svalue,pos) token
-fun eof () = Tokens.EOF(Position.none, Position.none)
+type lexresult = (svalue,pos) token
 
 type lexarg = Hdr.inputSource
 type arg = lexarg
