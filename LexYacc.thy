@@ -34,10 +34,10 @@ SML_file\<open>mlyacc-polyml/src/mkprstruct.sml\<close>
 SML_file\<open>mlyacc-polyml/src/parse.sml\<close> 
 
 text\<open>Generated: \<close>
-SML_file\<open>mlyacc-polyml_bootstrapping/yacc.grm.sig\<close> 
+SML_file\<open>mlyacc-polyml/src/bootstrap/yacc.grm.sig\<close> 
+SML_file\<open>mlyacc-polyml/src/bootstrap/yacc.grm.sml\<close>             
+SML_file\<open>mlyacc-polyml/src/bootstrap/yacc.lex.sml\<close>     
 
-SML_file\<open>mlyacc-polyml_bootstrapping/yacc.grm.sml\<close>             
-SML_file\<open>mlyacc-polyml_bootstrapping/yacc.lex.sml\<close>     
 text\<open>Final linking and export\<close>
 SML_file\<open>mlyacc-polyml/src/link.sml\<close>
 
