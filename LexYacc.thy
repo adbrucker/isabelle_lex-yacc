@@ -11,6 +11,8 @@ section\<open>ML Lex\<close>
 SML_file \<open>mllex-polyml/LexGen.sml\<close>
 SML_export \<open>structure MlLexExe = struct val run = LexGen.lexGen end\<close> 
 
+
+
 section\<open>ML Yacc\<close>
 
 SML_file\<open>mlyacc-polyml/src/utils.sig\<close>
@@ -54,17 +56,27 @@ section\<open>Glue Layer\<close>
 
 
 ML\<open>
+datatype source = Source of {delimited: bool, text: Symbol_Pos.text, range: Position.range}
+\<close>  
+
+ML\<open>
+fun ackermann(0, n) = n + 1
+  | ackermann(m, 0) = ackermann(m - 1, 1)
+  | ackermann(m, n) = ackermann(m - 1, ackermann(m, n - 1));
+
 structure MlLexYacc = struct
 
-  fun generate name lex_input yacc_input thy =
+  fun generate verbose expert name lex_src yacc_src thy =
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
+        val (lex_input, lex_pos) = Input.source_content lex_src
+        val (yacc_input, yac_pos) = Input.source_content  yacc_src
         val input_path = (Path.append input_path (Path.make ["input"]))
         val lex_file = Path.ext "lex" input_path
         val yacc_file = Path.ext "grm" input_path
         val _ = File.write lex_file lex_input
         val _ = File.write yacc_file yacc_input
-        val _ = MlLexExe.run (File.platform_path lex_file)
+        val _ = MlLexExe.run lex_pos (File.platform_path lex_file)
         val _ = MlYaccExe.run (File.platform_path yacc_file)
         val lex_sml = File.read (Path.ext "lex.sml" input_path)
         val yacc_sig = File.read (Path.ext "grm.sig" input_path)
@@ -83,23 +95,39 @@ structure MlLexYacc = struct
           )
         ) thy
 
-        (* add automaton description to virtual file system *)
-        val yacc_desc = File.read (Path.ext "grm.desc" input_path)
-        val path_desc = (Path.make ["lex_yacc", name^".grm.desc"])
-        val _ = Export.export thy (Path.binding0 path_desc) 
-                                  (Bytes.contents_blob (Bytes.string yacc_desc))
-        val _ = writeln(Export.message thy path_desc)
+        val _ = if verbose 
+                then let
+                  val yacc_desc = File.read (Path.ext "grm.desc" input_path)
+                  val path_desc = (Path.make ["lex_yacc", name^".grm.desc"])
+                  val _ = Export.export thy (Path.binding0 path_desc) 
+                                            (Bytes.contents_blob (Bytes.string yacc_desc))
+                in
+                  writeln(Export.message thy path_desc)
+                end
+        else ()
       in
         thy'
       end);
 end
 \<close>
 
-ML\<open>
-val _ = Outer_Syntax.command @{command_keyword "ml_lex_yacc"}
-        "Generate and load SML parser based on lex/yacc specifications." 
-        ((Parse.name --  \<^keyword>\<open>with_lex\<close> -- Parse.cartouche -- \<^keyword>\<open>and_yacc\<close> -- Parse.cartouche) 
-      >> (fn ((((name,_),lex_spec), _), yacc_spec) =>
-          Toplevel.theory (fn thy => MlLexYacc.generate name lex_spec yacc_spec thy)))
+ML \<open>
+local
+  val parse_options =
+    Scan.optional (\<^keyword>\<open>[\<close> |-- Parse.list Parse.name --| \<^keyword>\<open>]\<close>) []
+in
+  val _ = Outer_Syntax.command @{command_keyword "ml_lex_yacc"}
+          "Generate and load SML parser based on lex/yacc specifications." 
+        ((parse_options -- Parse.name -- \<^keyword>\<open>with_lex\<close> -- Parse.input Parse.cartouche 
+                                      -- \<^keyword>\<open>and_yacc\<close> -- Parse.input Parse.cartouche) 
+        >> (fn (((((opts, name), _), lex_spec), _), yacc_spec) =>
+            let
+              val is_verbose = member (op =) opts "verbose"
+              val is_expert = member (op =) opts "expert" orelse member (op =) opts "expert_mode"
+            in
+              Toplevel.theory (fn thy => 
+                MlLexYacc.generate is_verbose is_expert name lex_spec yacc_spec thy)
+            end))
+end
 \<close>
 end

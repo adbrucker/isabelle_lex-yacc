@@ -8,7 +8,7 @@ begin
 
 
 
-ml_lex_yacc "calc"
+ml_lex_yacc[verbose, expert] "calc"
   with_lex\<open>
 structure Tokens = Tokens
 type pos = Position.T
