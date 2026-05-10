@@ -6,13 +6,15 @@
 
 signature HEADER =
   sig
-    type pos = Position.T
+    type pos = int
+    val pos : {line : int ref, start : int ref}
     val text : string list ref
+    val pos_map : (int -> Position.T) option  ref
 
     type inputSource
     val newSource : string * TextIO.instream * TextIO.outstream -> inputSource
-    val error : inputSource -> pos -> string -> unit
-    val warn : inputSource -> pos -> string -> unit
+    val error : pos * pos option -> string -> unit
+    val warn : pos * pos option -> string -> unit
     val errorOccurred : inputSource -> unit -> bool
 
     datatype symbol = SYMBOL of string * pos
@@ -57,12 +59,12 @@ signature HEADER =
 signature PARSE_GEN_PARSER =
   sig
     structure Header : HEADER
-    val parse : string -> Header.parseResult * Header.inputSource
+    val parse : (int -> Position.T) option -> string -> Header.parseResult * Header.inputSource
   end;
 
 signature PARSE_GEN =
   sig
-    val parseGen : bool -> string -> {sigs : string, ml : string, desc : string option}
+    val parseGen : bool -> (int -> Position.T) option -> string -> {sigs : string, ml : string, desc : string option}
   end;
 
 signature GRAMMAR =

@@ -380,11 +380,6 @@ structure MlLexYacc = struct
         val _ = MlLexYaccHighlighter.scan_lex_defs ctxt lex_defs
         val _ = MlLexYaccHighlighter.scan_lex_rules ctxt lex_rules
 
-        val (yacc_decl_str, yacc_decl_pos) = case yacc_decl of SOME d => Input.source_content d | NONE => ("", Position.none)
-        val (yacc_defs_str, yacc_defs_pos) = Input.source_content yacc_defs
-        val (yacc_rules_str, yacc_rules_pos) = Input.source_content yacc_rules
-
-
         val lex_decl_syms = case lex_decl of NONE => [] | SOME l => Input.source_explode l
         val lex_syms = if expert
                        then (lex_decl_syms)@
@@ -403,18 +398,29 @@ structure MlLexYacc = struct
         val lex_pos_vec = Vector.fromList (map #2 lex_syms @ [Position.none]);
         fun lex_pos_map offset = Vector.sub (lex_pos_vec, Int.min (Int.max (0, offset), Vector.length lex_pos_vec - 1));
         val _ = Isabelle_lex_yacc.reset()  
-        val lex_sml = MlLexExe.run (SOME lex_pos_map) lex_spec_string
+        val lex_sml = MlLexExe.run verbose (SOME lex_pos_map) lex_spec_string
         val _ = Isabelle_lex_yacc.reset()  
 
 
-        val yacc_spec = if expert 
-                       then yacc_decl_str^"\n%%\n"^yacc_defs_str^"\n%%\n"^yacc_rules_str
-                       else yacc_decl_str^"\n%%\n"^
-                            "%name "^name^"\n"^
-                            yacc_defs_str^"\n%%\n"^
-                            yacc_rules_str  
-
-        val yacc_res = MlYaccExe.run verbose yacc_spec
+        val yacc_decl_syms = case yacc_decl of NONE => [] | SOME l => Input.source_explode l
+        val yacc_syms = if expert
+                       then (yacc_decl_syms)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode yacc_defs)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode yacc_rules)
+                       else (yacc_decl_syms)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Symbol_Pos.explode("%name "^name^"\n", Position.none))@
+                            (Input.source_explode yacc_defs)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode yacc_rules)
+        val yacc_spec_string = Symbol_Pos.content yacc_syms;
+        val yacc_pos_vec = Vector.fromList (map #2 yacc_syms @ [Position.none]);
+        fun yacc_pos_map offset = Vector.sub (yacc_pos_vec, Int.min (Int.max (0, offset), Vector.length yacc_pos_vec - 1));
+        val _ = Isabelle_lex_yacc.reset()  
+        val yacc_res = MlYaccExe.run verbose (SOME yacc_pos_map) yacc_spec_string
+        val _ = Isabelle_lex_yacc.reset()  
         val yacc_sig = #sigs yacc_res
         val yacc_sml = #ml yacc_res
         val yacc_desc = #desc yacc_res
@@ -462,7 +468,7 @@ structure MlLexYacc = struct
                             SOME txt => Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
                           | NONE => ()
                   val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec_string))
-                  val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec))
+                  val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec_string))
                   val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
                   val _ = Export.export thy (Path.binding0 (path_of "grm.sml")) (Bytes.contents_blob (Bytes.string yacc_sml))
                   val _ = Export.export thy (Path.binding0 (path_of "grm.sig")) (Bytes.contents_blob (Bytes.string yacc_sig))

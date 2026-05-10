@@ -14,9 +14,10 @@ functor LexMLYACC(structure Tokens : Mlyacc_TOKENS
 
    yacc.lex: Lexer specification
  *)
-open Isabelle_lex_yacc
+
 structure Tokens = Tokens
 type svalue = Tokens.svalue
+type pos = Header.pos
 type ('a,'b) token = ('a,'b) Tokens.token
 type lexresult = (svalue,pos) token
 
@@ -29,13 +30,13 @@ val text = Hdr.text
 
 val pcount = ref 0
 val commentLevel = ref 0
-val actionstart = ref Position.none
+val actionstart = ref 0
 
-fun linePos () = Position.none
-fun pos yypos = Isabelle_lex_yacc.get_pos yypos
+fun linePos () = !pcount
+fun pos pos = pos 
 
 val eof = fn i => (if (!pcount)>0 then
-                        error i (!actionstart)
+                        error (!actionstart, NONE)
                               " eof encountered in action beginning here !"
                    else (); EOF(linePos (), linePos ()))
 
@@ -64,6 +65,7 @@ end
 fun inc (ri as ref i) = (ri := i+1)
 fun dec (ri as ref i) = (ri := i-1)
 
+fun incLineNum pos = (inc (#line Hdr.pos) ; #start Hdr.pos := pos)
 
 end (* end of user routines *)
 exception LexError (* raised if illegal leaf action tried *)
@@ -794,126 +796,68 @@ let fun continue() : Internal.result =
 			(* Application actions *)
 
   100 => let val yytext=yymktext() in UNKNOWN(yytext,pos yypos,pos yypos) end
-| 102 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
-                    inc pcount; Add yytext; continue() end
-| 104 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
-                    dec pcount;
+| 102 => let val yytext=yymktext() in inc pcount; Add yytext; continue() end
+| 104 => let val yytext=yymktext() in dec pcount;
                     if !pcount = 0 then
                          PROG (concat (rev (!text)),!actionstart,pos yypos)
                     else (Add yytext; continue()) end
-| 106 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
-                    Add yytext; YYBEGIN STRING; continue() end
-| 109 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, ("ML_source", []), "ML_source");
-                    Add yytext; continue() end
-| 11 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, ("ML_source", []), "ML_source");
-                    Add yytext; continue() end
-| 111 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
-                    Add yytext; continue() end
-| 114 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    Add yytext; dec commentLevel;
+| 106 => let val yytext=yymktext() in Add yytext; YYBEGIN STRING; continue() end
+| 109 => let val yytext=yymktext() in Add yytext; continue() end
+| 11 => let val yytext=yymktext() in Add yytext; continue() end
+| 111 => let val yytext=yymktext() in Add yytext; continue() end
+| 114 => let val yytext=yymktext() in Add yytext; dec commentLevel;
                     if !commentLevel=0
                          then BOGUS_VALUE(pos yypos,pos yypos)
                          else continue()
                     end
-| 117 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    Add yytext; inc commentLevel; continue() end
-| 120 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
-                    Add yytext; continue() end
-| 122 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
-                    continue() end
-| 125 => (
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    dec commentLevel;
+| 117 => let val yytext=yymktext() in Add yytext; inc commentLevel; continue() end
+| 120 => let val yytext=yymktext() in Add yytext; continue() end
+| 122 => (continue())
+| 125 => (dec commentLevel;
                           if !commentLevel=0 then YYBEGIN A else ();
                           continue ())
-| 128 => (
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    inc commentLevel; continue())
-| 131 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.comment, "comment");
-                    continue() end
-| 133 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
-                    Add yytext; YYBEGIN CODE; continue() end
-| 135 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
-                    Add yytext; continue() end
-| 14 => (
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.keyword2, "delimiter");
-                    YYBEGIN A; HEADER (concat (rev (!text)),pos yypos,pos yypos))
-| 140 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
-                    Add yytext; error inputSource (pos yypos) "unclosed string";
+| 128 => (inc commentLevel; continue())
+| 131 => (continue())
+| 133 => let val yytext=yymktext() in Add yytext; YYBEGIN CODE; continue() end
+| 135 => let val yytext=yymktext() in Add yytext; continue() end
+| 14 => (YYBEGIN A; HEADER (concat (rev (!text)),pos yypos,pos yypos))
+| 140 => let val yytext=yymktext() in Add yytext; error (pos yypos, NONE) "unclosed string";
+                    incLineNum yypos; YYBEGIN CODE; continue() end
+| 143 => let val yytext=yymktext() in Add yytext; continue() end
+| 146 => let val yytext=yymktext() in Add yytext; continue() end
+| 152 => let val yytext=yymktext() in Add yytext; incLineNum yypos; YYBEGIN F; continue() end
+| 155 => let val yytext=yymktext() in Add yytext; YYBEGIN F; continue() end
+| 158 => let val yytext=yymktext() in Add yytext; continue() end
+| 160 => let val yytext=yymktext() in Add yytext; YYBEGIN STRING; continue() end
+| 162 => let val yytext=yymktext() in Add yytext; error (pos yypos, NONE) "unclosed string";
                     YYBEGIN CODE; continue() end
-| 143 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
-                    Add yytext; continue() end
-| 146 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.string, "string");
-                    Add yytext; continue() end
-| 152 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
-                    Add yytext; YYBEGIN F; continue() end
-| 155 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
-                    Add yytext; YYBEGIN F; continue() end
-| 158 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.string, "string");
-                    Add yytext; continue() end
-| 160 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
-                    Add yytext; YYBEGIN STRING; continue() end
-| 162 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, Markup.string, "string");
-                    Add yytext; error inputSource (pos yypos) "unclosed string";
-                    YYBEGIN CODE; continue() end
-| 19 => let val yytext=yymktext() in Add yytext; continue() end
-| 2 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    Add yytext; YYBEGIN COMMENT; commentLevel := 1;
+| 19 => let val yytext=yymktext() in Add yytext; incLineNum yypos; continue() end
+| 2 => let val yytext=yymktext() in Add yytext; YYBEGIN COMMENT; commentLevel := 1;
                     continue(); YYBEGIN INITIAL; continue() end
-| 21 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 1, ("ML_source", []), "ML_source");
-                    Add yytext; continue() end
-| 26 => (continue ())
+| 21 => let val yytext=yymktext() in Add yytext; continue() end
+| 26 => (incLineNum yypos; continue ())
 | 31 => (continue())
-| 34 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword1, "keyword", OF) end
-| 38 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword1, "keyword", FOR) end
-| 40 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", LBRACE) end
-| 42 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", RBRACE) end
-| 44 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", COMMA) end
-| 46 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", ASTERISK) end
-| 49 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", ARROW) end
-| 5 => (
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    YYBEGIN EMPTYCOMMENT; commentLevel := 1; continue())
-| 55 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.LEFT) end
-| 62 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.RIGHT) end
-| 72 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.keyword2, "directive", PREC, Hdr.NONASSOC) end
-| 76 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, size yytext, Markup.keyword2, "directive");
-                    lookup(yytext,pos yypos,pos yypos) end
-| 79 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_type" yytext, "type", TYVAR, yytext) end
-| 8 => let val yytext=yymktext() in 
-                    (Isabelle_lex_yacc.report_token) (yypos, 2, Markup.comment, "comment");
-                    Add yytext; YYBEGIN COMMENT; commentLevel := 1;
+| 34 => (OF(pos yypos,pos yypos))
+| 38 => (FOR(pos yypos,pos yypos))
+| 40 => (LBRACE(pos yypos,pos yypos))
+| 42 => (RBRACE(pos yypos,pos yypos))
+| 44 => (COMMA(pos yypos,pos yypos))
+| 46 => (ASTERISK(pos yypos,pos yypos))
+| 49 => (ARROW(pos yypos,pos yypos))
+| 5 => (YYBEGIN EMPTYCOMMENT; commentLevel := 1; continue())
+| 55 => (PREC(Hdr.LEFT,pos yypos,pos yypos))
+| 62 => (PREC(Hdr.RIGHT,pos yypos,pos yypos))
+| 72 => (PREC(Hdr.NONASSOC,pos yypos,pos yypos))
+| 76 => let val yytext=yymktext() in lookup(yytext,pos yypos,pos yypos) end
+| 79 => let val yytext=yymktext() in TYVAR(yytext,pos yypos,pos yypos) end
+| 8 => let val yytext=yymktext() in Add yytext; YYBEGIN COMMENT; commentLevel := 1;
                     continue(); YYBEGIN CODE; continue() end
-| 83 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_id" yytext, "id", IDDOT, yytext) end
-| 86 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.numeral, "numeral", INT, yytext) end
-| 89 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", DELIMITER) end
-| 91 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", COLON) end
-| 93 => let val yytext=yymktext() in Isabelle_lex_yacc.tok (yypos, yytext, Markup.keyword2, "delimiter", BAR) end
-| 96 => let val yytext=yymktext() in Isabelle_lex_yacc.tok_val (yypos, yytext, Markup.entity "ML_Yacc_id" yytext, "id", ID, (yytext, pos yypos)) end
+| 83 => let val yytext=yymktext() in IDDOT(yytext,pos yypos,pos yypos) end
+| 86 => let val yytext=yymktext() in INT (yytext,pos yypos,pos yypos) end
+| 89 => (DELIMITER(pos yypos,pos yypos))
+| 91 => (COLON(pos yypos,pos yypos))
+| 93 => (BAR(pos yypos,pos yypos))
+| 96 => let val yytext=yymktext() in ID ((yytext,pos yypos),pos yypos,pos yypos) end
 | 98 => (pcount := 1; actionstart := pos yypos;
                     text := nil; YYBEGIN CODE; continue() before YYBEGIN A)
 | _ => raise Internal.LexerError

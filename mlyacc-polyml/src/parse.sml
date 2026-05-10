@@ -14,7 +14,7 @@ functor ParseGenParserFun(structure Header : HEADER
 
  struct
       structure Header = Header
-      val parse = fn spec =>
+      val parse = fn position_map => fn spec =>
           let
               val spec_ref = ref spec
               val read_fn = fn i =>
@@ -25,8 +25,8 @@ functor ParseGenParserFun(structure Header : HEADER
                       val _ = spec_ref := String.extract(current, take, NONE)
                   in result end
               val source = Header.newSource("",TextIO.stdIn,TextIO.stdOut)
-              val error = fn (s : string,p:Header.pos,_) =>
-                              Header.error source p s
+              val error = fn (s : string,left_pos:Header.pos,right_pos) =>
+                              Header.error (left_pos, SOME right_pos) s
               val stream =  Parser.makeLexer read_fn source
               val (result,_) = (Header.text := nil;
                                 Parser.parse(15,stream,error,source))

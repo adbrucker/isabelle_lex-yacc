@@ -57,7 +57,7 @@ functor ParseGenFun(structure ParseGenParser : PARSE_GEN_PARSER
                       of {say : string -> unit,
                           saydot : string -> unit,
                           sayln : string -> unit,
-                          fmtPos : pos option -> string,
+                          fmtPos : int option -> string,
                           pureActions: bool,
                           pos_type : string,
                           arg_type : string,
@@ -424,7 +424,7 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
     val make_parser = fn ((header,
          DECL {eop,change,keyword,nonterm,prec,
                term, control,value} : declData,
-               rules : rule list),spec,error : pos -> string -> unit,
+               rules : rule list),spec,error : (pos * pos option) -> string -> unit,
                wasError : unit -> bool, flag_verbose: bool) =>
      let
         val verbose = flag_verbose orelse List.exists (fn VERBOSE=>true | _ => false) control
@@ -484,17 +484,17 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
 
         val term =
          case term
-           of NONE => (error Position.none "missing %term definition"; nil)
+           of NONE => (error (0, NONE) "missing %term definition"; nil)
             | SOME l => l
 
         val nonterm =
          case nonterm
-          of NONE => (error Position.none "missing %nonterm definition"; nil)
+          of NONE => (error (0, NONE) "missing %nonterm definition"; nil)
            | SOME l => l
 
         val pos_type =
          case pos_type
-          of NONE => (error Position.none "missing %pos definition"; "")
+          of NONE => (error (0, NONE) "missing %pos definition"; "")
            | SOME l => l
 
 
@@ -502,7 +502,7 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
           List.foldr (fn ((symbol,_),table) =>
               let val name = symbolName symbol
               in if SymbolHash.exists(name,table) then
-                   (error (symbolPos symbol)
+                   (error (symbolPos symbol, NONE)
                           ("duplicate definition of " ^ name ^ " in %term");
                     table)
                 else SymbolHash.add(name,table)
@@ -514,7 +514,7 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
           List.foldr (fn ((symbol,_),table) =>
             let val name = symbolName symbol
             in if SymbolHash.exists(name,table) then
-                 (error (symbolPos symbol)
+                 (error (symbolPos symbol, NONE)
                      (if isTerm name then
                           name ^ " is defined as a terminal and a nonterminal"
                       else
@@ -533,7 +533,7 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
         val numNonterms = SymbolHash.size symbolHash - numTerms
 
         val symError = fn sym => fn err => fn symbol =>
-          error (symbolPos symbol)
+          error (symbolPos symbol, NONE)
                 (symbolName symbol^" in "^err^" is not defined as a " ^ sym)
 
         val termNum : string -> Header.symbol -> term =
@@ -678,7 +678,7 @@ precedences of the rule and the terminal are equal.
                 val addPrec = fn termPrec => fn term as (T i) =>
                    case precData sub i
                    of SOME _ =>
-                     error Position.none ("multiple precedences specified for terminal " ^
+                     error (0, NONE) ("multiple precedences specified for terminal " ^
                             (termToString term))
                     | NONE => Array.update(precData,i,termPrec)
                 val termPrec = fn ((LEFT,_) ,i) => i
@@ -785,6 +785,7 @@ precedences of the rule and the terminal are equal.
             val resultFile = ""
             val line = ref 1
             val col = ref 0
+            val pos = ref 0
             val pr = fn s => resultList := s :: !resultList
             val pr_sig = fn s => sigsList := s :: !sigsList
             val say = fn s =>
@@ -794,15 +795,11 @@ precedences of the rule and the terminal are equal.
                 ; pr s)
             val saydot = fn s => (say (s ^ "."))
             val sayln = fn t => (say t; say "\n")
-            fun fmtLineDir {line, col} path =
-               String.concat ["(*#line ", Int.toString line, ".",
-                              Int.toString (col+1), " \"", path, "\"*)"]
+            fun fmtLineDir p path =
+               String.concat ["(*#pos ", Int.toString p, " \"", path, "\"*)"]
             val fmtPos =
-               fn NONE => (fmtLineDir {line = !line, col = 0} resultFile) ^ "\n"
-                | SOME pos => 
-                    case Position.line_of pos of
-                        SOME l => fmtLineDir {line = l, col = 0} specFile
-                      | NONE => ""
+               fn NONE => (fmtLineDir (!pos) resultFile) ^ "\n"
+                | SOME pos => fmtLineDir pos specFile
             val termvoid = makeUniqueId "VOID"
             val ntvoid = makeUniqueId "ntVOID"
             val hasType = fn s => case symbolType s
@@ -839,7 +836,7 @@ precedences of the rule and the terminal are equal.
             sayln "struct";
             sayln "structure Header = ";
             sayln "struct";
-            say (fmtLineDir {line = 1, col = 1} specFile ^ "\n");
+            say (fmtLineDir 0 specFile ^ "\n");
             sayln header;
             say (fmtPos NONE);
             sayln "end";
@@ -882,9 +879,10 @@ precedences of the rule and the terminal are equal.
         end
     end
 
-    val parseGen = fn verbose => fn spec =>
-                let val (result,inputSource) = ParseGenParser.parse spec
-                in make_parser(getResult result,spec,Header.error inputSource,
+    val parseGen = fn verbose => fn position_map => fn spec =>
+                let val (result,inputSource) = ParseGenParser.parse position_map spec
+                    val _ = (Header.pos_map := position_map)
+                in make_parser(getResult result,spec,Header.error,
                                 errorOccurred inputSource, verbose)
                 end
 end;

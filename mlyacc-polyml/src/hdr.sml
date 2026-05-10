@@ -7,7 +7,9 @@ functor HeaderFun () : HEADER =
   struct
         val DEBUG = true
 
-        type pos = Position.T
+        type pos = int 
+        val pos = {line = ref 1, start = ref 0}
+        val pos_map = ref NONE
         val text = ref (nil: string list)
         type inputSource = {name : string,
                             errStream : TextIO.outstream,
@@ -21,26 +23,25 @@ functor HeaderFun () : HEADER =
 
         val errorOccurred = fn (s : inputSource) =>fn () => !(#errorOccurred s)
 
-        val pr = fn out : TextIO.outstream => fn s : string => TextIO.output(out,s)
+        fun pos_of p = case !pos_map of NONE => Position.none 
+                                      | SOME m => m (Int.max(0, p-2))
 
-        val error = fn {name,errStream, errorOccurred,...} : inputSource =>
-              let val pr = pr errStream
-              in fn l : pos => fn msg : string =>
-                  (Position.report l Markup.error;
-                   pr name; pr ", line "; 
-                   case Position.line_of l of SOME line => pr (Int.toString line) | NONE => pr "?"; 
-                   pr ": Error: ";
-                   pr msg; pr "\n"; errorOccurred := true)
+        fun pos_str left_pos  right_pos  = case right_pos of NONE => Int.toString  left_pos 
+                                               | SOME p => String.concat[Int.toString left_pos, "-", Int.toString p]
+
+        fun error (left_pos, right_pos) msg =
+              let
+                val position = case right_pos of NONE => pos_of left_pos 
+                                               | SOME p => Position.range_position (pos_of left_pos , pos_of p) 
+              in
+                 pide_error (String.concat["Error: (",pos_str left_pos right_pos,"): ", msg, Position.here position])
               end
-
-        val warn = fn {name,errStream, errorOccurred,...} : inputSource =>
-              let val pr = pr errStream
-              in fn l : pos => fn msg : string =>
-                  (Position.report l Markup.warning;
-                   pr name; pr ", line "; 
-                   case Position.line_of l of SOME line => pr (Int.toString line) | NONE => pr "?"; 
-                   pr ": Warning: ";
-                   pr msg; pr "\n")
+        fun warn (left_pos, right_pos) msg =
+              let 
+                val position = case right_pos of NONE => pos_of left_pos 
+                                               | SOME p => Position.range_position (pos_of left_pos , pos_of p) 
+              in
+                 pide_warning (String.concat["Warning: (",pos_str left_pos right_pos,"): ", msg, Position.here position])
               end
 
         datatype prec = LEFT | RIGHT | NONASSOC
@@ -85,7 +86,7 @@ functor HeaderFun () : HEADER =
                      change=su',term=t',value=v'} : declData,
                inputSource,pos) =
           let val ignore = fn s =>
-                        (warn inputSource pos ("ignoring duplicate " ^ s ^
+                        (warn (pos, NONE) ("ignoring duplicate " ^ s ^
                                             " declaration"))
               val join = fn (e,NONE,NONE) => NONE
                           | (e,NONE,a) => a
