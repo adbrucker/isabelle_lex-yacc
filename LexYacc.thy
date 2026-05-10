@@ -55,15 +55,328 @@ ML_file\<open>mlyacc-polyml/mlyacc-lib/join.sml\<close>
 
 section\<open>Glue Layer\<close>
 ML\<open>
+signature ML_LEX_YACC_HIGHLIGHTER =
+  sig
+    val scan_lex_defs: Proof.context -> Input.source -> unit
+    val scan_lex_rules: Proof.context -> Input.source -> unit
+    val scan_yacc_defs: Proof.context -> Input.source -> unit
+    val scan_yacc_rules: Proof.context -> Input.source -> unit
+  end
 
+structure MlLexYaccHighlighter:ML_LEX_YACC_HIGHLIGHTER = struct
+  fun is_alnum s = 
+    Symbol.is_ascii_letter s orelse Symbol.is_ascii_digit s orelse s = "_" orelse s = "'"
+  
+  fun take_word [] acc = (rev acc, [])
+    | take_word ((s, p) :: ss) acc =
+        if is_alnum s then take_word ss ((s, p) :: acc)
+        else (rev acc, (s, p) :: ss)
+
+  fun report ctxt markup syms =
+    List.app (fn (_, p) => Context_Position.report ctxt p markup) syms
+
+  fun consume_comment [] acc = (rev acc, [])
+    | consume_comment ((s1, p1) :: (s2, p2) :: rest) acc =
+        if s1 = "*" andalso s2 = ")" then 
+          (rev ((s2, p2) :: (s1, p1) :: acc), rest)
+        else 
+          consume_comment ((s2, p2) :: rest) ((s1, p1) :: acc)
+    | consume_comment (x :: rest) acc = 
+        consume_comment rest (x :: acc)
+
+  fun consume_string [] acc = (rev acc, [])
+    | consume_string ((s1, p1) :: rest) acc =
+        if s1 = "\"" then 
+          (rev ((s1, p1) :: acc), rest)
+        else if s1 = "\\" andalso not (null rest) then
+          consume_string (tl rest) (hd rest :: (s1, p1) :: acc)
+        else 
+          consume_string rest ((s1, p1) :: acc)
+
+  (* Quick and dirty parser for  ML code inside Yacc/Lex rules. *)
+  fun scan_sml_action _ _  [] = []
+    | scan_sml_action ctxt depth ((s, p) :: ss) =
+        if s = "(" andalso not (null ss) andalso #1 (hd ss) = "*" then
+          let
+            val (comment_syms, rest) = consume_comment (tl ss) [hd ss, (s, p)]
+            val _ = report ctxt Markup.comment comment_syms
+          in 
+            scan_sml_action ctxt depth rest 
+          end
+        else if s = "\"" then
+          let
+            val (str_syms, rest) = consume_string ss [(s, p)]
+            val _ = report ctxt Markup.string str_syms
+          in 
+            scan_sml_action ctxt depth rest 
+          end
+        else if s = "(" then
+          (Context_Position.report ctxt p Markup.delimiter; 
+           scan_sml_action ctxt (depth + 1) ss)
+        else if s = ")" then
+          (Context_Position.report ctxt p Markup.delimiter;
+           if depth = 1 then ss 
+           else scan_sml_action ctxt (depth - 1) ss)
+        else if s = "=" andalso not (null ss) andalso #1 (hd ss) = ">" then
+          (report ctxt Markup.keyword2 [(s, p), hd ss];
+           scan_sml_action ctxt depth (tl ss))
+        else if member (op =) ["+", "-", "*", "/", ":", "|", ",", ";", ".", "[", "]", "=", "<", ">", "~"] s then
+          (Context_Position.report ctxt p Markup.delimiter;
+           scan_sml_action ctxt depth ss)
+        else if is_alnum s then
+          let
+            val (word_syms, rest) = take_word ss [(s, p)]
+            val word = String.concat (map #1 word_syms)
+            val ml_kws = [
+              "val", "fun", "let", "in", "end", "case", "of", "if", "then", "else", 
+              "SOME", "NONE", "true", "false", "structure", "sig", "struct", "open", "type"
+            ]
+            val markup = if member (op =) ml_kws word then Markup.keyword2 else Markup.free
+          in
+            report ctxt markup word_syms;
+            scan_sml_action ctxt depth rest
+          end
+        else 
+          scan_sml_action ctxt depth ss
+
+  fun scan_lex_defs ctxt source =
+    let
+      val syms = Input.source_explode source
+      fun scan _ [] = ()
+        | scan awaiting_sml ((s, p) :: ss) =
+            if s = "(" andalso not (null ss) andalso #1 (hd ss) = "*" then
+              let
+                val (comment_syms, rest) = consume_comment (tl ss) [hd ss, (s, p)]
+                val _ = report ctxt Markup.comment comment_syms
+              in 
+                scan awaiting_sml rest 
+              end
+            else if s = "\"" then
+              let
+                val (str_syms, rest) = consume_string ss [(s, p)]
+                val _ = report ctxt Markup.string str_syms
+              in 
+                scan awaiting_sml rest 
+              end
+            else if s = "%" then
+              let
+                val (word_syms, rest) = take_word ss []
+                val word = "%" ^ String.concat (map #1 word_syms)
+                
+                val is_sml_trigger = member (op =) ["%header", "%arg"] word
+                val is_kw = member (op =) [
+                  "%header", "%s", "%S", "%arg", "%pos", "%pure", "%reject", "%count"
+                ] word
+                val markup = if is_kw then Markup.keyword1 else Markup.keyword3
+              in
+                Context_Position.report ctxt p markup;
+                report ctxt markup word_syms;
+                scan is_sml_trigger rest 
+              end
+            else if s = "(" then
+              (Context_Position.report ctxt p Markup.delimiter;
+               if awaiting_sml then
+                 let
+                   val remaining_stream = scan_sml_action ctxt 1 ss
+                 in
+                   scan false remaining_stream
+                 end
+               else
+                 scan awaiting_sml ss)
+            else if s = ")" then
+              (Context_Position.report ctxt p Markup.delimiter; 
+               scan awaiting_sml ss)
+            else if s = "=" then
+              (Context_Position.report ctxt p Markup.keyword2; 
+               scan false ss)
+            else if member (op =) ["{", "}", "[", "]", ";", "+", "*", "?", "|", "\\", "^", "$", "."] s then
+              (Context_Position.report ctxt p Markup.keyword3; 
+               scan awaiting_sml ss)
+            else if is_alnum s then
+              let
+                val (word_syms, rest) = take_word ss [(s, p)]
+                val _ = report ctxt Markup.free word_syms
+              in 
+                scan awaiting_sml rest 
+              end
+            else 
+              scan awaiting_sml ss
+    in 
+      scan false syms 
+    end
+
+  fun scan_lex_rules ctxt source =
+    let
+      val syms = Input.source_explode source
+      fun scan _ [] = ()
+        | scan awaiting_action ((s, p) :: ss) =
+            if s = "<" orelse s = ">" orelse s = "{" orelse s = "}" then
+              (Context_Position.report ctxt p Markup.delimiter; 
+               scan awaiting_action ss)
+            else if s = "\"" then
+              let
+                val (str_syms, rest) = consume_string ss [(s, p)]
+                val _ = report ctxt Markup.string str_syms
+              in 
+                scan awaiting_action rest 
+              end
+            else if s = "=" andalso not (null ss) andalso #1 (hd ss) = ">" then
+              (report ctxt Markup.keyword2 [(s, p), hd ss]; 
+               scan true (tl ss))
+            else if s = "(" andalso not (null ss) andalso #1 (hd ss) <> "*" then
+              (Context_Position.report ctxt p Markup.delimiter;
+               if awaiting_action then
+                 let
+                   val remaining_stream = scan_sml_action ctxt 1 ss
+                 in
+                   scan false remaining_stream
+                 end
+               else
+                 scan awaiting_action ss)
+            else if s = ")" then
+              (Context_Position.report ctxt p Markup.delimiter; 
+               scan awaiting_action ss)
+            else if s = "(" andalso not (null ss) andalso #1 (hd ss) = "*" then
+              let
+                val (comment_syms, rest) = consume_comment (tl ss) [hd ss, (s, p)]
+                val _ = report ctxt Markup.comment comment_syms
+              in 
+                scan awaiting_action rest 
+              end
+            else if member (op =) ["+", "*", "?", "|", "\\", "^", "$", "."] s then
+              (Context_Position.report ctxt p Markup.keyword3; 
+               scan awaiting_action ss)
+            else if is_alnum s then
+              let
+                val (word_syms, rest) = take_word ss [(s, p)]
+                val _ = report ctxt Markup.free word_syms
+              in 
+                scan awaiting_action rest 
+              end
+            else 
+              scan awaiting_action ss
+    in 
+      scan false syms 
+    end
+
+  fun scan_yacc_defs ctxt source =
+    let
+      val syms = Input.source_explode source
+      
+      fun scan [] = ()
+        | scan ((s, p) :: ss) =
+            if s = "|" then
+              (Context_Position.report ctxt p Markup.keyword2; 
+               scan ss)
+            else if s = "(" andalso not (null ss) andalso #1 (hd ss) = "*" then
+              let
+                val (comment_syms, rest) = consume_comment (tl ss) [hd ss, (s, p)]
+                val _ = report ctxt Markup.comment comment_syms
+              in 
+                scan rest 
+              end
+            else if s = "(" then
+              let
+                val _ = Context_Position.report ctxt p Markup.delimiter
+                val remaining_stream = scan_sml_action ctxt 1 ss
+              in
+                scan remaining_stream
+              end
+            else if s = "%" then
+              let
+                val (word_syms, rest) = take_word ss []
+                val word = "%" ^ String.concat (map #1 word_syms)
+                val is_kw = member (op =) [
+                  "%name", "%term", "%nonterm", "%pos", "%eop", "%pure", 
+                  "%noshift", "%left", "%right", "%nonassoc", "%keyword", 
+                  "%prefer", "%subst", "%header", "%verbose", "%value"
+                ] word
+                val markup = if is_kw then Markup.keyword1 else Markup.keyword3
+              in
+                Context_Position.report ctxt p markup;
+                report ctxt markup word_syms;
+                scan rest
+              end
+            else if is_alnum s then
+              let
+                val (word_syms, rest) = take_word ss [(s, p)]
+                val word = String.concat (map #1 word_syms)
+                val markup = if word = "of" then Markup.keyword2 else Markup.free
+              in
+                report ctxt markup word_syms;
+                scan rest
+              end
+            else 
+              scan ss
+    in 
+      scan syms 
+    end
+
+  fun scan_yacc_rules ctxt source =
+    let
+      val syms = Input.source_explode source
+      
+      fun scan [] = ()
+        | scan ((s, p) :: ss) =
+            if s = ":" orelse s = "|" orelse s = ";" then
+              (Context_Position.report ctxt p Markup.keyword2; 
+               scan ss)
+            else if s = "(" andalso not (null ss) andalso #1 (hd ss) <> "*" then
+              let
+                val _ = Context_Position.report ctxt p Markup.delimiter
+                val remaining_stream = scan_sml_action ctxt 1 ss
+              in
+                scan remaining_stream
+              end
+            else if s = "%" then
+              let
+                val (word_syms, rest) = take_word ss []
+                val word = "%" ^ String.concat (map #1 word_syms)
+              in
+                if word = "%prec" then 
+                  report ctxt Markup.keyword1 ((s, p) :: word_syms) 
+                else ();
+                scan rest
+              end
+            else if s = "(" andalso not (null ss) andalso #1 (hd ss) = "*" then
+              let
+                val (comment_syms, rest) = consume_comment (tl ss) [hd ss, (s, p)]
+                val _ = report ctxt Markup.comment comment_syms
+              in 
+                scan rest 
+              end
+            else if is_alnum s then
+              let
+                val (word_syms, rest) = take_word ss [(s, p)]
+                val _ = report ctxt Markup.free word_syms
+              in
+                scan rest
+              end
+            else 
+              scan ss
+    in 
+      scan syms 
+    end
+
+end
+\<close>
+ML\<open>
 structure MlLexYacc = struct
-  fun generate_new verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
+
+  fun generate verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
     Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
+        val ctxt = Proof_Context.init_global thy
+
         val _ = Option.map ML_Lex.read_source lex_decl
         val _ = Option.map ML_Lex.read_source yacc_decl
 
-        val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("", Position.none) 
+        val _ = MlLexYaccHighlighter.scan_yacc_defs ctxt yacc_defs
+        val _ = MlLexYaccHighlighter.scan_yacc_rules ctxt yacc_rules
+        val _ = MlLexYaccHighlighter.scan_lex_defs ctxt lex_defs
+        val _ = MlLexYaccHighlighter.scan_lex_rules ctxt lex_rules
+
+        val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("\n", Position.none) 
         val (lex_defs_str, lex_defs_pos) = Input.source_content lex_defs
         val (lex_rules_str, lex_rules_pos) = Input.source_content lex_rules
 
@@ -91,7 +404,6 @@ structure MlLexYacc = struct
         val _ = File.write lex_file lex_spec
         val _ = File.write yacc_file yacc_spec
         val _ = MlLexExe.run (File.platform_path lex_file)
-        val ctxt = Proof_Context.init_global thy
 
         (* val _ = Isabelle_lex_yacc.set yacc_defs ctxt *) 
         val _ = MlYaccExe.run (File.platform_path yacc_file)
@@ -193,12 +505,83 @@ in
               val is_no_linking = member (op =) opts "no_linking" 
             in
               Toplevel.theory (fn thy => 
-                MlLexYacc.generate_new is_verbose is_expert is_no_linking name 
+                MlLexYacc.generate is_verbose is_expert is_no_linking name 
                   lex_user lex_defs lex_rules 
                   yacc_user yacc_defs yacc_rules thy)
             end)
         )
 end
+\<close>
+
+section \<open>Manual\<close>
+
+text \<open>
+  **Synopsis**
+  The @{command "ml_lex_yacc"} command provides an integrated, Isar-level interface for defining 
+  and generating Standard ML parsers using ML-Lex and ML-Yacc directly within Isabelle theories. 
+  It processes lexical and grammatical specifications, compiles them into SML structures, 
+  and loads them into the current Isabelle theory context.
+
+  @{rail \<open>
+    @@{command ml_lex_yacc} ('[' (name + ',') ']')? name 'where'
+      lex_spec 'and' yacc_spec
+    ;
+    lex_spec: ('lex_user_declarations' text)?
+              'lex_definitions' text
+              'lex_rules' text
+    ;
+    yacc_spec: ('yacc_user_declarations' text)?
+               'yacc_definitions' text
+               'yacc_rules' text
+  \<close>}
+
+  Description
+  \<^item> \<open>name\<close>: Specifies the name of the parser. By default, it is also used as prefix for the 
+    generated SML structures. For example, providing the name "MyLang" will generate underlying 
+    ML structures like \<open>MyLangLex\<close>, \<open>MyLangLrVals\<close>, and a unified \<open>MyLangParser\<close>. In expert mode 
+    (see below), the SML structures will be named based on the lex and yacc directives that are 
+    part of the lex and yacc specifications (e.g., \<open>%name\<close>). 
+
+  \<^item> The lex specification is broken into three parts. In the original lex specification, these 
+    parts are separated by \<open>%%\<close> (which should be omitted here). Furthermore, by default no directives
+    specifying functors or names should be included, as they break the automated linking): 
+
+    \<^item> \<open>lex_user_declarations\<close> (optional): An embedded ML source block containing user-level
+      SML code (e.g., token type aliases, state variables, or helper functions). 
+
+    \<^item> \<open>lex_definitions\<close>: The ml-lex definitions, such as regular expression macros (e.g., 
+      \<open>alpha=[A-Za-z];\<close>) and lexer state declarations (e.g., \<open>%s COMMENT;\<close>).
+
+    \<^item> \<open>lex_rules\<close>: The ml-lex scanning rules and their corresponding SML semantic actions.
+
+  \<^item> The yacc specification is broken into three parts. In the original lex specification, these 
+    parts are separated by \<open>%%\<close> (which should be omitted here). Furthermore, by default no directives
+    specifying functors or names should be included, as they break the automated linking): 
+
+    \<^item> \<open>yacc_user_declarations\<close> (optional): An embedded ML source block containing user-level 
+      SML code to be injected at the top of the generated parser. Useful for defining custom 
+      datatypes or helper functions used in semantic actions.
+
+    \<^item> \<open>yacc_definitions\<close>: A cartouche containing ML-Yacc definitions, including \<open>%term\<close> and 
+      \<open>%nonterm\<close> declarations, associativity, and start symbols.
+
+    \<^item> \<open>yacc_rules\<close>**: A cartouche containing the ML-Yacc grammar productions (BNF format) and 
+      their corresponding SML semantic actions.
+
+  \<^item> The command accepts two configuration options that can be provided as a comma-separated list 
+    enclosed in square brackets \<open>[ ... ]\<close> immediately following the command name:
+
+    \<^item> \<open>verbose\<close>: Instructs the underlying ML-Yacc/ML-Lex generator to output verbose
+      information. Generated artifacts  (such as SML code or the automaton descrcripton) are stored
+      for inspection in Isabelle's virtual file system. 
+
+    \<^item> \<open>expert\<close>: Enables advanced/expert mode where the specified lex and yacc specifications are 
+      passed unmodified to lex yacc (except adding the \<open>%%\<close> separators between the three block 
+      of each specification. Furthermore, automated linking is disabled in expert mode. 
+
+    \<^item> \<open>no_linking\<close>: Skips the automatic generation of the boilerplate "linking" structure 
+      (the code that normally joins the Lexer, ParserData, and LrVals together). This is useful 
+      if you intend to manually wire the generated ML functor blocks together later.
 \<close>
 
 
