@@ -317,6 +317,7 @@ structure MlLexYaccHighlighter:ML_LEX_YACC_HIGHLIGHTER = struct
       scan syms 
     end
 
+
   fun scan_yacc_rules ctxt source =
     let
       val syms = Input.source_explode source
@@ -370,6 +371,14 @@ structure MlLexYacc = struct
 
   fun generate verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
       let
+        fun store show_msg ext data  = 
+          let
+            val dir_name = "lex_yacc"
+            fun path_of ext = (Path.make [dir_name, name^"."^ext])
+            val _ = Export.export thy (Path.binding0 (path_of ext)) (Bytes.contents_blob (Bytes.string data))
+          in
+            if show_msg then writeln(Export.message thy (Path.make [dir_name])) else ()
+          end
         val ctxt = Proof_Context.init_global thy
 
         val _ = Option.map ML_Lex.read_source lex_decl
@@ -398,9 +407,10 @@ structure MlLexYacc = struct
         val lex_pos_vec = Vector.fromList (map #2 lex_syms @ [Position.none]);
         fun lex_pos_map offset = Vector.sub (lex_pos_vec, Int.min (Int.max (0, offset), Vector.length lex_pos_vec - 1));
         val _ = Isabelle_lex_yacc.reset()  
+        val _ = if verbose then store true "lex" lex_spec_string else ()
         val lex_sml = MlLexExe.run verbose (SOME lex_pos_map) lex_spec_string
         val _ = Isabelle_lex_yacc.reset()  
-
+        val _ = if verbose then store false "lex.sml" lex_sml else ()
 
         val yacc_decl_syms = case yacc_decl of NONE => [] | SOME l => Input.source_explode l
         val yacc_syms = if expert
@@ -418,13 +428,19 @@ structure MlLexYacc = struct
         val yacc_spec_string = Symbol_Pos.content yacc_syms;
         val yacc_pos_vec = Vector.fromList (map #2 yacc_syms @ [Position.none]);
         fun yacc_pos_map offset = Vector.sub (yacc_pos_vec, Int.min (Int.max (0, offset), Vector.length yacc_pos_vec - 1));
-        val _ = Isabelle_lex_yacc.reset()  
+        val _ = if verbose then store false "grm" yacc_spec_string else ()
+
+        val _ = Isabelle_lex_yacc.reset()
+  
         val yacc_res = MlYaccExe.run verbose (SOME yacc_pos_map) yacc_spec_string
         val _ = Isabelle_lex_yacc.reset()  
         val yacc_sig = #sigs yacc_res
         val yacc_sml = #ml yacc_res
         val yacc_desc = #desc yacc_res
         val _ = Isabelle_lex_yacc.reset()  
+        val _ = if verbose then store false "grm.sml" yacc_sml else ()
+        val _ = if verbose then store false "grm.sig" yacc_sig else ()
+        val _ = if verbose then case yacc_desc of SOME data => store false "grm.desc" data | NONE => () else ()
 
         val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml
 
@@ -442,6 +458,7 @@ structure MlLexYacc = struct
         ) thy
 
         val link_sml = Isabelle_lex_yacc.linker name
+        val _ = if verbose then store false "link.sml" link_sml else ()
         val thy'' = if expert orelse no_linking 
                     then thy'
                     else let 
@@ -460,25 +477,6 @@ structure MlLexYacc = struct
                       ) thy'
                     end
 
-        val _ = if verbose 
-                then let
-                  val dir_name = "lex_yacc"
-                  fun path_of ext = (Path.make [dir_name, name^"."^ext])
-                  val _ = case yacc_desc of 
-                            SOME txt => Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
-                          | NONE => ()
-                  val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec_string))
-                  val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec_string))
-                  val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
-                  val _ = Export.export thy (Path.binding0 (path_of "grm.sml")) (Bytes.contents_blob (Bytes.string yacc_sml))
-                  val _ = Export.export thy (Path.binding0 (path_of "grm.sig")) (Bytes.contents_blob (Bytes.string yacc_sig))
-                  val _ = if expert 
-                          then () 
-                          else Export.export thy (Path.binding0 (path_of "link.sml")) (Bytes.contents_blob (Bytes.string link_sml))
-                in
-                  writeln(Export.message thy (Path.make [dir_name]))
-                end
-        else ()
       in
         thy''
       end;
