@@ -225,7 +225,7 @@ end
 
 signature LEXGEN =
   sig
-     val lexGen: (int -> Position.T) option -> string -> string
+     val lexGen: bool -> (int -> Position.T) option -> string -> string
   end
 
 structure LexGen: LEXGEN =
@@ -400,6 +400,7 @@ open dict;
 val LineNum = ref 1;
 val pos = ref 0;
 val pos_map = ref NONE;
+val tracing = ref false;
 
 abstype ibuf =
         BUF of {b : string, p : int ref}
@@ -1123,15 +1124,16 @@ fun maketable (fins:(int * (int list)) list,
               end
 *)
 
-        fun msg x = TextIO.output(TextIO.stdOut, x)
+        fun msg x = if !tracing then pide_writeln x else ()
 
   in (say "in Vector.fromList(List.map g \n["; makeTable(rs,newfins);
       say "])\nend\n";
-    msg ("\nNumber of states = " ^ (Int.toString (length trans)));
-    msg ("\nNumber of distinct rows = " ^ (Int.toString (!count)));
-    msg ("\nApprox. memory size of trans. table = " ^
-          (Int.toString (!count*(!CharSetSize)*(if !CharFormat then 1 else 8))));
-    msg " bytes\n")
+    msg ("ml-lex stats:");
+    msg ("  Number of states = " ^ (Int.toString (length trans)));
+    msg ("  Number of states = " ^ (Int.toString (length trans)));
+    msg ("  Number of distinct rows = " ^ (Int.toString (!count)));
+    msg ("  Approx. memory size of trans. table = " ^
+          (Int.toString (!count*(!CharSetSize)*(if !CharFormat then 1 else 8)))^" bytes"))
 end
 
 (* makeaccept: Takes a (string,string) dictionary, prints case statement for
@@ -1292,8 +1294,8 @@ val skel_mid2 =
 \                          end\n\
 \"
 
-fun lexGen positions spec_string =
-    (pos_map := positions;let val () = (InFile := "input"; OutFile := "output")
+fun lexGen verbose positions spec_string =
+    (tracing := verbose; pos_map := positions;let val () = (InFile := "input"; OutFile := "output")
       fun PrintLexer (ends) =
     let val sayln = fn x => (say x; say "\n")
      in case !ArgCode
