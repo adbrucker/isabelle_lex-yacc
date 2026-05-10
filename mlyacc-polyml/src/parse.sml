@@ -1,3 +1,4 @@
+(* Modified by Achim D. Brucker to work "in-memory" for improved Isabelle/PIDE integration. *)
 (* Modified by Vesa Karvonen on 2007-12-18.
  * Create line directives in output.
  *)
@@ -13,16 +14,22 @@ functor ParseGenParserFun(structure Header : HEADER
 
  struct
       structure Header = Header
-      val parse = fn file =>
+      val parse = fn spec =>
           let
-              val in_str = TextIO.openIn file
-              val source = Header.newSource(file,in_str,TextIO.stdOut)
+              val spec_ref = ref spec
+              val read_fn = fn i =>
+                  let val current = !spec_ref
+                      val len = String.size current
+                      val take = Int.min(i, len)
+                      val result = String.substring(current, 0, take)
+                      val _ = spec_ref := String.extract(current, take, NONE)
+                  in result end
+              val source = Header.newSource("",TextIO.stdIn,TextIO.stdOut)
               val error = fn (s : string,p:Header.pos,_) =>
                               Header.error source p s
-              val stream =  Parser.makeLexer (fn i => (TextIO.inputN(in_str,i)))
-                            source
+              val stream =  Parser.makeLexer read_fn source
               val (result,_) = (Header.text := nil;
                                 Parser.parse(15,stream,error,source))
-           in (TextIO.closeIn in_str; (result,source))
+           in (result,source)
            end
   end;

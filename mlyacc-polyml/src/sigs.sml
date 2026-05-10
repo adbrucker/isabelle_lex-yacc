@@ -1,3 +1,4 @@
+(* Modified by Achim D. Brucker to work "in-memory" for improved Isabelle/PIDE integration. *)
 (* Modified by Vesa Karvonen on 2007-12-18.
  * Create line directives in output.
  *)
@@ -61,7 +62,7 @@ signature PARSE_GEN_PARSER =
 
 signature PARSE_GEN =
   sig
-    val parseGen : string -> unit
+    val parseGen : bool -> string -> {sigs : string, ml : string, desc : string option}
   end;
 
 signature GRAMMAR =

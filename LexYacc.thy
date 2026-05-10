@@ -364,7 +364,6 @@ ML\<open>
 structure MlLexYacc = struct
 
   fun generate verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
-    Isabelle_System.with_tmp_dir "lex_yacc" (fn input_path =>
       let
         val ctxt = Proof_Context.init_global thy
 
@@ -397,19 +396,16 @@ structure MlLexYacc = struct
                             yacc_defs_str^"\n%%\n"^
                             yacc_rules_str  
 
-        val input_path = (Path.append input_path (Path.make ["input"]))
-        val yacc_file = Path.ext "grm" input_path
- 
-        val _ = File.write yacc_file yacc_spec
         val lex_sml = MlLexExe.run lex_spec
 
         val _ = Isabelle_lex_yacc.reset()  
         (* val _ = Isabelle_lex_yacc.set yacc_defs ctxt *) 
-        val _ = MlYaccExe.run (File.platform_path yacc_file)
+        val yacc_res = MlYaccExe.run verbose yacc_spec
+        val yacc_sig = #sigs yacc_res
+        val yacc_sml = #ml yacc_res
+        val yacc_desc = #desc yacc_res
         val _ = Isabelle_lex_yacc.reset()  
 
-        val yacc_sig = File.read (Path.ext "grm.sig" input_path)
-        val yacc_sml = File.read (Path.ext "grm.sml" input_path)
         val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml
 
         val toks =
@@ -429,7 +425,6 @@ structure MlLexYacc = struct
         val thy'' = if expert orelse no_linking 
                     then thy'
                     else let 
-
                     val toks =
                       ML_Lex.read link_sml
                       |> map (fn Antiquote.Text tok => tok 
@@ -449,11 +444,9 @@ structure MlLexYacc = struct
                 then let
                   val dir_name = "lex_yacc"
                   fun path_of ext = (Path.make [dir_name, name^"."^ext])
-                  val grm_desc_path = (Path.ext "grm.desc" input_path)
-                  val _ = if File.exists grm_desc_path 
-                          then let val txt = File.read (Path.ext "grm.desc" input_path) in 
-                                Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
-                          end else {} 
+                  val _ = case yacc_desc of 
+                            SOME txt => Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
+                          | NONE => ()
                   val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec))
                   val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec))
                   val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
@@ -468,7 +461,7 @@ structure MlLexYacc = struct
         else ()
       in
         thy''
-      end);
+      end;
 
 end
 \<close>

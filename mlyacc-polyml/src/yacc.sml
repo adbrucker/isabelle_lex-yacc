@@ -1,3 +1,4 @@
+(* Modified by Achim D. Brucker to work "in-memory" for improved Isabelle/PIDE integration. *)
 (* Modified by Matthew Fluet on 2011-06-17.
  * Use simple file name (rather than absolute paths) in line directives in output.
  *)
@@ -424,9 +425,9 @@ let val printAbsynRule = Absyn.printRule(say,sayln,fmtPos)
          DECL {eop,change,keyword,nonterm,prec,
                term, control,value} : declData,
                rules : rule list),spec,error : pos -> string -> unit,
-               wasError : unit -> bool) =>
+               wasError : unit -> bool, flag_verbose: bool) =>
      let
-        val verbose = List.exists (fn VERBOSE=>true | _ => false) control
+        val verbose = flag_verbose orelse List.exists (fn VERBOSE=>true | _ => false) control
         val defaultReductions = not (List.exists (fn NODEFAULT=>true | _ => false) control)
         val pos_type =
            let fun f nil = NONE
@@ -778,13 +779,14 @@ precedences of the rule and the terminal are equal.
 
         val entries = ref 0 (* save number of action table entries here *)
 
-    in  let val result = TextIO.openOut (spec ^ ".sml")
-            val sigs = TextIO.openOut (spec ^ ".sig")
-            val specFile = OS.Path.file spec
-            val resultFile = specFile ^ ".sml"
+    in  let val resultList = ref ([] : string list)
+            val sigsList = ref ([] : string list)
+            val specFile = ""
+            val resultFile = ""
             val line = ref 1
             val col = ref 0
-            val pr = fn s => TextIO.output(result,s)
+            val pr = fn s => resultList := s :: !resultList
+            val pr_sig = fn s => sigsList := s :: !sigsList
             val say = fn s =>
                (CharVector.app (fn #"\n" => (line := !line + 1 ; col := 0)
                                  | _     => col := !col + 1)
@@ -854,35 +856,35 @@ precedences of the rule and the terminal are equal.
             sayln "end";
             printTokenStruct(values,names);
             sayln "end";
-            printSigs(values,names,fn s => TextIO.output(sigs,s));
-            TextIO.closeOut sigs;
-            TextIO.closeOut result;
-            MakeTable.Errs.printSummary (fn s => TextIO.output(TextIO.stdOut,s)) errs
-        end;
-        if verbose then
-         let val f = TextIO.openOut (spec ^ ".desc")
-             val say = fn s=> TextIO.output(f,s)
-             val printRule =
-                let val rules = Array.fromList grammarRules
-                in fn say =>
-                   let val prRule = fn {lhs,rhs,precedence,rulenum} =>
-                     ((say o nontermToString) lhs; say " : ";
-                      app (fn s => (say (symbolToString s); say " ")) rhs)
-                   in fn i => prRule (rules sub i)
-                   end
-                end
-         in Verbose.printVerbose
-            {termToString=termToString,nontermToString=nontermToString,
-             table=table, stateErrs=stateErrs,errs = errs,entries = !entries,
-             print=say, printCores=corePrint,printRule=printRule};
-            TextIO.closeOut f
-         end
-        else ()
+            printSigs(values,names,pr_sig);
+            MakeTable.Errs.printSummary (fn s => TextIO.output(TextIO.stdOut,s)) errs;
+            let val descOpt = if verbose then
+                 let val descList = ref ([] : string list)
+                     val say_desc = fn s => descList := s :: !descList
+                     val printRule =
+                        let val rules = Array.fromList grammarRules
+                        in fn say =>
+                           let val prRule = fn {lhs,rhs,precedence,rulenum} =>
+                             ((say_desc o nontermToString) lhs; say_desc " : ";
+                              app (fn s => (say_desc (symbolToString s); say_desc " ")) rhs)
+                           in fn i => prRule (rules sub i)
+                           end
+                        end
+                 in Verbose.printVerbose
+                    {termToString=termToString,nontermToString=nontermToString,
+                     table=table, stateErrs=stateErrs,errs = errs,entries = !entries,
+                     print=say_desc, printCores=corePrint,printRule=printRule};
+                    SOME (String.concat (rev (!descList)))
+                 end
+                else NONE
+            in {sigs = String.concat (rev (!sigsList)), ml = String.concat (rev (!resultList)), desc = descOpt}
+            end
+        end
     end
 
-    val parseGen = fn spec =>
+    val parseGen = fn verbose => fn spec =>
                 let val (result,inputSource) = ParseGenParser.parse spec
                 in make_parser(getResult result,spec,Header.error inputSource,
-                                errorOccurred inputSource)
+                                errorOccurred inputSource, verbose)
                 end
 end;
