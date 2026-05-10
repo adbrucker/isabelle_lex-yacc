@@ -6,6 +6,11 @@ keywords "ml_lex_yacc" :: thy_decl
     "yacc_user_declarations" "yacc_definitions" "yacc_rules" :: quasi_command
 begin 
 
+SML_import \<open>val pide_error = error \<close>
+SML_import \<open>val pide_warning = warning \<close>
+SML_import \<open>val pide_writeln = writeln \<close>
+
+
 section\<open>ML Lex\<close>
 SML_file \<open>mllex-polyml/LexGen.sml\<close>
 SML_export \<open>structure MlLexExe = struct val run = LexGen.lexGen end\<close> 
@@ -375,20 +380,33 @@ structure MlLexYacc = struct
         val _ = MlLexYaccHighlighter.scan_lex_defs ctxt lex_defs
         val _ = MlLexYaccHighlighter.scan_lex_rules ctxt lex_rules
 
-        val (lex_decl_str, lex_decl_pos) = case lex_decl of SOME d => Input.source_content d | NONE => ("\n", Position.none) 
-        val (lex_defs_str, lex_defs_pos) = Input.source_content lex_defs
-        val (lex_rules_str, lex_rules_pos) = Input.source_content lex_rules
-
         val (yacc_decl_str, yacc_decl_pos) = case yacc_decl of SOME d => Input.source_content d | NONE => ("", Position.none)
         val (yacc_defs_str, yacc_defs_pos) = Input.source_content yacc_defs
         val (yacc_rules_str, yacc_rules_pos) = Input.source_content yacc_rules
 
-        val lex_spec = if expert 
-                       then lex_decl_str^"\n%%\n"^lex_defs_str^"\n%%\n"^lex_rules_str
-                       else Isabelle_lex_yacc.header()^"\n"^
-                            lex_decl_str^"\n%%\n"^
-                            "%header (functor "^name^"LexFun(structure Tokens: "^name^"_TOKENS));\n"^
-                            lex_defs_str^"\n%%\n"^lex_rules_str
+
+        val lex_decl_syms = case lex_decl of NONE => [] | SOME l => Input.source_explode l
+        val lex_syms = if expert
+                       then (lex_decl_syms)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode lex_defs)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode lex_rules)
+                       else (Symbol_Pos.explode(Isabelle_lex_yacc.header()^"\n", Position.none))@
+                            (lex_decl_syms)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Symbol_Pos.explode("%header (functor "^name^"LexFun(structure Tokens: "^name^"_TOKENS));\n", Position.none))@
+                            (Input.source_explode lex_defs)@
+                            (Symbol_Pos.explode("\n%%\n", Position.none))@
+                            (Input.source_explode lex_rules)
+        val lex_spec_string = Symbol_Pos.content lex_syms;
+        val lex_pos_vec = Vector.fromList (map #2 lex_syms @ [Position.none]);
+        fun lex_pos_map offset = Vector.sub (lex_pos_vec, Int.min (Int.max (0, offset), Vector.length lex_pos_vec - 1));
+        val _ = Isabelle_lex_yacc.reset()  
+        val lex_sml = MlLexExe.run (SOME lex_pos_map) lex_spec_string
+        val _ = Isabelle_lex_yacc.reset()  
+
+
         val yacc_spec = if expert 
                        then yacc_decl_str^"\n%%\n"^yacc_defs_str^"\n%%\n"^yacc_rules_str
                        else yacc_decl_str^"\n%%\n"^
@@ -396,10 +414,6 @@ structure MlLexYacc = struct
                             yacc_defs_str^"\n%%\n"^
                             yacc_rules_str  
 
-        val lex_sml = MlLexExe.run lex_spec
-
-        val _ = Isabelle_lex_yacc.reset()  
-        (* val _ = Isabelle_lex_yacc.set yacc_defs ctxt *) 
         val yacc_res = MlYaccExe.run verbose yacc_spec
         val yacc_sig = #sigs yacc_res
         val yacc_sml = #ml yacc_res
@@ -447,7 +461,7 @@ structure MlLexYacc = struct
                   val _ = case yacc_desc of 
                             SOME txt => Export.export thy (Path.binding0 (path_of "grm.desc")) (Bytes.contents_blob (Bytes.string txt))
                           | NONE => ()
-                  val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec))
+                  val _ = Export.export thy (Path.binding0 (path_of "lex")) (Bytes.contents_blob (Bytes.string lex_spec_string))
                   val _ = Export.export thy (Path.binding0 (path_of "grm")) (Bytes.contents_blob (Bytes.string yacc_spec))
                   val _ = Export.export thy (Path.binding0 (path_of "lex.sml")) (Bytes.contents_blob (Bytes.string lex_sml))
                   val _ = Export.export thy (Path.binding0 (path_of "grm.sml")) (Bytes.contents_blob (Bytes.string yacc_sml))

@@ -225,7 +225,7 @@ end
 
 signature LEXGEN =
   sig
-     val lexGen: string -> string
+     val lexGen: (int -> Position.T) option -> string -> string
   end
 
 structure LexGen: LEXGEN =
@@ -398,12 +398,13 @@ open dict;
 (* INPUT.ML : Input w/ one character push back capability *)
 
 val LineNum = ref 1;
+val pos = ref 0;
+val pos_map = ref NONE;
 
 abstype ibuf =
         BUF of {b : string, p : int ref}
 with
         local
-           val pos = ref 0
            val linePos = ref 0 (* incorrect after ungetch newline, non fatal *)
         in
         fun resetLexPos () = (LineNum := 1; pos := 0; linePos :=0)
@@ -434,17 +435,26 @@ end;
 
 exception Error
 
-fun prErr x = (
-      TextIO.output (TextIO.stdErr, String.concat [
-          "ml-lex: error, line ", (Int.toString (!LineNum)), ": ", x, "\n"
-        ]);
-      raise Error)
-fun prSynErr x = (
-      TextIO.output (TextIO.stdErr, String.concat [
-          "ml-lex: syntax error, line ", (Int.toString (!LineNum)), ": ", x, "\n"
-        ]);
-      raise Error)
-
+fun prErr x = 
+      let
+            val pos_str = case !pos_map of NONE => ""
+                                        | SOME m => Position.here (m (!pos -1))
+      in (
+          pide_error  (String.concat [
+              "ml-lex: error, line ", (Int.toString (!LineNum)), ": ", x, pos_str
+            ]);
+          raise Error)
+      end
+fun prSynErr x = 
+      let
+            val pos_str = case !pos_map of NONE => ""
+                                        | SOME m => Position.here (m (!pos -1))
+      in (
+          pide_error  (String.concat [
+              "ml-lex: syntax error '", x, "' position ", (Int.toString (!pos - 1)), pos_str
+            ]);
+          raise Error)
+      end
 exception SyntaxError; (* error in user's input file *)
 
 exception LexError; (* unexpected error in lexer *)
@@ -1282,8 +1292,8 @@ val skel_mid2 =
 \                          end\n\
 \"
 
-fun lexGen (spec_string) =
-    let val () = (InFile := "input"; OutFile := "output")
+fun lexGen positions spec_string =
+    (pos_map := positions;let val () = (InFile := "input"; OutFile := "output")
       fun PrintLexer (ends) =
     let val sayln = fn x => (say x; say "\n")
      in case !ArgCode
@@ -1435,5 +1445,5 @@ fun lexGen (spec_string) =
           close_ibuf(!LexBuf);
           String.concat (rev (!LexOut))
          end)
-    end
+    end)
 end
