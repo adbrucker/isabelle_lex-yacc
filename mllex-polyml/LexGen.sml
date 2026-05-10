@@ -1294,8 +1294,8 @@ val skel_mid2 =
 \                          end\n\
 \"
 
-fun lexGen verbose positions spec_string =
-    (tracing := verbose; pos_map := positions;let val () = (InFile := "input"; OutFile := "output")
+fun lexGen verbose position_map spec_string =
+    (tracing := verbose; pos_map := position_map;let val () = (InFile := "input"; OutFile := "output")
       fun PrintLexer (ends) =
     let val sayln = fn x => (say x; say "\n")
      in case !ArgCode
