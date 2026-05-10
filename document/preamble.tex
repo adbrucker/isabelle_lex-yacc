@@ -1,0 +1,23 @@
+\title{Lex and Yacc for Isabelle/ML}
+\author{}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\makeatletter
+\newcommand{\dotminus}{\ensuremath{\mathbin{\text{\@dotminus}}}}
+
+ \newcommand{\@dotminus}{%
+  \ooalign{\hidewidth\raise1ex\hbox{.}\hidewidth\cr$\m@th-$\cr}%
+ }
+ \makeatother
+
+\newcommand{\ocircle}{\circ}
+\newcommand{\isasymdotminus}{\dotminus}
+\newcommand{\sidemark}[1]{\mbox{}\marginpar[\small\raggedleft\hspace{0pt}#1]{\small\raggedright\hspace{0pt}#1}}
+\newcommand{\key}[1]{\emph{#1}\sidemark{#1}}
+\newtheorem{definition}{Definition}[section]
+
+\renewcommand{\setisabellecontext}[1]{\markright{\href{#1.html}{#1.thy}}}
+\isabellestyle{literalunderscore}
+
