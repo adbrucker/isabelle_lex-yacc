@@ -507,22 +507,21 @@ end
 section \<open>Manual\<close>
 
 text \<open>
-  **Synopsis**
   The @{command "ml_lex_yacc"} command provides an integrated, Isar-level interface for defining 
   and generating Standard ML parsers using ML-Lex and ML-Yacc directly within Isabelle theories. 
   It processes lexical and grammatical specifications, compiles them into SML structures, 
   and loads them into the current Isabelle theory context.
 
   @{rail \<open>
-    @@{command ml_lex_yacc} ('[' (name + ',') ']')? name 'where'
+    @@{command ml_lex_yacc} ('[' (name + ',') ']')? name \<newline> 'where'
       lex_spec 'and' yacc_spec
     ;
     lex_spec: ('lex_user_declarations' text)?
-              'lex_definitions' text
+              'lex_definitions'  \<newline> text
               'lex_rules' text
     ;
     yacc_spec: ('yacc_user_declarations' text)?
-               'yacc_definitions' text
+               'yacc_definitions'  \<newline> text
                'yacc_rules' text
   \<close>}
 
@@ -556,7 +555,7 @@ text \<open>
     \<^item> \<open>yacc_definitions\<close>: A cartouche containing ML-Yacc definitions, including \<open>%term\<close> and 
       \<open>%nonterm\<close> declarations, associativity, and start symbols.
 
-    \<^item> \<open>yacc_rules\<close>**: A cartouche containing the ML-Yacc grammar productions (BNF format) and 
+    \<^item> \<open>yacc_rules\<close>: A cartouche containing the ML-Yacc grammar productions (BNF format) and 
       their corresponding SML semantic actions.
 
   \<^item> The command accepts two configuration options that can be provided as a comma-separated list 
