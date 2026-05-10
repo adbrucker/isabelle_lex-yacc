@@ -1,3 +1,4 @@
+(* Modified by Achim D. Brucker to work "in-memory" for improved Isabelle/PIDE integration. *)
 (* Modified by Matthew Fluet on 2011-06-17.
  * Use simple file name (rather than absolute paths) in line directives in output.
  *)
@@ -224,7 +225,7 @@ end
 
 signature LEXGEN =
   sig
-     val lexGen: string -> unit
+     val lexGen: string -> string
   end
 
 structure LexGen: LEXGEN =
@@ -286,11 +287,11 @@ structure LexGen: LEXGEN =
                                 StrDecl := false;
                               PosIntName := "Int"; PosIntDecl := false)
 
-   val LexOut = ref(TextIO.stdOut)
+   val LexOut = ref ([] : string list)
    val LexOutLine = ref 1
-   fun setLexOut s = (LexOut := s; LexOutLine := 1)
+   fun setLexOut () = (LexOut := []; LexOutLine := 1)
    fun say x =
-       (TextIO.output (!LexOut, x)
+       (LexOut := x :: !LexOut
       ; CharVector.app
            (fn #"\n" => LexOutLine := !LexOutLine + 1 | _ => ())
            x)
@@ -399,7 +400,7 @@ open dict;
 val LineNum = ref 1;
 
 abstype ibuf =
-        BUF of TextIO.instream * {b : string ref, p : int ref}
+        BUF of {b : string, p : int ref}
 with
         local
            val pos = ref 0
@@ -407,17 +408,13 @@ with
         in
         fun resetLexPos () = (LineNum := 1; pos := 0; linePos :=0)
         fun getLexPos () = {line = !LineNum, col = !pos - !linePos}
-        fun make_ibuf(s) = BUF (s, {b=ref"", p = ref 0})
-        fun close_ibuf (BUF (s,_)) = TextIO.closeIn(s)
+        fun make_ibuf(s) = BUF {b=s, p = ref 0}
+        fun close_ibuf (BUF _) = ()
         exception eof
-        fun getch (a as (BUF(s,{b,p}))) =
-                 if (!p = (size (!b)))
-                   then (b := TextIO.inputN(s, 1024);
-                         p := 0;
-                         if (size (!b))=0
-                            then raise eof
-                            else getch a)
-                   else (let val ch = String.sub(!b,!p)
+        fun getch (BUF{b,p}) =
+                 if (!p = (size b))
+                   then raise eof
+                   else (let val ch = String.sub(b,!p)
                          in (pos := !pos + 1;
                              if ch = #"\n"
                                  then (LineNum := !LineNum + 1;
@@ -426,10 +423,10 @@ with
                              p := !p + 1;
                              ch)
                          end)
-        fun ungetch(BUF(s,{b,p})) = (
+        fun ungetch(BUF{b,p}) = (
            pos := !pos - 1;
            p := !p - 1;
-           if String.sub(!b,!p) = #"\n"
+           if String.sub(b,!p) = #"\n"
               then LineNum := !LineNum - 1
               else ())
         end
@@ -452,7 +449,7 @@ exception SyntaxError; (* error in user's input file *)
 
 exception LexError; (* unexpected error in lexer *)
 
-val LexBuf = ref(make_ibuf(TextIO.stdIn));
+val LexBuf = ref(make_ibuf(""));
 val LexState = ref 0;
 val NextTok = ref BOF;
 val inquote = ref false;
@@ -1285,9 +1282,8 @@ val skel_mid2 =
 \                          end\n\
 \"
 
-fun lexGen (infile) =
-    let val outfile = infile ^ ".sml"
-        val () = (InFile := OS.Path.file infile; OutFile := OS.Path.file outfile)
+fun lexGen (spec_string) =
+    let val () = (InFile := "input"; OutFile := "output")
       fun PrintLexer (ends) =
     let val sayln = fn x => (say x; say "\n")
      in case !ArgCode
@@ -1381,10 +1377,10 @@ fun lexGen (infile) =
 
     in (UsesPrevNewLine := false;
         ResetFlags();
-        LexBuf := make_ibuf(TextIO.openIn infile);
+        LexBuf := make_ibuf spec_string;
         NextTok := BOF;
         inquote := false;
-        setLexOut (TextIO.openOut(outfile));
+        setLexOut ();
         StateNum := 2;
         resetLexPos ();
         StateTab := enter(create(String.<=))("INITIAL",1);
@@ -1393,14 +1389,10 @@ fun lexGen (infile) =
            val (user_code,rules,ends) =
                parse() handle x =>
                   (close_ibuf(!LexBuf);
-                   TextIO.closeOut(!LexOut);
-                   OS.FileSys.remove outfile;
                    raise x)
            val (fins,trans,tctab,tcpairs) = makedfa(rules)
            val _ = if !UsesTrailingContext then
                       (close_ibuf(!LexBuf);
-                       TextIO.closeOut(!LexOut);
-                       OS.FileSys.remove outfile;
                        prErr "lookahead is unimplemented")
                    else ()
         in
@@ -1441,7 +1433,7 @@ fun lexGen (infile) =
           \\t\t yybegin := x\n\n";
           PrintLexer(ends);
           close_ibuf(!LexBuf);
-           TextIO.closeOut(!LexOut)
+          String.concat (rev (!LexOut))
          end)
     end
 end

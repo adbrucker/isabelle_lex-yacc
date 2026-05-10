@@ -398,18 +398,16 @@ structure MlLexYacc = struct
                             yacc_rules_str  
 
         val input_path = (Path.append input_path (Path.make ["input"]))
-        val lex_file = Path.ext "lex" input_path
         val yacc_file = Path.ext "grm" input_path
  
-        val _ = File.write lex_file lex_spec
         val _ = File.write yacc_file yacc_spec
-        val _ = MlLexExe.run (File.platform_path lex_file)
+        val lex_sml = MlLexExe.run lex_spec
 
+        val _ = Isabelle_lex_yacc.reset()  
         (* val _ = Isabelle_lex_yacc.set yacc_defs ctxt *) 
         val _ = MlYaccExe.run (File.platform_path yacc_file)
         val _ = Isabelle_lex_yacc.reset()  
 
-        val lex_sml = File.read (Path.ext "lex.sml" input_path)
         val yacc_sig = File.read (Path.ext "grm.sig" input_path)
         val yacc_sml = File.read (Path.ext "grm.sml" input_path)
         val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml
