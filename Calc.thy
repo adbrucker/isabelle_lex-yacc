@@ -16,20 +16,20 @@ lex_rules\<open>
 \n       => (lex());
 {ws}+    => (lex());
 
-{digit}+ => (tok_val (yypos, yytext, Markup.numeral, "NUM", Tokens.NUM, valOf (Int.fromString yytext)));
+{digit}+ => (tok_val (yypos, yytext, Markup.numeral, "NUM", "", Tokens.NUM, valOf (Int.fromString yytext)));
 
-"+"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", Tokens.PLUS));
-"*"      => (tok (yypos, yytext, Markup.keyword2, "TIMES", Tokens.TIMES));
-";"      => (tok (yypos, yytext, Markup.delimiter, "SEMI", Tokens.SEMI));
+"++"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", "", Tokens.PLUS));
+"*"      => (tok (yypos, yytext, Markup.keyword2, "TIMES", "", Tokens.TIMES));
+";"      => (tok (yypos, yytext, Markup.delimiter, "SEMI", "", Tokens.SEMI));
 
 {alpha}+ => (if yytext="print"
-                 then tok (yypos, yytext, Markup.keyword1, "PRINT", Tokens.PRINT)
-                 else tok_val (yypos, yytext, Markup.free, "ID", Tokens.ID, yytext)
+                 then tok (yypos, yytext, Markup.keyword1, "PRINT", "", Tokens.PRINT)
+                 else tok_val (yypos, yytext, Markup.free, "ID", "", Tokens.ID, yytext)
             );
 
-"-"      => (tok (yypos, yytext, Markup.keyword2, "SUB", Tokens.SUB));
-"^"      => (tok (yypos, yytext, Markup.keyword2, "CARAT", Tokens.CARAT));
-"/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", Tokens.DIV));
+"-"      => (tok (yypos, yytext, Markup.keyword2, "SUB", "", Tokens.SUB));
+"^"      => (tok (yypos, yytext, Markup.keyword2, "CARAT", "", Tokens.CARAT));
+"/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", "", Tokens.DIV));
 .        => (lex());
 \<close>
 and yacc_user_declarations\<open>
@@ -80,7 +80,7 @@ ML\<open>
 fun calc source thy = 
     let 
       val ctxt = Proof_Context.init_global thy
-      val _ = writeln(Int.toString (Calc.parse_source ctxt source)) 
+      val _ = writeln((Int.toString (the (Calc.parse_source ctxt source))))
     in thy end
 
 val _ = Outer_Syntax.command @{command_keyword "calc"}
@@ -90,7 +90,7 @@ val _ = Outer_Syntax.command @{command_keyword "calc"}
 
 calc\<open>
 1
-  +
+  /
     3
    * (201 - 7)
 \<close>

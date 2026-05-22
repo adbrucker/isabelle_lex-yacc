@@ -371,6 +371,7 @@ structure MlLexYacc = struct
 
   fun generate verbose expert no_linking name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
       let
+        fun trace s = if verbose then writeln s else ()
         fun store show_msg ext data  = 
           let
             val dir_name = "lex_yacc"
@@ -408,8 +409,10 @@ structure MlLexYacc = struct
         fun lex_pos_map offset = Vector.sub (lex_pos_vec, Int.min (Int.max (0, offset), Vector.length lex_pos_vec - 1));
         val _ = Isabelle_lex_yacc.reset()  
         val _ = if verbose then store true "lex" lex_spec_string else ()
+        val _ = trace "Running lex ... "
         val lex_sml = MlLexExe.run verbose (SOME lex_pos_map) lex_spec_string
         val _ = Isabelle_lex_yacc.reset()  
+        val _ = trace "  Storing lex.sml ... "
         val _ = if verbose then store false "lex.sml" lex_sml else ()
 
         val yacc_decl_syms = case yacc_decl of NONE => [] | SOME l => Input.source_explode l
@@ -430,6 +433,7 @@ structure MlLexYacc = struct
         fun yacc_pos_map offset = Vector.sub (yacc_pos_vec, Int.min (Int.max (0, offset), Vector.length yacc_pos_vec - 1));
         val _ = if verbose then store false "grm" yacc_spec_string else ()
 
+        val _ = trace "Running yacc ... "
         val _ = Isabelle_lex_yacc.reset()
   
         val yacc_res = MlYaccExe.run verbose (SOME yacc_pos_map) yacc_spec_string
@@ -438,12 +442,14 @@ structure MlLexYacc = struct
         val yacc_sml = #ml yacc_res
         val yacc_desc = #desc yacc_res
         val _ = Isabelle_lex_yacc.reset()  
+        val _ = trace "  Storing grm.sml, grm.sig, and grm.desc ... "
         val _ = if verbose then store false "grm.sml" yacc_sml else ()
         val _ = if verbose then store false "grm.sig" yacc_sig else ()
         val _ = if verbose then case yacc_desc of SOME data => store false "grm.desc" data | NONE => () else ()
 
-        val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml
+        val generated_code = yacc_sig^"\n\n"^lex_sml^"\n\n"^yacc_sml 
 
+        val _ = trace "Reflecting generated code ... "
         val toks =
           ML_Lex.read generated_code
           |> map (fn Antiquote.Text tok => tok 
@@ -451,6 +457,7 @@ structure MlLexYacc = struct
         val flags: ML_Compiler.flags =
            {environment = ML_Env.SML_export, redirect = false, verbose = false, catch_all = true,
             debug = NONE, writeln = writeln, warning = warning}
+        val _ = trace "Reflecting generated code ... "
         val thy' = Context.theory_map (
           ML_Context.exec (fn () => 
             ML_Compiler.eval flags Position.none toks
@@ -462,6 +469,7 @@ structure MlLexYacc = struct
         val thy'' = if expert orelse no_linking 
                     then thy'
                     else let 
+                    val _ = trace "Linking ... "
                     val toks =
                       ML_Lex.read link_sml
                       |> map (fn Antiquote.Text tok => tok 

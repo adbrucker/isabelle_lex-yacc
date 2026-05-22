@@ -35,7 +35,7 @@ structure Isabelle_lex_yacc = struct
       if length syms >= 2 then List.take (tl syms, length syms - 2) else syms
     end
 
-  fun get_pos yypos =
+  fun get_pos yypos  =
     let
       val inner_syms = get_inner_syms (!src)
       val pos_vec = Vector.fromList inner_syms
@@ -48,17 +48,20 @@ structure Isabelle_lex_yacc = struct
       else #2 (Vector.sub (pos_vec, idx))
     end
 
-  fun report_token (start_idx, len, markup, token_type) =
-    let
-      fun report_char i =
-        if i < len then
-          let val p = get_pos (start_idx + i) in
+  fun report_token (start_idx, len, markup, token_type, token_sort) =
+        if 0 < len then
+          let val p_start = get_pos start_idx 
+              val p_end = get_pos (start_idx + len) 
+              val p = Position.range_position (Position.range(p_start, p_end))
+          in
             Context_Position.report (!ctxt) p markup;
-            Context_Position.report_text (!ctxt) p Markup.typing ("Token: " ^ token_type);
-            report_char (i + 1)
+            Context_Position.report_text (!ctxt) p Markup.typing (token_type);
+            Context_Position.report_text (!ctxt) p Markup.sorting(token_sort)
           end
         else ()
-    in report_char 0 end
+
+
+
 
   fun get_line_col p =
     let
@@ -86,28 +89,28 @@ structure Isabelle_lex_yacc = struct
             else scan (n - 1) (i + 1) line (col + 1)
     in scan limit 0 1 1 end
 
-  fun print_error (s, p: Position.T, _) =
+  fun print_error (s, p: Position.T, p') =
     let
       val start_line = the_default 1 (Position.line_of (Input.pos_of (!src)))
-      val _ = Position.report p Markup.error
+      val _ = Position.report (Position.range_position (Position.range(p,p')))  Markup.error 
       val (local_line, col) = get_line_col p
       val abs_line = start_line + local_line - 1
     in
       error ("Parse Error at line " ^ Int.toString abs_line ^
-             ", column " ^ Int.toString (col + 1) ^ ": " ^ s ^
-             Position.here p)
+             ", column " ^ Int.toString (col + 1) ^ ": " ^ s ^Position.here p)
     end
 
-  fun tok (yypos, yytext, markup, name, cons) =
+  fun tok (yypos, yytext, markup, typ, sort, cons) =
     let
       val p = get_pos yypos
-      val _ = report_token (yypos, String.size yytext, markup, name)
-    in cons (p, p) end
+      val p' = get_pos (yypos+(String.size yytext))
+      val _ = report_token (yypos, String.size yytext, markup, typ, sort)
+    in cons (p, p') end
 
-  fun tok_val (yypos, yytext, markup, name, cons, value) =
+  fun tok_val (yypos, yytext, markup, typ, sort, cons, value) =
     let
       val p = get_pos yypos
-      val _ = report_token (yypos, String.size yytext, markup, name)
+      val _ = report_token (yypos, String.size yytext, markup, typ, sort)
     in cons (value, p, p) end
 
   fun parse_source parse makeLexer get sameToken EOF source =
@@ -134,7 +137,7 @@ structure Isabelle_lex_yacc = struct
           else loop lexer 
         end
     in
-      the (#2 (loop lexer))
+      (#2 (loop lexer))
     end
 
   fun header () =

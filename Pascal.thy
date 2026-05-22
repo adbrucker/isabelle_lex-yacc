@@ -6,13 +6,6 @@ begin
 ml_lex_yacc [verbose] "Pascal" where
 lex_user_declarations\<open>
 
-open Isabelle_lex_yacc
-structure Tokens = Tokens
-type svalue = Tokens.svalue
-type ('a,'b) token = ('a,'b) Tokens.token
-type lexresult= (svalue,pos) token
-fun eof () = Tokens.EOF(Position.none, Position.none)
-
 (* Language-specific keyword hash table *)
 structure KeyWord : sig
     val find : string -> (Position.T * Position.T -> (svalue, Position.T) token) option
@@ -72,36 +65,36 @@ lex_rules\<open>
 <INITIAL>{alpha}+ => (case find (String.map Char.toLower yytext) of 
                         SOME v => 
                           let val p = get_pos yypos
-                              val _ = report_token (yypos, String.size yytext, Markup.keyword1, yytext)
+                              val _ = report_token (yypos, String.size yytext, Markup.keyword1, yytext, "")
                           in v(p, p) end
-                      | _ => tok (yypos, yytext, Markup.free, "YID", Tokens.YID));
-<INITIAL>{alpha}({alpha}|{digit})* => (tok (yypos, yytext, Markup.free, "YID", Tokens.YID));
-<INITIAL>{optsign}{integer}({frac}{exp}?|{frac}?{exp}) => (tok (yypos, yytext, Markup.numeral, "YNUMB", Tokens.YNUMB));
-<INITIAL>{optsign}{integer} => (tok (yypos, yytext, Markup.numeral, "YINT", Tokens.YINT));
-<INITIAL>{octdigit}+(b|B)   => (tok (yypos, yytext, Markup.numeral, "YBINT", Tokens.YBINT));
-<INITIAL>"'"([^']|"''")*"'" => (tok (yypos, yytext, Markup.string, "YSTRING", Tokens.YSTRING));
+                      | _ => tok (yypos, yytext, Markup.free, "YID", "", Tokens.YID));
+<INITIAL>{alpha}({alpha}|{digit})* => (tok (yypos, yytext, Markup.free, "YID", "", Tokens.YID));
+<INITIAL>{optsign}{integer}({frac}{exp}?|{frac}?{exp}) => (tok (yypos, yytext, Markup.numeral, "YNUMB", "", Tokens.YNUMB));
+<INITIAL>{optsign}{integer} => (tok (yypos, yytext, Markup.numeral, "YINT", "", Tokens.YINT));
+<INITIAL>{octdigit}+(b|B)   => (tok (yypos, yytext, Markup.numeral, "YBINT", "", Tokens.YBINT));
+<INITIAL>"'"([^']|"''")*"'" => (tok (yypos, yytext, Markup.string, "YSTRING", "", Tokens.YSTRING));
 <INITIAL>"(*"   => (YYBEGIN C; lex());
-<INITIAL>".."   => (tok (yypos, yytext, Markup.delimiter, "YDOTDOT", Tokens.YDOTDOT));
-<INITIAL>"."    => (tok (yypos, yytext, Markup.delimiter, "YDOT", Tokens.YDOT));
-<INITIAL>"("    => (tok (yypos, yytext, Markup.delimiter, "YLPAR", Tokens.YLPAR));
-<INITIAL>")"    => (tok (yypos, yytext, Markup.delimiter, "YRPAR", Tokens.YRPAR));
-<INITIAL>";"    => (tok (yypos, yytext, Markup.delimiter, "YSEMI", Tokens.YSEMI));
-<INITIAL>","    => (tok (yypos, yytext, Markup.delimiter, "YCOMMA", Tokens.YCOMMA));
-<INITIAL>":"    => (tok (yypos, yytext, Markup.delimiter, "YCOLON", Tokens.YCOLON));
-<INITIAL>"^"    => (tok (yypos, yytext, Markup.operator, "YCARET", Tokens.YCARET));
-<INITIAL>"["    => (tok (yypos, yytext, Markup.delimiter, "YLBRA", Tokens.YLBRA));
-<INITIAL>"]"    => (tok (yypos, yytext, Markup.delimiter, "YRBRA", Tokens.YRBRA));
-<INITIAL>"~"    => (tok (yypos, yytext, Markup.operator, "YTILDE", Tokens.YTILDE));
-<INITIAL>"<"    => (tok (yypos, yytext, Markup.operator, "YLESS", Tokens.YLESS));
-<INITIAL>"="    => (tok (yypos, yytext, Markup.operator, "YEQUAL", Tokens.YEQUAL));
-<INITIAL>">"    => (tok (yypos, yytext, Markup.operator, "YGREATER", Tokens.YGREATER));
-<INITIAL>"+"    => (tok (yypos, yytext, Markup.operator, "YPLUS", Tokens.YPLUS));
-<INITIAL>"-"    => (tok (yypos, yytext, Markup.operator, "YMINUS", Tokens.YMINUS));
-<INITIAL>"|"    => (tok (yypos, yytext, Markup.operator, "YBAR", Tokens.YBAR));
-<INITIAL>"*"    => (tok (yypos, yytext, Markup.operator, "YSTAR", Tokens.YSTAR));
-<INITIAL>"/"    => (tok (yypos, yytext, Markup.operator, "YSLASH", Tokens.YSLASH));
+<INITIAL>".."   => (tok (yypos, yytext, Markup.delimiter, "YDOTDOT", "", Tokens.YDOTDOT));
+<INITIAL>"."    => (tok (yypos, yytext, Markup.delimiter, "YDOT", "", Tokens.YDOT));
+<INITIAL>"("    => (tok (yypos, yytext, Markup.delimiter, "YLPAR", "", Tokens.YLPAR));
+<INITIAL>")"    => (tok (yypos, yytext, Markup.delimiter, "YRPAR", "", Tokens.YRPAR));
+<INITIAL>";"    => (tok (yypos, yytext, Markup.delimiter, "YSEMI", "", Tokens.YSEMI));
+<INITIAL>","    => (tok (yypos, yytext, Markup.delimiter, "YCOMMA", "", Tokens.YCOMMA));
+<INITIAL>":"    => (tok (yypos, yytext, Markup.delimiter, "YCOLON", "", Tokens.YCOLON));
+<INITIAL>"^"    => (tok (yypos, yytext, Markup.operator, "YCARET", "", Tokens.YCARET));
+<INITIAL>"["    => (tok (yypos, yytext, Markup.delimiter, "YLBRA", "", Tokens.YLBRA));
+<INITIAL>"]"    => (tok (yypos, yytext, Markup.delimiter, "YRBRA", "", Tokens.YRBRA));
+<INITIAL>"~"    => (tok (yypos, yytext, Markup.operator, "YTILDE", "", Tokens.YTILDE));
+<INITIAL>"<"    => (tok (yypos, yytext, Markup.operator, "YLESS", "", Tokens.YLESS));
+<INITIAL>"="    => (tok (yypos, yytext, Markup.operator, "YEQUAL", "", Tokens.YEQUAL));
+<INITIAL>">"    => (tok (yypos, yytext, Markup.operator, "YGREATER", "", Tokens.YGREATER));
+<INITIAL>"+"    => (tok (yypos, yytext, Markup.operator, "YPLUS", "", Tokens.YPLUS));
+<INITIAL>"-"    => (tok (yypos, yytext, Markup.operator, "YMINUS", "", Tokens.YMINUS));
+<INITIAL>"|"    => (tok (yypos, yytext, Markup.operator, "YBAR", "", Tokens.YBAR));
+<INITIAL>"*"    => (tok (yypos, yytext, Markup.operator, "YSTAR", "", Tokens.YSTAR));
+<INITIAL>"/"    => (tok (yypos, yytext, Markup.operator, "YSLASH", "", Tokens.YSLASH));
 <INITIAL>"{"    => (YYBEGIN B; lex());
-<INITIAL>.      => (tok (yypos, yytext, Markup.error, "YILLCH", Tokens.YILLCH));
+<INITIAL>.      => (tok (yypos, yytext, Markup.error, "YILLCH", "", Tokens.YILLCH));
 
 <C>\n+          => (lex());
 <C>[^()*\n]+    => (lex());
@@ -378,8 +371,8 @@ program myProg;
 var x : integer;
 begin
   x := 42 + 7;
+  Writeln(x);
 end.
 \<close>
 
-end
 

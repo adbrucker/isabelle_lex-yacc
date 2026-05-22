@@ -17,19 +17,24 @@ type lexresult= (svalue,pos) token
 
 val pos_lookup = ref (fn (yypos: int) => Position.none)
 
-val report_token = ref (fn (idx: int, len: int, m: Markup.T, name: string) => ())
+val report_token = ref (fn (idx: int, len: int, m: Markup.T, typ: string, sort: string) => ())
 
 fun get_pos yypos = (!pos_lookup) yypos
 
-fun tok (yypos, yytext, markup, name, cons) = 
-    let val p = get_pos yypos
-        val _ = (!report_token) (yypos, String.size yytext, markup, name)
-    in cons (p, p) end
+fun tok (yypos, yytext, markup, typ, sort, cons) =
+  let
+    val p = get_pos yypos
+    val p' = get_pos (yypos+(String.size yytext))
+    val _ = !report_token (yypos, String.size yytext, markup, typ, sort)
+  in cons (p, p') end
 
-fun tok_val (yypos, yytext, markup, name, cons, value) =
-    let val p = get_pos yypos
-        val _ = (!report_token) (yypos, String.size yytext, markup, name)
-    in cons (value, p, p) end
+fun tok_val (yypos, yytext, markup, typ, sort, cons, value) =
+  let
+    val p = get_pos yypos
+    val _ = !report_token (yypos, String.size yytext, markup, typ, sort)
+  in cons (value, p, p) end
+
+
 
 fun eof () = Tokens.EOF(Position.none, Position.none)
 fun error' (e, p: Position.T, _) = () 
@@ -44,20 +49,20 @@ lex_rules\<open>
 \n       => (lex());
 {ws}+    => (lex());
 
-{digit}+ => (tok_val (yypos, yytext, Markup.numeral, "NUM", Tokens.NUM, valOf (Int.fromString yytext)));
+{digit}+ => (tok_val (yypos, yytext, Markup.numeral, "NUM", "", Tokens.NUM, valOf (Int.fromString yytext)));
 
-"+"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", Tokens.PLUS));
-"*"      => (tok (yypos, yytext, Markup.keyword2, "TIMES", Tokens.TIMES));
-";"      => (tok (yypos, yytext, Markup.delimiter, "SEMI", Tokens.SEMI));
+"+"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", "", Tokens.PLUS));
+"*"      => (tok (yypos, yytext, Markup.keyword2, "TIMES", "", Tokens.TIMES));
+";"      => (tok (yypos, yytext, Markup.delimiter, "SEMI", "", Tokens.SEMI));
 
 {alpha}+ => (if yytext="print"
-                 then tok (yypos, yytext, Markup.keyword1, "PRINT", Tokens.PRINT)
-                 else tok_val (yypos, yytext, Markup.free, "ID", Tokens.ID, yytext)
+                 then tok (yypos, yytext, Markup.keyword1, "PRINT", "", Tokens.PRINT)
+                 else tok_val (yypos, yytext, Markup.free, "ID", "", Tokens.ID, yytext)
             );
 
-"-"      => (tok (yypos, yytext, Markup.keyword2, "SUB", Tokens.SUB));
-"^"      => (tok (yypos, yytext, Markup.keyword2, "CARAT", Tokens.CARAT));
-"/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", Tokens.DIV));
+"-"      => (tok (yypos, yytext, Markup.keyword2, "SUB", "", Tokens.SUB));
+"^"      => (tok (yypos, yytext, Markup.keyword2, "CARAT", "", Tokens.CARAT));
+"/"      => (tok (yypos, yytext, Markup.keyword2, "DIV", "", Tokens.DIV));
 .        => (lex());
 \<close>
 and yacc_user_declarations\<open>
@@ -139,7 +144,7 @@ struct
               else #2 (Vector.sub (pos_vec, idx))
             end
 
-        fun report_fn (start_idx, len, markup, token_type) =
+        fun report_fn (start_idx, len, markup, token_type, token_sort) =
             let
               fun report_char i =
                   if i < len then
@@ -147,7 +152,8 @@ struct
                       (* apply the syntax highlighting color *)
                       Context_Position.report ctxt p markup;
                       (* apply the hover tooltip *)
-                      Context_Position.report_text ctxt p Markup.typing ("Token: " ^ token_type);
+                      Context_Position.report_text ctxt p Markup.typing ("Token Type: " ^ token_type);
+                      Context_Position.report_text ctxt p Markup.typing ("Token Sort: " ^ token_sort);
                       report_char (i + 1)
                     end
                   else ()
