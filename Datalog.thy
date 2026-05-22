@@ -97,7 +97,6 @@ and yacc_user_declarations\<open>
 \<close>
 yacc_definitions\<open>
 %eop EOF
-%pos Position.T
 %pure
 %noshift EOF
 

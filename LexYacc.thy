@@ -425,6 +425,7 @@ structure MlLexYacc = struct
                        else (yacc_decl_syms)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Symbol_Pos.explode("%name "^name^"\n", Position.none))@
+                            (Symbol_Pos.explode("%pos Position.T\n", Position.none))@
                             (Input.source_explode yacc_defs)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Input.source_explode yacc_rules)

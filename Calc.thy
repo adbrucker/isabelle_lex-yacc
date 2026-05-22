@@ -38,7 +38,6 @@ fun lookup "bogus" = 10000
 \<close>
 yacc_definitions\<open>
 %eop EOF SEMI
-%pos Position.T
 
 %left SUB PLUS
 %left TIMES DIV
