@@ -3,7 +3,7 @@ theory
 imports
   LexYacc
 keywords
-  "calc" :: diag
+  "calc2" :: diag
 begin
 
 
@@ -231,12 +231,12 @@ fun calc source thy =
       val _ = writeln(Int.toString (Calc.parse_source ctxt source)) 
     in thy end
 
-val _ = Outer_Syntax.command @{command_keyword "calc"}
+val _ = Outer_Syntax.command @{command_keyword "calc2"}
         "A simple inline calculator" 
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (calc source)))
 \<close>
 
-calc\<open>
+calc2\<open>
 1
   +
     3

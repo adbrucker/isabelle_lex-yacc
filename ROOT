@@ -1,9 +1,9 @@
 session "isabelle_lex-yacc" = HOL +
   options [document = pdf, document_output = "output"]
+  theories [document = false]
+    Examples
   theories
-    Pascal
-    Calc
-    CalcExpert
+    Manual 
   document_files
     "root.tex"
     "preamble.tex"
