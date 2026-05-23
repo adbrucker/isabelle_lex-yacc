@@ -10,7 +10,25 @@ SML_file\<open>mlyacc-polyml/mlyacc-lib/stream.sml\<close>
 SML_file\<open>mlyacc-polyml/mlyacc-lib/parser2.sml\<close>
 
 ML\<open>
-structure Isabelle_lex_yacc = struct
+
+signature ISABELLE_LEX_YACC = 
+  sig
+    eqtype pos
+    val get_pos: int -> Position.T
+    val header: unit -> string
+    val linker: string -> string
+    val parse_source:
+       (int * 'a * (string * Position.T * Position.T -> 'b) * unit -> 'c * 'd) ->
+         (('e -> string) -> 'a) -> ('d -> 'f * 'a) -> ('f * 'g -> bool) -> (Position.T * Position.T -> 'g) -> Input.source -> 'c
+    val print_error: string * Position.T * Position.T -> 'a
+    val report_token: int * int * Markup.T * string * string -> unit
+    val reset: unit -> unit
+    val set: Input.source -> Proof.context -> unit
+    val tok: int * string * Markup.T * string * string * (Position.T * Position.T -> 'a) -> 'a
+    val tok_val: int * string * Markup.T * string * string * ('a * Position.T * Position.T -> 'b) * 'a -> 'b
+  end
+
+structure Isabelle_lex_yacc:ISABELLE_LEX_YACC = struct
   type pos = Position.T
   val src = Unsynchronized.ref (Input.string "")
   val ctxt = Unsynchronized.ref (Context.the_local_context ())

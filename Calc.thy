@@ -18,7 +18,7 @@ lex_rules\<open>
 
 {digit}+ => (tok_val (yypos, yytext, Markup.numeral, "NUM", "", Tokens.NUM, valOf (Int.fromString yytext)));
 
-"++"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", "", Tokens.PLUS));
+"+"      => (tok (yypos, yytext, Markup.keyword2, "PLUS", "", Tokens.PLUS));
 "*"      => (tok (yypos, yytext, Markup.keyword2, "TIMES", "", Tokens.TIMES));
 ";"      => (tok (yypos, yytext, Markup.delimiter, "SEMI", "", Tokens.SEMI));
 

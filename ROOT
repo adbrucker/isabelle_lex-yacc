@@ -6,4 +6,4 @@ session "isabelle_lex-yacc" = HOL +
     Manual 
   document_files
     "root.tex"
-    "preamble.tex"
+    "root.bib"

@@ -1,13 +1,14 @@
-\documentclass[fontsize=10pt,a5paper,mpinclude=true,
+\documentclass[abstract=on,fontsize=10pt,a5paper,mpinclude=true,
 %open=right,twoside,
 oneside,
-pagesize,DIV=12]{scrbook}
+pagesize,DIV=12]{scrartcl}
 \usepackage[no-math]{fontspec}
 \usepackage[sfdefault,lining,scaled=.85]{FiraSans}
 \usepackage[varqu,varl]{zi4}% inconsolata typewriter
 \setmonofont{Inconsolatazi4}
 \usepackage{amsmath}
 \usepackage{amsthm}
+\usepackage{amssymb}
 \usepackage{lualatex-math}
 \usepackage{mathtools}
 \usepackage[noSTIXops, scaled=1.06]{newtxsf}
@@ -53,7 +54,6 @@ pagesize,DIV=12]{scrbook}
 \renewcommand{\isastyletext}{\normalsize\normalfont\sffamily}
 \renewcommand{\isastyletxt}{\normalfont\sffamily}
 \renewcommand{\isastylecmt}{\normalfont\sffamily\itshape\color{blue}}
-\input{preamble.tex}
 \isabellestyle{literal}
 \isabellestyle{sf}
 \usepackage{listings}
@@ -110,6 +110,7 @@ pagesize,DIV=12]{scrbook}
 
 \usepackage{hyperref}
 \urlstyle{sf}
+\isabellestyle{literalunderscore}
 \setcounter{tocdepth}{2} 
 \hypersetup{%
    bookmarksdepth=3
@@ -119,25 +120,14 @@ pagesize,DIV=12]{scrbook}
   ,plainpages=false
 } % more detailed digital TOC (aka bookmarks)
 
+
+
+\title{Lex and Yacc for Isabelle}
+\author{ }
 \begin{document}
 \renewcommand{\sectionautorefname}{Section}
 \renewcommand{\subsectionautorefname}{Section}
 \renewcommand{\subsubsectionautorefname}{Section}
-\maketitle
-
-
-\tableofcontents
-
-\chapter{Introduction}
-
-\begin{figure}
-  \centering
-  \includegraphics[height=\textheight, width=\textwidth, keepaspectratio]{session_graph}
-  \caption{The Dependency Graph of the Isabelle Theories.\label{fig:session-graph}}
-\end{figure}
-The rest of this document is automatically generated from the formalization in Isabelle/HOL, i.e., all content is checked by Isabelle.  Overall, the structure of this document follows the theory dependencies (see \autoref{fig:session-graph}). 
-
-\part*{Generated Documentation}
 
 \input{session.tex}
 

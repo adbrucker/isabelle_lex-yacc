@@ -343,11 +343,16 @@ val _ = Outer_Syntax.local_theory @{command_keyword "datalog"}
 section \<open>Example\<close>
 
 datalog datalog_example \<open>
+  /* A comment */
   parent("john", "mary").
   ancestor(?x, ?y) :- parent(?x, ?y).
 \<close>
 
 thm "datalog_example_def"
 
+datalog datalog_example2 \<open>parent("john", "mary"). ancestor(?x, ?y) :- parent(?x, ?y).\<close>
+
+lemma \<open>datalog_example = datalog_example2\<close>
+  by(metis datalog_example_def datalog_example2_def)
 
 end
