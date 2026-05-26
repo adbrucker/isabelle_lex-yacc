@@ -1,5 +1,8 @@
-session "isabelle_lex-yacc" = HOL +
+chapter AFP
+
+session "isabelle_lex-yacc" (AFP) = HOL +
   options [document = pdf, document_output = "output"]
+  (* options [timeout = 600] *)
   theories [document = false]
     Examples
   theories
