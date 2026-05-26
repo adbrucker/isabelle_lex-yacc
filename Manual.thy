@@ -236,7 +236,7 @@ text \<open>
     \<open>tok (yypos, yytext, Markup.keyword2, "Type Hint", "Sort Hint", Tokens.PLUS)\<close>
 
   \<^item> The function @{ML \<open>tok_val\<close>} is used for tokens that carry semantic values (like integers or identifiers):
-     @{ML[display]\<open>tok_val : int * string * Markup.T * string * string * ('a * Position.T * Position.T -> 'b) * 'a -> 'b\<close>}:
+     @{ML[display]\<open>tok_val : int * string * Markup.T * string * string * ('a * Position.T * Position.T -> 'b) * 'a -> 'b\<close>}
     It takes the same parameters (in the same order) as the @{ML\<open>tok\<close>} function plus one additional 
     argument, the value. For example: 
 
