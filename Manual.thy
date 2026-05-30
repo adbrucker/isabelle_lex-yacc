@@ -103,13 +103,17 @@ can therefore be brittle to configure. While the parser combinators for command 
 parsing are powerful and flexible, they are tedious to use for expression languages and
 can have, if used unwise, exponential complexity. 
 
-In contrast, traditional lexer and parser generators, such as ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close> 
-and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close>, trade the flexibility of parser combinators 
-for efficiency. ML-Yacc employs table-driven LALR(1) parsing, enforcing strict, bottom-up 
+
+In contrast, the classical Unix tools Lex (or Flex) and Yacc (or Bison) trade the flexibility of 
+parser combinators for efficiency. Our work is based on MlLex and MlYacc for PolyML 
+\<^cite>\<open>TakayukiGoto2020\<close> that go back to the SML-reimplementations ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close>
+and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> of their classical Unix counterparts. 
+MlLex and MlYacc employ table-driven LALR(1) parsing, enforcing strict, bottom-up 
 deterministic grammars without backtracking, compiling them into highly optimized deterministic 
 finite automata (DFA) and parse tables, yielding predictable, highly efficient parsing for 
-large-scale inputs. ~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> report on parsing experiments with 
-20kLoc C11 files within 2 seconds (the time for highlighting the source excluded).
+large-scale inputs. The Isabelle/C implementation ~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> reports
+on parsing experiments with 20kLoc C11 files within 2 seconds (the time for highlighting the 
+source is excluded).
 
 Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent examples include:
 
@@ -146,8 +150,9 @@ native integration of standard ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<cl
 ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> into Isabelle/HOL. 
 
 From an end-user perspective, we provide a new Isar command @{command "ml_lex_yacc"}, that allows 
-users to write lexical and grammatical specifications directly within theory files, supported by 
-syntax highlighting and PIDE-style error reporting. The generated parser is directly reflected into 
+users to write lexical and grammatical specifications directly within theory files. Generated 
+lexers and parsers can support syntax highlighting and PIDE-style error reporting. 
+The generated parser is directly reflected into 
 the current theory context. This allows, for instance, using ML-Lex/ML-Yacc parsers as first-class
 front ends for deeply embedded languages or within Isabelle/ML for the development of backend tools
 (see \autoref{sec:examples} for an overview of the examples provided as part of this AFP entry).
@@ -171,7 +176,7 @@ of the examples that are provided as part of this AFP entry (\autoref{sec:exampl
 section\<open>First Steps: A Simple Calculator\<close>text\<open>\label{sec:first-steps}\<close>
 
 text \<open>
-  In this section, we showcase the ``Hello World!'' of parser generators: a calculator. This 
+  In this section, we present the ``Hello World!'' showcase of parser generators: a calculator. This 
   example is taken directly from the ML-Lex/Yacc manuals~\<^cite>\<open>"appel.ea:lexical:1994" and "tarditi.ea:ml-yacc:2000"\<close>. 
   Hence, we recommend consulting them while working through this manual. 
 \<close>
