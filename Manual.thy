@@ -77,15 +77,16 @@ text\<open>
     @{theory_text[display]\<open>      definition xor :: "bool \<Rightarrow> bool \<Rightarrow> bool"  (infixl "\<oplus>" 60) where
       "xor A B \<equiv> (A \<and> \<not> B) \<or> (\<not> A \<and> B)"\<close>}
 
-  \<^item> Again on the term-level, Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close>, e.g.:     
+  \<^item> Again on the term-level, Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close> 
+    allow via a syntactic rewrite rules on term-representations, e.g.:     
     @{theory_text[display]
-     \<open>syntax "_list" :: "args \<Rightarrow> 'a list"  (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
-        syntax_consts  "_list" \<rightleftharpoons> Cons
+     \<open>syntax "_list" :: "args \<Rightarrow> 'a list"  
+               (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
+syntax_consts  "_list" \<rightleftharpoons> Cons
 translations
   "[x, xs]" \<rightleftharpoons> "x#[xs]"
   "[x]" \<rightleftharpoons> "x#[]"\<close>}
-    allow via a kind of rewrite mechanism on term-representations flexible n-ary constant 
-    representations like \<^term>\<open>[a,b,c]\<close>.
+    n-ary operators like \<^term>\<open>[a,b,c]\<close>.
 
   \<^item> On the level of Isabelle/Isar's command language, native ML-structures @{ML_structure "Scan"} and
     @{ML_structure "Parse"} implement functional parser combinators~\<^cite>\<open>"wenzel:isabelleisar"\<close>. 
