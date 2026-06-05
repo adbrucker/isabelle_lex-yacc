@@ -27,18 +27,35 @@
  ***********************************************************************************)
 (*<*)
 theory Manual
-  imports LexYacc Examples
+  imports LexYacc Examples "Isabelle_DOF.technical_report"
 keywords
   "simple_calc" :: diag
 begin
+
+use_ontology "Isabelle_DOF.scholarly_paper"
+use_template "scrartcl"
+
+open_monitor*[this::article]
+
 (*>*)
 
+title*[title::title]\<open>Lex and Yacc for Isabelle\<close>
+subtitle*[subtitle::subtitle]\<open>A User Manual\<close>
+text*[adb:: author,
+      email="\<open>a.brucker@exeter.ac.uk\<close>",
+      orcid="\<open>0000-0002-6355-1200\<close>",
+      http_site="\<open>https://www.brucker.ch/\<close>",
+      affiliation="\<open>University of Exeter, Exeter, UK\<close>"]\<open>Achim D. Brucker\<close>
+text*[bu::author,
+      email="\<open>wolff@lmf.cnrs.fr\<close>",
+      orcid="\<open>0000-0002-9648-7663\<close>",
+      http_site="\<open>https://usr.lmf.cnrs.fr/~wolff/\<close>",
+      affiliation = "\<open>Université Paris-Saclay, LMF, Paris, France\<close>"]\<open>Burkhart Wolff\<close>
 
-text \<open>
-\maketitle
 
-\begin{abstract}\footnotesize
-  Developing concrete syntax and parsers for Domain-Specific Languages (DSLs) within interactive 
+text*[abs::abstract,
+      keywordlist="[''Isabelle/ML'',''Isabelle/PIDE'', ''ML-Lex'', ''ML-Yacc'', ''Parser Generators'']"]
+ \<open>Developing concrete syntax and parsers for Domain-Specific Languages (DSLs) within interactive 
   theorem provers, such as Isabelle, is a common task. Isabelle supports this through rich, yet 
   often brittle to configure, mixfix annotations and syntax translations. Moreover, Isabelle 
   provides parser combinators that can be used to build parsers for the content of cartouches. 
@@ -48,7 +65,6 @@ text \<open>
   Traditionally, the use of parser generators for defining DSLs in Isabelle relies on invoking the 
   lexer and parser as external tools, often modifying the generated source code, and importing the 
   generated files. This requires users to manage complex external preprocessing toolchains.
-
   In this AFP entry, we address this challenge by providing a native integration of standard 
   ML-Lex and ML-Yacc into Isabelle/HOL. In more detail, we introduce an Isar-level interface, 
   @{command "ml_lex_yacc"}, that allows users to write lexical and grammatical specifications 
@@ -57,13 +73,9 @@ text \<open>
   integration automatically hooks into Isabelle’s Prover IDE (PIDE), empowering users to provide 
   real-time syntax highlighting, semantic tooltips, and precise error localization for their custom 
   languages.
-\end{abstract}
-\clearpage
-\tableofcontents
-\clearpage
 \<close>
 
-term\<open>[a,b,c]\<close>
+
 section \<open>Introduction\<close>
 text\<open>
   Developing concrete syntax and, hence, parsers for Domain-Specific Languages (DSLs) within 
@@ -83,9 +95,8 @@ text\<open>
      \<open>syntax "_list" :: "args \<Rightarrow> 'a list"  
                (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
 syntax_consts  "_list" \<rightleftharpoons> Cons
-translations
-  "[x, xs]" \<rightleftharpoons> "x#[xs]"
-  "[x]" \<rightleftharpoons> "x#[]"\<close>}
+translations   "[x, xs]" \<rightleftharpoons> "x#[xs]"
+               "[x]" \<rightleftharpoons> "x#[]"\<close>}
     n-ary operators like \<^term>\<open>[a,b,c]\<close>.
 
   \<^item> On the level of Isabelle/Isar's command language, native ML-structures @{ML_structure "Scan"} and
@@ -315,14 +326,14 @@ text\<open>
 
 simple_calc\<open>21+21\<close> \<comment>\<open>Prints 42 in Isabelle's Output panel\<close>
 
-text\<open>Note that the theory @{theory "isabelle_lex-yacc.Calc"} contains an extended version of this 
+text\<open>Note that the theory @{theory "Isabelle_lex-yacc.Calc"} contains an extended version of this 
 simple calculator.\<close>
 
 section\<open>Defining Lex/Yacc Specifications\<close>text\<open>\label{sec:command}\<close>
 
 text \<open>
 
-  The theory @{theory "isabelle_lex-yacc.LexYacc"} (which also is the main entry point for the Isabelle 
+  The theory @{theory "Isabelle_lex-yacc.LexYacc"} (which also is the main entry point for the Isabelle 
   Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, Isar-level 
   interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc directly within 
   Isabelle theories. It processes lexical and grammatical specifications, compiles them into SML 
@@ -393,8 +404,9 @@ text \<open>
         
         \<open>tok (yypos, yytext, Markup.keyword2, "Type Hint", "Sort Hint", Tokens.PLUS)\<close>
     
-      \<^item> The function @{ML \<open>tok_val\<close>} is used for tokens that carry semantic values (like integers or identifiers):
-         @{ML[display]\<open>tok_val : int * string * Markup.T * string * string * ('a * Position.T * Position.T -> 'b) * 'a -> 'b\<close>}:
+      \<^item> The function @{ML \<open>tok_val\<close>} is used for tokens that carry semantic values 
+        (like integers or identifiers): 
+        @{ML[display]\<open>tok_val : int * string * Markup.T * string * string * ('a * Position.T * Position.T -> 'b) * 'a -> 'b\<close>}:
         It takes the same parameters (in the same order) as the @{ML\<open>tok\<close>} function plus one additional 
         argument, the value. For example: 
     
@@ -426,7 +438,7 @@ it needs to be imported into SML using the @{command "SML_import"} command. For 
 
 @{theory_text[display]\<open>SML_import \<open>structure Datalog_AST = Datalog_AST\<close>\<close>}
 
-The theory @{theory "isabelle_lex-yacc.Datalog"} contains an example of using  ML code defined 
+The theory @{theory "Isabelle_lex-yacc.Datalog"} contains an example of using  ML code defined 
 within an @{command "ML"}-environment.
 \<close>
 section \<open>Expert Mode: The Calculator Example Revisited\<close>text\<open>\label{sec:expert}\<close>
@@ -454,7 +466,7 @@ text \<open>
   error-correction strategies directly within the Lexer, or are porting legacy SML codebases where 
   the automatic Isabelle-specific wrappers conflict with existing user declarations. 
 
-  The theory @{theory "isabelle_lex-yacc.CalcExpert"} provides a complete example of the calculator
+  The theory @{theory "Isabelle_lex-yacc.CalcExpert"} provides a complete example of the calculator
   in expert mode.
 \<close> 
 
@@ -542,17 +554,17 @@ text\<open>
   \end{figure}
   To demonstrate the versatility of our Lex/Yacc framework for Isabelle, we provide several 
   examples (see \autoref{fig:session-graph} for the session graph, listing all provided examples, 
-  i.e., the direct predecessors of @{theory "isabelle_lex-yacc.Examples"}):
+  i.e., the direct predecessors of @{theory "Isabelle_lex-yacc.Examples"}):
 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Calc"} provides an example of a simple arithmetic expression
+  \<^item> The theory @{theory "Isabelle_lex-yacc.Calc"} provides an example of a simple arithmetic expression
     evaluator (calculator) in standard mode. This example is a port of the calculator example provided
     by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.CalcExpert"} provides an example of a simple arithmetic 
+  \<^item> The theory @{theory "Isabelle_lex-yacc.CalcExpert"} provides an example of a simple arithmetic 
     expression evaluator (calculator) in expert mode. This example is a port of the calculator example 
     provided by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Pascal"} provides a simple parser for the Pascal programming
+  \<^item> The theory @{theory "Isabelle_lex-yacc.Pascal"} provides a simple parser for the Pascal programming
     language. This example is a port of the Pascal example provided by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Datalog"} provides an example of a Lex/Yacc parser used 
+  \<^item> The theory @{theory "Isabelle_lex-yacc.Datalog"} provides an example of a Lex/Yacc parser used 
     as a front-end for a language (Datalog) that is deeply embedded into Isabelle/HOL. It shows how 
     
     \<^item> to interact with ML code (here: the ML datatype defining the abstract syntax tree of Datalog) 

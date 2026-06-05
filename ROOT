@@ -1,12 +1,12 @@
 chapter AFP
 
-session "isabelle_lex-yacc" (AFP) = HOL +
-  options [document = pdf, document_output = "output"]
+session "Isabelle_lex-yacc" (AFP) = HOL +
+  options [document = pdf, document_output = "output", document_build = dof]
   (* options [timeout = 600] *)
   theories [document = false]
     Examples
   theories
     Manual 
   document_files
-    "root.tex"
+    "preamble.tex"
     "root.bib"
