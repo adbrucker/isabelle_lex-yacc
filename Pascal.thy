@@ -143,25 +143,23 @@ yacc_definitions\<open>
 %noshift EOF
 
 %term
-        YAND    |       YARRAY  |       YBEGIN  |       YCASE |
-        YCONST  |       YDIV    |       YDO     |       YDOTDOT |
-        YTO     |       YELSE   |       YEND    |       YFILE |
-        YFOR    |       YFORWARD |      YPROCEDURE |    YGOTO |
-        YID     |       YIF     |       YIN     |       YINT |
-        YLABEL  |       YMOD    |       YNOT    |       YNUMB  |
-        YOF     |       YOR     |       YPACKED |       YNIL |
-        YFUNCTION |     YPROG   |       YRECORD |       YREPEAT |
-        YSET    |       YSTRING |       YTHEN   |       YDOWNTO |
-        YTYPE   |       YUNTIL  |       YVAR    |       YWHILE |
-        YWITH   |       YBINT   |       YOCT    |       YHEX |
-        YCASELAB |      YILLCH  |       YEXTERN  |
- YDOT | YLPAR  | YRPAR | YSEMI  | YCOMMA  | YCOLON |  YCARET |  YLBRA |
- YRBRA | YTILDE |
- YLESS | YEQUAL | YGREATER
-| YPLUS | YMINUS | YBAR
-| UNARYSIGN
-| YSTAR | YSLASH | YAMP
-|  EOF
+        YAND      | YARRAY    | YBEGIN     | YCASE  |
+        YCONST    | YDIV      | YDO        | YDOTDOT |
+        YTO       | YELSE     | YEND       | YFILE  |
+        YFOR      | YFORWARD  | YPROCEDURE | YGOTO  |
+        YID       | YIF       | YIN        | YINT   |
+        YLABEL    | YMOD      | YNOT       | YNUMB  |
+        YOF       | YOR       | YPACKED    | YNIL   | 
+        YFUNCTION | YPROG     | YRECORD    | YREPEAT |
+        YSET      | YSTRING   | YTHEN      | YDOWNTO |
+        YTYPE     | YUNTIL    | YVAR       | YWHILE |
+        YWITH     | YBINT     | YOCT       | YHEX   |
+        YCASELAB  | YILLCH    | YEXTERN    |
+        YDOT      | YLPAR     | YRPAR      | YSEMI  | YCOMMA  | YCOLON |  
+        YCARET    | YLBRA     | YRBRA      | YTILDE |
+        YLESS     | YEQUAL    | YGREATER   | YPLUS  | YMINUS | UNARYSIGN |  
+        YBAR      | YSTAR     | YSLASH     | YAMP   | 
+        EOF
 
 %nonassoc YLESS YEQUAL  YGREATER        YIN
 %left   YPLUS   YMINUS  YOR     YBAR

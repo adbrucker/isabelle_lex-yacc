@@ -63,38 +63,58 @@ text \<open>
 \clearpage
 \<close>
 
+term\<open>[a,b,c]\<close>
 section \<open>Introduction\<close>
 text\<open>
   Developing concrete syntax and, hence, parsers for Domain-Specific Languages (DSLs) within 
   interactive theorem provers, such as Isabelle, is a common task. Isabelle supports this already 
-  through various mechanisms such as:
+  through various mechanisms on different levels of the system:
 
-  \<^item> Isabelle's mixfix annotations~\<^cite>\<open>"wenzel:isabelleisar"\<close> that allow us to define custom 
-    concrete syntax for constants. For instance, if we use the @{command definition} command to 
+  \<^item> On the level of the ubiquous \<open>\<lambda>\<close>-terms, an Earley-parser provides the flexibility to 
+    parse mixfix notations~\<^cite>\<open>"wenzel:isabelleisar"\<close> for constant symbols. For instance, 
+    if we use the @{command definition} command to 
     introduce a new constant, we can immediately assign a syntactic representation to it:
     @{theory_text[display]\<open>      definition xor :: "bool \<Rightarrow> bool \<Rightarrow> bool"  (infixl "\<oplus>" 60) where
       "xor A B \<equiv> (A \<and> \<not> B) \<or> (\<not> A \<and> B)"\<close>}
-  \<^item> Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close>, e.g.: 
-    
-    @{theory_text[display]\<open>      syntax
-        "_angle_list" :: "args \<Rightarrow> 'a list"  ("\<langle>_\<rangle>"\<close>}
-  \<^item> Isabelle's native ML-structures @{ML_structure "Scan"} and @{ML_structure "Parse"} implement 
-    functional parser combinators~\<^cite>\<open>"wenzel:isabelleisar"\<close>. They are highly composable, 
-    naturally handle context-dependent grammars, and allow dynamic parser construction. 
+
+  \<^item> Again on the term-level, Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close> 
+    allow via a syntactic rewrite rules on term-representations, e.g.:     
+    @{theory_text[display]
+     \<open>syntax "_list" :: "args \<Rightarrow> 'a list"  
+               (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
+syntax_consts  "_list" \<rightleftharpoons> Cons
+translations
+  "[x, xs]" \<rightleftharpoons> "x#[xs]"
+  "[x]" \<rightleftharpoons> "x#[]"\<close>}
+    n-ary operators like \<^term>\<open>[a,b,c]\<close>.
+
+  \<^item> On the level of Isabelle/Isar's command language, native ML-structures @{ML_structure "Scan"} and
+    @{ML_structure "Parse"} implement functional parser combinators~\<^cite>\<open>"wenzel:isabelleisar"\<close>. 
+    They are highly composable, can handle context-dependent grammars naturally, and allow 
+    for dynamic parser extensions. 
 
 These mechanisms have the advantage that they are deeply integrated into the PIDE 
 Framework~\<^cite>\<open>"wenzel:asynchronous:2014"\<close> in general and, in particular, 
-Isabelle/jEdit~\<^cite>\<open>"wenzel:isabellejedit"\<close>. On the downside, Isabelle's mixfix notation and syntax translation 
-can be brittle to configure and, moreover, share the ``syntactic universe'' with HOL, i.e., the 
-syntax of the DSL needs to be disjoint from the already defined HOL syntax or one needs to overload 
-syntactic constants (which can be brittle in itself). While parser combinators are powerful and 
-flexible, they can, sometimes, be slow. 
+Isabelle/jEdit~\<^cite>\<open>"wenzel:isabellejedit"\<close>. On the downside, Isabelle's term parser and syntax 
+translation depends on arbitrary, ambiguous context-free grammars and is therefore  
+relatively slow (\<open>O(n\<^sup>3)\<close>) compared to deterministic parsers with linear complexity. 
+Moreover, they share the ``syntactic universe'' with HOL, i.e., the
+syntax of a DSL needs to be disjoint from the already defined HOL syntax and 
+can therefore be brittle to configure. While the parser combinators for command language 
+parsing are powerful and flexible, they are tedious to use for expression languages and
+can have, if used unwise, exponential complexity. 
 
-In contrast, traditional lexer and parser generators, such as ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close> 
-and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close>, trade the flexibility of parser combinators 
-for efficiency. ML-Yacc employs table-driven LALR(1) parsing, enforcing strict, bottom-up 
-deterministic grammars without backtracking, compiling them into highly optimized deterministic finite 
-automata (DFA) and parse tables, yielding predictable, highly efficient parsing for large-scale inputs. 
+
+In contrast, the classical Unix tools Lex (or Flex) and Yacc (or Bison) trade the flexibility of 
+parser combinators for efficiency. Our work is based on MlLex and MlYacc for PolyML 
+\<^cite>\<open>TakayukiGoto2020\<close> that go back to the SML-reimplementations ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close>
+and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> of their classical Unix counterparts. 
+MlLex and MlYacc employ table-driven LALR(1) parsing, enforcing strict, bottom-up 
+deterministic grammars without backtracking, compiling them into highly optimized deterministic 
+finite automata (DFA) and parse tables, yielding predictable, highly efficient parsing for 
+large-scale inputs. The Isabelle/C implementation ~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> reports
+on parsing experiments with 20kLoc C11 files within 2 seconds (the time for highlighting the 
+source is excluded).
 
 Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent examples include:
 
@@ -117,7 +137,7 @@ Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent ex
     using the \<^verbatim>\<open>sed\<close> utility. This requires write access to the directory in which the files
     of the AutoCorres2 AFP entry are stored and, moreover, external file operations in Isabelle 
     need to be implemented carefully to avoid race conditions during concurrent operations. 
-  \<^item> \<^emph>\<open>Isabelle/C\<close>~\<^cite>\<open>"tuong.ea:isabellec:2019"\<close> provides a deep integration of C11 syntax into 
+  \<^item> \<^emph>\<open>Isabelle/C\<close>~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> provides a deep integration of C11 syntax into 
     the Isabelle/PIDE document model, allowing for semantic annotations (comments containing HOL 
     assertions) directly inside C code. Technically, it relies on ML-Lex and ML-Yacc style grammars
     (originally developed for Happy~\<^cite>\<open>"marlow.ea:happy:1997"\<close>, a parser generator for Haskell) 
@@ -131,8 +151,9 @@ native integration of standard ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<cl
 ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> into Isabelle/HOL. 
 
 From an end-user perspective, we provide a new Isar command @{command "ml_lex_yacc"}, that allows 
-users to write lexical and grammatical specifications directly within theory files, supported by 
-syntax highlighting and PIDE-style error reporting. The generated parser is directly reflected into 
+users to write lexical and grammatical specifications directly within theory files. Generated 
+lexers and parsers can support syntax highlighting and PIDE-style error reporting. 
+The generated parser is directly reflected into 
 the current theory context. This allows, for instance, using ML-Lex/ML-Yacc parsers as first-class
 front ends for deeply embedded languages or within Isabelle/ML for the development of backend tools
 (see \autoref{sec:examples} for an overview of the examples provided as part of this AFP entry).
@@ -156,7 +177,7 @@ of the examples that are provided as part of this AFP entry (\autoref{sec:exampl
 section\<open>First Steps: A Simple Calculator\<close>text\<open>\label{sec:first-steps}\<close>
 
 text \<open>
-  In this section, we showcase the ``Hello World!'' of parser generators: a calculator. This 
+  In this section, we present the ``Hello World!'' showcase of parser generators: a calculator. This 
   example is taken directly from the ML-Lex/Yacc manuals~\<^cite>\<open>"appel.ea:lexical:1994" and "tarditi.ea:ml-yacc:2000"\<close>. 
   Hence, we recommend consulting them while working through this manual. 
 \<close>
