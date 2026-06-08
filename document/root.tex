@@ -64,14 +64,6 @@ pagesize,DIV=14]{scrartcl}
 
 %%% <todo>
 \usepackage{tcolorbox}
-\isakeeptag{todo}
-
-\newenvironment{isatodoenv}{%
-\mbox{}\\
-\tcbsetforeverylayer{colframe=red!75!black}
-\begin{tcolorbox}[title={\textsf{\textbf{ToDo}}}]}{%
-\end{tcolorbox}
-}
 
 \newenvironment{isatxt}{%
 \mbox{}\\
@@ -81,17 +73,14 @@ pagesize,DIV=14]{scrartcl}
 }
 
 
-
-\renewcommand{\isatagtodo}{\begin{isatodoenv}}
-\renewcommand{\endisatagtodo}{\end{isatodoenv}}
-%%% </todo>
 \isabellestyle{literal}
 \isabellestyle{it}
 \renewcommand{\isacharunderscore}{\_}%
 \renewcommand{\isacharunderscorekeyword}{\_}%
+\isakeeptag{ML}
 \let\oldisatagML\isatagML
 \let\oldendisatagML\endisatagML
-\renewcommand{\isatagML}{\oldisatagML\ttfamily}
+\renewcommand{\isatagML}{\oldisatagML\ttfamily\small}
 \renewcommand{\endisatagML}{\oldendisatagML\normalfont}
 
 \newcommand{\thy}{\isabellecontext}
@@ -116,14 +105,32 @@ pagesize,DIV=14]{scrartcl}
    bookmarksdepth=3
   ,pdfpagelabels
   ,pageanchor=true
+  ,pdfauthor={Achim D. Brucker and Burkhart Wolff}
+  ,pdfkeywords={Isabelle/ML, Isabelle/PIDE, ML-Lex, ML-Yacc, Parser Generators},
+  ,pdftitle={ML-Lex and ML-Yacc for Isabelle}
   ,bookmarksnumbered
   ,plainpages=false
 } % more detailed digital TOC (aka bookmarks)
 
 
 
-\title{Lex and Yacc for Isabelle}
-\author{ }
+\title{ML-Lex and ML-Yacc for Isabelle}
+\author{
+\begin{minipage}{0.11\textwidth}\end{minipage}\begin{minipage}{0.4\textwidth}\centering
+Achim~D.~Brucker\textsuperscript{\orcidlink{0000-0002-6355-1200}}\\\small
+Department of Computer Science\\
+University of Exeter\\
+Exeter, UK\\
+\texttt{a.brucker@exeter.ac.uk}
+\end{minipage}\and\begin{minipage}{0.4\textwidth}\centering
+Burkhart~Wolff\textsuperscript{\orcidlink{0000-0002-9648-7663}}\\\small
+Université Paris-Saclay\\
+LMF\\
+Paris, France\\
+\texttt{wolff@lmf.cnrs.fr}
+\end{minipage}
+}
+\date{}
 \begin{document}
 \renewcommand{\sectionautorefname}{Section}
 \renewcommand{\subsectionautorefname}{Section}

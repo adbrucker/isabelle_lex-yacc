@@ -1,29 +1,15 @@
 
-@inproceedings{  TW19,
-  author       = {Fr{\'{e}}d{\'{e}}ric Tuong and
-                  Burkhart Wolff},
-  editor       = {Rosemary Monahan and
-                  Virgile Prevosto and
-                  Jos{\'{e}} Proen{\c{c}}a},
-  title        = {Deeply Integrating {C11} Code Support into Isabelle/PIDE},
-  booktitle    = {Proceedings Fifth Workshop on Formal Integrated Development Environment,
-                  F-IDE@FM 2019, Porto, Portugal, 7th October 2019},
-  series       = {{EPTCS}},
-  pages        = {13--28},
-  year         = {2019},
-  url          = {https://doi.org/10.4204/EPTCS.310.3},
-  doi          = {10.4204/EPTCS.310.3},
-  timestamp    = {Sat, 06 Sep 2025 20:23:25 +0200},
-  biburl       = {https://dblp.org/rec/journals/corr/abs-1912-10630.bib},
-  bibsource    = {dblp computer science bibliography, https://dblp.org}
-}
-
-@article{TakayukiGoto2020,
-  author   = {{Takayuki Goto}},
-  title    = {{M}l{L}ex and {M}l{Y}acc for {P}oly/{ML}},
-  url      = {https://github.com/eldesh/mllex-polyml},
-  year     = 2020,
-  accessed = {2026-02-21},
+@InProceedings{   tuong.ea:deeply:2019,
+  author        = {Fr{\'{e}}d{\'{e}}ric Tuong and Burkhart Wolff},
+  editor        = {Rosemary Monahan and Virgile Prevosto and Jos{\'{e}}
+                  Proen{\c{c}}a},
+  title         = {Deeply Integrating {C11} Code Support into {Isabelle/PIDE}},
+  booktitle     = {Workshop on Formal Integrated Development Environment
+                  (F-IDE@FM)},
+  series        = {{EPTCS}},
+  pages         = {13--28},
+  year          = 2019,
+  doi           = {10.4204/EPTCS.310.3}
 }
 
 @Manual{          appel.ea:lexical:1994,
@@ -61,8 +47,7 @@
   year          = 2020,
   date          = {2020-04-08},
   note          = {\url{https://www.isa-afp.org/entries/Automated_Stateful_Protocol_Verification.html},
-                  Formal proof development. Author copy:
-                  \url{https://logicalhacking.com/publications/hess.ea-automated-2020/}},
+                  Formal proof development.},
   issn          = {2150-914x},
   abstract      = {In protocol verification we observe a wide spectrum from
                   fully automated methods to interactive theorem proving with
@@ -92,7 +77,7 @@
                   Fabian Immler and Gerwin Klein and Rafal Kolanski and Japheth
                   Lim and Michael Norrish and Norbert Schirmer and Salomon
                   Sickert and Thomas Sewell and Harvey Tuch and Simon Wimmer},
-  title         = {AutoCorres2},
+  title         = {{AutoCorres2}},
   journal       = {Archive of Formal Proofs},
   month         = {April},
   year          = 2024,
@@ -151,7 +136,7 @@
                   Elkaduwe, Dhammika and Engelhardt, Kai and Kolanski, Rafal and
                   Norrish, Michael and Sewell, Thomas and Tuch, Harvey and
                   Winwood, Simon},
-  title         = {seL4: formal verification of an OS kernel},
+  title         = {{seL4:} formal verification of an {OS} kernel},
   year          = 2009,
   isbn          = 9781605587523,
   publisher     = {Association for Computing Machinery},
@@ -178,8 +163,7 @@
                   provenance, comprises 8,700 lines of C code and 600 lines of
                   assembler. Its performance is comparable to other
                   high-performance L4 kernels.},
-  booktitle     = {Proceedings of the ACM SIGOPS 22nd Symposium on Operating
-                  Systems Principles},
+  booktitle     = {Symposium on Operating Systems Principles},
   pages         = {207–220},
   numpages      = 14,
   keywords      = {isabelle/hol, l4, microkernel, sel4},
@@ -189,7 +173,7 @@
 
 @Misc{            marlow.ea:happy:1997,
   author        = {Simon Marlow and Andy Gill},
-  title         = {Happy: The Parser Generator for {Haskell}},
+  title         = {{Happy:} The Parser Generator for {Haskell}},
   note          = {\url{https://www.haskell.org/happy/}},
   year          = 1997
 }
@@ -200,4 +184,49 @@
   url           = {https://rogerprice.org/ML-Lex-Yacc-Guide/ML-Lex-Yacc-Guide.pdf},
   note          = {Online tutorial and reference},
   year          = 2020
+}
+
+@Article{         hess.ea:pspsp:2025,
+  author        = {Andreas Viktor Hess and Sebastian Alexander M{\"o}dersheim
+                  and Achim D. Brucker and Anders Schlichtkrull},
+  journal       = {Journal of Computer Security},
+  publisher     = {IOS Press},
+  language      = {USenglish},
+  title         = {{PSPSP:} A Tool for Automated Verification of Stateful
+                  Protocols in {Isabelle/HOL}},
+  year          = 2025,
+  areas         = {security, formal methods},
+  month         = {nov},
+  volume        = 33,
+  issue         = 6,
+  doi           = {10.1177/0926227X251358741},
+  keywords      = {Formal Verification, Theorem Proving, Security Protocols},
+  abstract      = {In protocol verification we observe a wide spectrum from
+                  fully automated methods to interactive theorem proving with
+                  proof assistants like Isabelle/HOL. The latter provide
+                  overwhelmingly high assurance of the correctness, which
+                  automated methods often cannot: due to their complexity, bugs
+                  in such automated verification tools are likely and thus the
+                  risk of erroneously verifying a flawed protocol is
+                  non-negligible. There are a few works that try to combine
+                  advantages from both ends of the spectrum: a high degree of
+                  automation and assurance. We present here a first step towards
+                  achieving this for a more challenging class of protocols,
+                  namely those that work with a mutable long-term state. To our
+                  knowledge this is the first approach that achieves fully
+                  automated verification of stateful protocols in an LCF-style
+                  theorem prover. The approach also includes a simple
+                  user-friendly transaction-based protocol specification
+                  language embedded into Isabelle, and can also leverage a
+                  number of existing results such as soundness of a typed
+                  model.}
+}
+
+@InProceedings{   brucker.ea:isabelle:2026,
+  author        = {Achim D. Brucker and Burkhart Wolff},
+  editor        = {Makarius Wenzel},
+  title         = {{Isabelle} in a Compiler Construction Class: Conception,
+                  Tooling, and Experiences},
+  booktitle     = {Isabelle Workshop},
+  year          = 2026
 }

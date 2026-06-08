@@ -57,66 +57,49 @@ text \<open>
   integration automatically hooks into Isabelle’s Prover IDE (PIDE), empowering users to provide 
   real-time syntax highlighting, semantic tooltips, and precise error localization for their custom 
   languages.
+
+  \<^medskip>\<^noindent>\<^bold>\<open>Key words:\<close> Isabelle/ML, Isabelle/PIDE, ML-Lex, ML-Yacc, Parser Generators
+
 \end{abstract}
 \clearpage
 \tableofcontents
 \clearpage
 \<close>
 
-term\<open>[a,b,c]\<close>
 section \<open>Introduction\<close>
 text\<open>
   Developing concrete syntax and, hence, parsers for Domain-Specific Languages (DSLs) within 
   interactive theorem provers, such as Isabelle, is a common task. Isabelle supports this already 
-  through various mechanisms on different levels of the system:
+  through various mechanisms such as:
 
-  \<^item> On the level of the ubiquous \<open>\<lambda>\<close>-terms, an Earley-parser provides the flexibility to 
-    parse mixfix notations~\<^cite>\<open>"wenzel:isabelleisar"\<close> for constant symbols. For instance, 
-    if we use the @{command definition} command to 
-    introduce a new constant, we can immediately assign a syntactic representation to it:
+  \<^item> Isabelle's mixfix annotations~\<^cite>\<open>"wenzel:isabelleisar"\<close> that allow us to define custom 
+    concrete syntax for constants. For instance, if we use the @{command definition} command to 
+    introduce a new constant, we can immediately assign a syntactic representation to it:%
     @{theory_text[display]\<open>      definition xor :: "bool \<Rightarrow> bool \<Rightarrow> bool"  (infixl "\<oplus>" 60) where
       "xor A B \<equiv> (A \<and> \<not> B) \<or> (\<not> A \<and> B)"\<close>}
-
-  \<^item> Again on the term-level, Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close> 
-    allow via a syntactic rewrite rules on term-representations, e.g.:     
-    @{theory_text[display]
-     \<open>syntax "_list" :: "args \<Rightarrow> 'a list"  
-               (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
-syntax_consts  "_list" \<rightleftharpoons> Cons
-translations
-  "[x, xs]" \<rightleftharpoons> "x#[xs]"
-  "[x]" \<rightleftharpoons> "x#[]"\<close>}
-    n-ary operators like \<^term>\<open>[a,b,c]\<close>.
-
-  \<^item> On the level of Isabelle/Isar's command language, native ML-structures @{ML_structure "Scan"} and
-    @{ML_structure "Parse"} implement functional parser combinators~\<^cite>\<open>"wenzel:isabelleisar"\<close>. 
-    They are highly composable, can handle context-dependent grammars naturally, and allow 
-    for dynamic parser extensions. 
+  \<^item> Isabelle's syntax translations~\<^cite>\<open>"wenzel:isabelleisar"\<close> provide support 
+    syntactic rewrite rules on term-representations, e.g.:%
+    @{theory_text[display]\<open>      syntax 
+        "_list" :: "args \<Rightarrow> 'a list" (\<open>(\<open>indent=1 notation=\<open>mixfix list enumeration\<close>\<close>[_])\<close>)
+      syntax_consts  "_list" \<rightleftharpoons> Cons
+      translations "[x, xs]" \<rightleftharpoons> "x#[xs]"
+                       "[x]" \<rightleftharpoons> "x#[]"\<close>}
+  \<^item> Isabelle's native ML-structures @{ML_structure "Scan"} and @{ML_structure "Parse"} implement 
+    functional parser combinators~\<^cite>\<open>"wenzel:isabelleisar"\<close>. They are highly composable, 
+    naturally handle context-dependent grammars, and allow dynamic parser construction. 
 
 These mechanisms have the advantage that they are deeply integrated into the PIDE 
 Framework~\<^cite>\<open>"wenzel:asynchronous:2014"\<close> in general and, in particular, 
-Isabelle/jEdit~\<^cite>\<open>"wenzel:isabellejedit"\<close>. On the downside, Isabelle's term parser and syntax 
-translation depends on arbitrary, ambiguous context-free grammars and is therefore  
-relatively slow (\<open>O(n\<^sup>3)\<close>) compared to deterministic parsers with linear complexity. 
-Moreover, they share the ``syntactic universe'' with HOL, i.e., the
-syntax of a DSL needs to be disjoint from the already defined HOL syntax and 
-can therefore be brittle to configure. While the parser combinators for command language 
-parsing are powerful and flexible, they are tedious to use for expression languages and
-can have, if used unwise, exponential complexity. 
+Isabelle/jEdit~\<^cite>\<open>"wenzel:isabellejedit"\<close>. On the downside, Isabelle's mixfix notation and syntax translation 
+can be brittle to configure and, moreover, share the ``syntactic universe'' with HOL, i.e., the 
+syntax of the DSL needs to be disjoint from the already defined HOL syntax or one needs to overload 
+syntactic constants (which can be brittle in itself). While parser combinators are powerful and 
+flexible, they can, sometimes, be slow. 
+In contrast, traditional lexer and parser generators, such as ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close> 
+and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close>, trade the flexibility of parser combinators 
+for efficiency.
 
-
-In contrast, the classical Unix tools Lex (or Flex) and Yacc (or Bison) trade the flexibility of 
-parser combinators for efficiency. Our work is based on MlLex and MlYacc for PolyML 
-\<^cite>\<open>TakayukiGoto2020\<close> that go back to the SML-reimplementations ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close>
-and ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> of their classical Unix counterparts. 
-MlLex and MlYacc employ table-driven LALR(1) parsing, enforcing strict, bottom-up 
-deterministic grammars without backtracking, compiling them into highly optimized deterministic 
-finite automata (DFA) and parse tables, yielding predictable, highly efficient parsing for 
-large-scale inputs. The Isabelle/C implementation ~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> reports
-on parsing experiments with 20kLoc C11 files within 2 seconds (the time for highlighting the 
-source is excluded).
-
-Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent examples include:
+Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new.  Prominent examples include:
 
   \<^item> The \<^emph>\<open>TPTP Parser\<close> (part of the Isabelle distribution)~\<^cite>\<open>"sultana:isabelletptp:2013"\<close>, which 
     is used for parsing the Thousands of Problems for Theorem Provers (TPTP) format. This is a critical 
@@ -124,7 +107,7 @@ Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent ex
     problem files. Technically, the TPTP Parser is built by executing 
     ML-Lex and ML-Yacc manually as external tools, manually adapting the generated files, which 
     are then loaded via the standard @{command "ML_file"}. A similar approach is also used by the 
-    AFP entry \<^emph>\<open>Automated Stateful Protocol Verification (PSPSP)\<close>~\<^cite>\<open>"hess.ea:automated:2020"\<close>, 
+    AFP entry \<^emph>\<open>Automated Stateful Protocol Verification (PSPSP)\<close>~\<^cite>\<open>"hess.ea:automated:2020" and "hess.ea:pspsp:2025"\<close>, 
     which uses ML-Lex and ML-Yacc generated parsing for security protocol specifications and their
     (often very large) fixed-points. 
   \<^item> \<^emph>\<open>AutoCorres2\<close>~\<^cite>\<open>"brecknell.ea:autocorres2:2024"\<close>, which uses ML-Lex and ML-Yacc generated 
@@ -137,7 +120,7 @@ Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent ex
     using the \<^verbatim>\<open>sed\<close> utility. This requires write access to the directory in which the files
     of the AutoCorres2 AFP entry are stored and, moreover, external file operations in Isabelle 
     need to be implemented carefully to avoid race conditions during concurrent operations. 
-  \<^item> \<^emph>\<open>Isabelle/C\<close>~\<^cite>\<open>"TW19" and "tuong.ea:isabellec:2019"\<close> provides a deep integration of C11 syntax into 
+  \<^item> \<^emph>\<open>Isabelle/C\<close>~\<^cite>\<open>"tuong.ea:deeply:2019" and "tuong.ea:isabellec:2019"\<close> provides a deep integration of C11 syntax into 
     the Isabelle/PIDE document model, allowing for semantic annotations (comments containing HOL 
     assertions) directly inside C code. Technically, it relies on ML-Lex and ML-Yacc style grammars
     (originally developed for Happy~\<^cite>\<open>"marlow.ea:happy:1997"\<close>, a parser generator for Haskell) 
@@ -147,8 +130,9 @@ Using ML-Lex and ML-Yacc in the context of Isabelle is nothing new; prominent ex
 All of these integrations are focused on one specific use case and, except for Isabelle/C, do not 
 support the error reporting, syntax-highlighting, and annotation infrastructure provided by 
 PIDE in general and, in particular, Isabelle/jEdit. In contrast, we provide a highly reusable 
-native integration of standard ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close> and 
-ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> into Isabelle/HOL. 
+native integration of  ML-Lex~\<^cite>\<open>"appel.ea:lexical:1994"\<close> and 
+ML-Yacc~\<^cite>\<open>"tarditi.ea:ml-yacc:2000"\<close> into Isabelle/HOL.\<^footnote>\<open>We started our work with the port of ML-Yacc and ML-Lex to Poly/ML, which are 
+available at \<^url>\<open>https://github.com/eldesh/mllex-polyml\<close> and \<^url>\<open>https://github.com/eldesh/mlyacc-polyml\<close>.\<close> 
 
 From an end-user perspective, we provide a new Isar command @{command "ml_lex_yacc"}, that allows 
 users to write lexical and grammatical specifications directly within theory files. Generated 
@@ -167,17 +151,22 @@ the risk of race conditions. Furthermore, we provide an extended library that pr
 for Isabelle's @{ML_type "Position.T"} type and also supports the generation of code linking the 
 lexer and the parser. 
 
+Notably, the integration of ML-Lex and ML-Yacc into Isabelle has been used in teaching a compiler construction 
+module at Université Paris-Saclay/PolyTech~\<^cite>\<open>"brucker.ea:isabelle:2026"\<close>. Moreover, the 
+development version of PSPSP~\<^cite>\<open>"hess.ea:automated:2020" and "hess.ea:pspsp:2025"\<close> has already been 
+ported to this integrated framework.  
+
 The rest of the manual is structured as follows: we start by showing how to implement a simple 
 calculator (the ``Hello World'' example of parsing) in \autoref{sec:first-steps}. We then explain 
-the new @{command "ml_lex_yacc"} in detail (\autoref{sec:command}), followed by repeating 
-the calculator example in ``expert mode'' (\autoref{sec:expert}). Finally, we provide an overview
-of the examples that are provided as part of this AFP entry (\autoref{sec:examples}). 
+the new @{command "ml_lex_yacc"} in detail (\autoref{sec:command}), followed by revising  
+the calculator in ``expert mode'' (\autoref{sec:expert}). Finally, we provide an overview
+of the examples that are part of this AFP entry (\autoref{sec:examples}). 
 \<close>
 
 section\<open>First Steps: A Simple Calculator\<close>text\<open>\label{sec:first-steps}\<close>
 
 text \<open>
-  In this section, we present the ``Hello World!'' showcase of parser generators: a calculator. This 
+  In this section, we present the ``Hello World!'' of parser generators: a calculator. This 
   example is taken directly from the ML-Lex/Yacc manuals~\<^cite>\<open>"appel.ea:lexical:1994" and "tarditi.ea:ml-yacc:2000"\<close>. 
   Hence, we recommend consulting them while working through this manual. 
 \<close>
@@ -458,6 +447,9 @@ text \<open>
   in expert mode.
 \<close> 
 
+
+subsection\<open>Lex and Yacc Specification\<close>
+
 text\<open>
   The following is a simplified version. In direct comparison to the 
   standard use cases (e.g., recall \autoref{sec:first-steps}), notice the explicit declarations 
@@ -507,7 +499,7 @@ yacc_rules\<open>
       | EXP PLUS EXP    (EXP1+EXP2)
 \<close>
 
-subsubsection\<open>Linking Expert Mode Output\<close>
+subsection\<open>Linking Expert Mode Output\<close>
 text \<open>
   Because Expert Mode disables auto-linking, you must manually assemble the parser in an ML block. 
   This requires using the ML-Yacc Join functor:
@@ -527,8 +519,9 @@ struct
          structure ParserData = CalcExpertLrVals.ParserData
          structure Lex = CalcExpertLex)
 
-  (* In a real implementation, you would write your own `parse_source` here, 
-     handling the Lexer initialization and the `Stream.get` loop. *)
+  (* In a real implementation, you would write your own 
+     `parse_source` here, handling the Lexer initialization 
+      and the `Stream.get` loop. *)
 end
 \<close>
 
