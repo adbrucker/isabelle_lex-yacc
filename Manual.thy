@@ -315,14 +315,14 @@ text\<open>
 
 simple_calc\<open>21+21\<close> \<comment>\<open>Prints 42 in Isabelle's Output panel\<close>
 
-text\<open>Note that the theory @{theory "isabelle_lex-yacc.Calc"} contains an extended version of this 
+text\<open>Note that the theory @{theory "Isabelle_Lex-Yacc.Calc"} contains an extended version of this 
 simple calculator.\<close>
 
 section\<open>Defining Lex/Yacc Specifications\<close>text\<open>\label{sec:command}\<close>
 
 text \<open>
 
-  The theory @{theory "isabelle_lex-yacc.LexYacc"} (which also is the main entry point for the Isabelle 
+  The theory @{theory "Isabelle_Lex-Yacc.LexYacc"} (which also is the main entry point for the Isabelle 
   Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, Isar-level 
   interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc directly within 
   Isabelle theories. It processes lexical and grammatical specifications, compiles them into SML 
@@ -426,7 +426,7 @@ it needs to be imported into SML using the @{command "SML_import"} command. For 
 
 @{theory_text[display]\<open>SML_import \<open>structure Datalog_AST = Datalog_AST\<close>\<close>}
 
-The theory @{theory "isabelle_lex-yacc.Datalog"} contains an example of using  ML code defined 
+The theory @{theory "Isabelle_Lex-Yacc.Datalog"} contains an example of using  ML code defined 
 within an @{command "ML"}-environment.
 \<close>
 section \<open>Expert Mode: The Calculator Example Revisited\<close>text\<open>\label{sec:expert}\<close>
@@ -454,7 +454,7 @@ text \<open>
   error-correction strategies directly within the Lexer, or are porting legacy SML codebases where 
   the automatic Isabelle-specific wrappers conflict with existing user declarations. 
 
-  The theory @{theory "isabelle_lex-yacc.CalcExpert"} provides a complete example of the calculator
+  The theory @{theory "Isabelle_Lex-Yacc.CalcExpert"} provides a complete example of the calculator
   in expert mode.
 \<close> 
 
@@ -542,17 +542,17 @@ text\<open>
   \end{figure}
   To demonstrate the versatility of our Lex/Yacc framework for Isabelle, we provide several 
   examples (see \autoref{fig:session-graph} for the session graph, listing all provided examples, 
-  i.e., the direct predecessors of @{theory "isabelle_lex-yacc.Examples"}):
+  i.e., the direct predecessors of @{theory "Isabelle_Lex-Yacc.Examples"}):
 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Calc"} provides an example of a simple arithmetic expression
+  \<^item> The theory @{theory "Isabelle_Lex-Yacc.Calc"} provides an example of a simple arithmetic expression
     evaluator (calculator) in standard mode. This example is a port of the calculator example provided
     by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.CalcExpert"} provides an example of a simple arithmetic 
+  \<^item> The theory @{theory "Isabelle_Lex-Yacc.CalcExpert"} provides an example of a simple arithmetic 
     expression evaluator (calculator) in expert mode. This example is a port of the calculator example 
     provided by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Pascal"} provides a simple parser for the Pascal programming
+  \<^item> The theory @{theory "Isabelle_Lex-Yacc.Pascal"} provides a simple parser for the Pascal programming
     language. This example is a port of the Pascal example provided by the ML-Yacc distribution. 
-  \<^item> The theory @{theory "isabelle_lex-yacc.Datalog"} provides an example of a Lex/Yacc parser used 
+  \<^item> The theory @{theory "Isabelle_Lex-Yacc.Datalog"} provides an example of a Lex/Yacc parser used 
     as a front-end for a language (Datalog) that is deeply embedded into Isabelle/HOL. It shows how 
     
     \<^item> to interact with ML code (here: the ML datatype defining the abstract syntax tree of Datalog) 
