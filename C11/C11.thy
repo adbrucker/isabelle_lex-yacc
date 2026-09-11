@@ -27,8 +27,9 @@
  ***********************************************************************************)
 
 theory C11
-  imports LexYacc
+  imports "../LexYacc"
   keywords "c11" "c11_reject" :: diag
+  and "c11_file" :: thy_load
 begin
 
 text\<open>
@@ -69,9 +70,84 @@ text\<open>
   syntactically well-formed.
 \<close>
 
+section\<open>Relation to Isabelle/C (AFP)\<close>
+
+text\<open>
+  This theory is a small-scale, from-scratch counterpart to the
+  \<^emph>\<open>Isabelle_C\<close> AFP entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
+  which provides a full C11/C18 front-end for Isabelle built around its \<^emph>\<open>own\<close>
+  hand-written, PIDE-integrated incremental lexer/parser (\<^verbatim>\<open>C_Lex\<close>, \<^verbatim>\<open>C_Parser\<close>,
+  \<^verbatim>\<open>C_Grammar_Rule\<close>, \<open>\<dots>\<close>). This theory deliberately does \<^emph>\<open>not\<close> depend on Isabelle_C
+  or its machinery; the point is to see how far the same \<^emph>\<open>user-facing shape\<close> can be
+  reproduced on top of the generic, off-the-shelf \<^verbatim>\<open>ml_lex_yacc\<close> command of this
+  \<^verbatim>\<open>Isabelle_Lex-Yacc\<close> framework instead - i.e. plain ml-lex/ml-yacc, not a bespoke
+  parser combinator. Three aspects of Isabelle_C's interface are mirrored here, each
+  necessarily only a syntactic sliver of the original:
+
+  \<^enum> \<^bold>\<open>Inline and file-based entry points.\<close> Isabelle_C's \<^verbatim>\<open>C \<open>...\<close>\<close> command (inline
+    source) and \<^verbatim>\<open>C_file \<open>path\<close>\<close> command (external \<open>.c\<close> file, read relative to the
+    theory's master directory) correspond here to \<open>c11 \<open>...\<close>\<close> and \<open>c11_file \<open>path\<close>\<close>
+    below - the latter built directly on \<^verbatim>\<open>Resources.parse_file\<close> /
+    \<^verbatim>\<open>Token.file_source\<close>, the same Isabelle/Pure machinery used by the built-in
+    \<^verbatim>\<open>ML_file\<close>/\<^verbatim>\<open>SML_file\<close> commands, so that file positions and build-dependency
+    tracking come for free.
+  \<^enum> \<^bold>\<open>Antiquotation-carrying comments.\<close> Isabelle_C lets \<open>/*@ \<dots> */\<close> and \<open>//@ \<dots>\<close>
+    comments carry Isar-level \<^emph>\<open>annotation commands\<close> (\<open>ensures\<close>, \<open>invariant\<close>, a
+    user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax tree
+    and executed as the file is processed. Here, the lexer instead \<^emph>\<open>lexically\<close>
+    recognizes the shape \<open>@tag \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag optionally followed
+    by whitespace, and, independently, a properly-nested Isabelle cartouche
+    \<open>\<open>\<dots>\<close>\<close> - anywhere inside a comment, reporting both as PIDE markup
+    (\<^ML>\<open>Markup.antiquote\<close> / \<^ML>\<open>Markup.cartouche\<close>) instead of discarding them as
+    opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer has no notion of
+    an annotation command language, only of where one \<^emph>\<open>could\<close> be hooked in later.
+    Since a cartouche can nest, recognizing it needs more than one regular-expression
+    rule; see the \<open>ANTIQ\<close> lexer state below for how a small amount of \<^verbatim>\<open>lex_user_declarations\<close>
+    state (a depth counter) turns this into a well-defined \<^emph>\<open>non-expert-mode\<close>
+    ml-lex specification - no \<open>[expert]\<close> switch turned out to be necessary after all.
+  \<^enum> \<^bold>\<open>The lexer test suite.\<close> Isabelle_C's own lexer/parser stress tests live in
+    \<^verbatim>\<open>C11-FrontEnd/examples/C0.thy\<close> (obfuscated/adversarial C, comment nesting,
+    preprocessor directives, and a battery of real-world \<open>.c\<close> files borrowed from the
+    \<^verbatim>\<open>parser_menhir\<close> C11 conformance suite) and \<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close> (AST
+    access and the annotation-command examples referenced above). The test sections
+    further below adapt what is in scope for a bare recognizer without a symbol table
+    or macro expansion from both files - comment nesting, the \<open>@tag \<open>...\<close>\<close> examples,
+    and (where the underlying \<open>.c\<close> files are locally available) \<open>c11_file\<close> on a
+    handful of \<^verbatim>\<open>parser_menhir\<close> tests - while using \<open>c11_reject\<close> to document,
+    rather than silently skip, the constructs that fall outside this fragment's scope
+    (real \<open>#define\<close>/\<open>#if\<close>/\<open>#elif\<close>, backslash-newline splicing, \<open>_Pragma\<close>).
+\<close>
+
 section\<open>The Lex/Yacc Definition\<close>
 
 ml_lex_yacc [verbose] "C11" where
+lex_user_declarations\<open>
+(* State kept for lexically recognizing "@tag \<open>...\<close>" antiquotations inside
+   comments (see the ANTIQ state below): the nesting depth of the cartouche
+   currently being skipped, and which comment state (block "/* */" or line
+   "//") to return to once it closes. Plain "ref", not Isabelle_lex_yacc's
+   own machinery, so it needs no qualification here. *)
+val antiq_depth = ref 0
+val antiq_from_block = ref true
+
+(* Position handling for keyword tokens, following Pascal.thy's convention:
+   report the token's full span under the given markup (Markup.keyword1 for
+   C keywords, Markup.keyword2 for preprocessor directives) - carrying the
+   literal spelling itself, not a fixed type name, as Pascal.thy does - so
+   it is coloured and hoverable in the IDE, but hand the parser a single,
+   zero-width position for the token, exactly as Pascal.thy's keyword case
+   calls "v(p, p)" rather than "tok"'s "cons(p, p')". Unlike ordinary tokens
+   (identifiers, numerals, operators, ...), where "tok"'s full start/end span
+   is used unchanged, collapsing keyword positions this way avoids the
+   position ranges of adjacent keyword and identifier tokens overlapping in
+   the PIDE markup tree, where such overlaps are silently dropped - which
+   otherwise suppressed keyword coloring intermittently. *)
+fun kw_tok markup (yypos, yytext, cons) =
+    let
+      val p = get_pos yypos
+      val _ = report_token (yypos, String.size yytext, markup, yytext, "")
+    in cons (p, p) end
+\<close>
 lex_definitions\<open>
 O=[0-7];
 D=[0-9];
@@ -89,70 +165,72 @@ SP=(u8|u|U|L);
 ES=(\\(['"?\\abfnrtv]|{O}{1,3}|x{H}+));
 WS=[\ \t\r\n\011\012];
 HWS=[\ \t\011\012];
-%s COMMENT INCLUDE;
+OPENCART=\<open>;
+CLOSECART=\<close>;
+%s COMMENT INCLUDE LCOMMENT ANTIQ;
 \<close>
 lex_rules\<open>
 <INITIAL>"/*"                            => (YYBEGIN COMMENT; lex());
-<INITIAL>"//"[^\n]*                       => (lex());
+<INITIAL>"//"                            => (antiq_from_block := false; YYBEGIN LCOMMENT; lex());
 
-<INITIAL>"#"{HWS}*"include"               => (YYBEGIN INCLUDE; tok (yypos, yytext, Markup.keyword2, "INCLUDE", "", Tokens.INCLUDE));
+<INITIAL>"#"{HWS}*"include"               => (YYBEGIN INCLUDE; kw_tok Markup.keyword2 (yypos, yytext, Tokens.INCLUDE));
 <INCLUDE>{HWS}+                          => (lex());
 <INCLUDE>"<"[^>\n]*">"                   => (YYBEGIN INITIAL; tok (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME));
 <INCLUDE>["][^"\n]*["]                   => (YYBEGIN INITIAL; tok (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME));
 <INCLUDE>\n                              => (YYBEGIN INITIAL; lex());
 <INCLUDE>.                               => (YYBEGIN INITIAL; lex());
 
-<INITIAL>"#"{HWS}*"define"               => (tok (yypos, yytext, Markup.keyword2, "DEFINE", "", Tokens.DEFINE));
-<INITIAL>"#"{HWS}*"ifndef"               => (tok (yypos, yytext, Markup.keyword2, "IFNDEF", "", Tokens.IFNDEF));
-<INITIAL>"#"{HWS}*"ifdef"                => (tok (yypos, yytext, Markup.keyword2, "IFDEF", "", Tokens.IFDEF));
-<INITIAL>"#"{HWS}*"else"                 => (tok (yypos, yytext, Markup.keyword2, "PP_ELSE", "", Tokens.PP_ELSE));
-<INITIAL>"#"{HWS}*"endif"                => (tok (yypos, yytext, Markup.keyword2, "ENDIF", "", Tokens.ENDIF));
+<INITIAL>"#"{HWS}*"define"               => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
+<INITIAL>"#"{HWS}*"ifndef"               => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFNDEF));
+<INITIAL>"#"{HWS}*"ifdef"                => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFDEF));
+<INITIAL>"#"{HWS}*"else"                 => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.PP_ELSE));
+<INITIAL>"#"{HWS}*"endif"                => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.ENDIF));
 
-<INITIAL>"auto"	=> (tok (yypos, yytext, Markup.keyword1, "AUTO", "", Tokens.AUTO));
-<INITIAL>"break"	=> (tok (yypos, yytext, Markup.keyword1, "BREAK", "", Tokens.BREAK));
-<INITIAL>"case"	=> (tok (yypos, yytext, Markup.keyword1, "CASE", "", Tokens.CASE));
-<INITIAL>"char"	=> (tok (yypos, yytext, Markup.keyword1, "CHAR", "", Tokens.CHAR));
-<INITIAL>"const"	=> (tok (yypos, yytext, Markup.keyword1, "CONST", "", Tokens.CONST));
-<INITIAL>"continue"	=> (tok (yypos, yytext, Markup.keyword1, "CONTINUE", "", Tokens.CONTINUE));
-<INITIAL>"default"	=> (tok (yypos, yytext, Markup.keyword1, "DEFAULT", "", Tokens.DEFAULT));
-<INITIAL>"do"	=> (tok (yypos, yytext, Markup.keyword1, "DO", "", Tokens.DO));
-<INITIAL>"double"	=> (tok (yypos, yytext, Markup.keyword1, "DOUBLE", "", Tokens.DOUBLE));
-<INITIAL>"else"	=> (tok (yypos, yytext, Markup.keyword1, "ELSE", "", Tokens.ELSE));
-<INITIAL>"enum"	=> (tok (yypos, yytext, Markup.keyword1, "ENUM", "", Tokens.ENUM));
-<INITIAL>"extern"	=> (tok (yypos, yytext, Markup.keyword1, "EXTERN", "", Tokens.EXTERN));
-<INITIAL>"float"	=> (tok (yypos, yytext, Markup.keyword1, "FLOAT", "", Tokens.FLOAT));
-<INITIAL>"for"	=> (tok (yypos, yytext, Markup.keyword1, "FOR", "", Tokens.FOR));
-<INITIAL>"goto"	=> (tok (yypos, yytext, Markup.keyword1, "GOTO", "", Tokens.GOTO));
-<INITIAL>"if"	=> (tok (yypos, yytext, Markup.keyword1, "IF", "", Tokens.IF));
-<INITIAL>"inline"	=> (tok (yypos, yytext, Markup.keyword1, "INLINE", "", Tokens.INLINE));
-<INITIAL>"int"	=> (tok (yypos, yytext, Markup.keyword1, "INT", "", Tokens.INT));
-<INITIAL>"long"	=> (tok (yypos, yytext, Markup.keyword1, "LONG", "", Tokens.LONG));
-<INITIAL>"register"	=> (tok (yypos, yytext, Markup.keyword1, "REGISTER", "", Tokens.REGISTER));
-<INITIAL>"restrict"	=> (tok (yypos, yytext, Markup.keyword1, "RESTRICT", "", Tokens.RESTRICT));
-<INITIAL>"return"	=> (tok (yypos, yytext, Markup.keyword1, "RETURN", "", Tokens.RETURN));
-<INITIAL>"short"	=> (tok (yypos, yytext, Markup.keyword1, "SHORT", "", Tokens.SHORT));
-<INITIAL>"signed"	=> (tok (yypos, yytext, Markup.keyword1, "SIGNED", "", Tokens.SIGNED));
-<INITIAL>"sizeof"	=> (tok (yypos, yytext, Markup.keyword1, "SIZEOF", "", Tokens.SIZEOF));
-<INITIAL>"static"	=> (tok (yypos, yytext, Markup.keyword1, "STATIC", "", Tokens.STATIC));
-<INITIAL>"struct"	=> (tok (yypos, yytext, Markup.keyword1, "STRUCT", "", Tokens.STRUCT));
-<INITIAL>"switch"	=> (tok (yypos, yytext, Markup.keyword1, "SWITCH", "", Tokens.SWITCH));
-<INITIAL>"typedef"	=> (tok (yypos, yytext, Markup.keyword1, "TYPEDEF", "", Tokens.TYPEDEF));
-<INITIAL>"union"	=> (tok (yypos, yytext, Markup.keyword1, "UNION", "", Tokens.UNION));
-<INITIAL>"unsigned"	=> (tok (yypos, yytext, Markup.keyword1, "UNSIGNED", "", Tokens.UNSIGNED));
-<INITIAL>"void"	=> (tok (yypos, yytext, Markup.keyword1, "VOID", "", Tokens.VOID));
-<INITIAL>"volatile"	=> (tok (yypos, yytext, Markup.keyword1, "VOLATILE", "", Tokens.VOLATILE));
-<INITIAL>"while"	=> (tok (yypos, yytext, Markup.keyword1, "WHILE", "", Tokens.WHILE));
-<INITIAL>"_Alignas"	=> (tok (yypos, yytext, Markup.keyword1, "ALIGNAS", "", Tokens.ALIGNAS));
-<INITIAL>"_Alignof"	=> (tok (yypos, yytext, Markup.keyword1, "ALIGNOF", "", Tokens.ALIGNOF));
-<INITIAL>"_Atomic"	=> (tok (yypos, yytext, Markup.keyword1, "ATOMIC", "", Tokens.ATOMIC));
-<INITIAL>"_Bool"	=> (tok (yypos, yytext, Markup.keyword1, "BOOL", "", Tokens.BOOL));
-<INITIAL>"_Complex"	=> (tok (yypos, yytext, Markup.keyword1, "COMPLEX", "", Tokens.COMPLEX));
-<INITIAL>"_Generic"	=> (tok (yypos, yytext, Markup.keyword1, "GENERIC", "", Tokens.GENERIC));
-<INITIAL>"_Imaginary"	=> (tok (yypos, yytext, Markup.keyword1, "IMAGINARY", "", Tokens.IMAGINARY));
-<INITIAL>"_Noreturn"	=> (tok (yypos, yytext, Markup.keyword1, "NORETURN", "", Tokens.NORETURN));
-<INITIAL>"_Static_assert"	=> (tok (yypos, yytext, Markup.keyword1, "STATIC_ASSERT", "", Tokens.STATIC_ASSERT));
-<INITIAL>"_Thread_local"	=> (tok (yypos, yytext, Markup.keyword1, "THREAD_LOCAL", "", Tokens.THREAD_LOCAL));
-<INITIAL>"__func__"	=> (tok (yypos, yytext, Markup.keyword1, "FUNC_NAME", "", Tokens.FUNC_NAME));
+<INITIAL>"auto"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.AUTO));
+<INITIAL>"break"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.BREAK));
+<INITIAL>"case"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CASE));
+<INITIAL>"char"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CHAR));
+<INITIAL>"const"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONST));
+<INITIAL>"continue"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONTINUE));
+<INITIAL>"default"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DEFAULT));
+<INITIAL>"do"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DO));
+<INITIAL>"double"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DOUBLE));
+<INITIAL>"else"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ELSE));
+<INITIAL>"enum"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ENUM));
+<INITIAL>"extern"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.EXTERN));
+<INITIAL>"float"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FLOAT));
+<INITIAL>"for"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FOR));
+<INITIAL>"goto"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.GOTO));
+<INITIAL>"if"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.IF));
+<INITIAL>"inline"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.INLINE));
+<INITIAL>"int"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.INT));
+<INITIAL>"long"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.LONG));
+<INITIAL>"register"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.REGISTER));
+<INITIAL>"restrict"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.RESTRICT));
+<INITIAL>"return"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.RETURN));
+<INITIAL>"short"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SHORT));
+<INITIAL>"signed"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIGNED));
+<INITIAL>"sizeof"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIZEOF));
+<INITIAL>"static"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC));
+<INITIAL>"struct"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STRUCT));
+<INITIAL>"switch"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SWITCH));
+<INITIAL>"typedef"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.TYPEDEF));
+<INITIAL>"union"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNION));
+<INITIAL>"unsigned"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNSIGNED));
+<INITIAL>"void"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOID));
+<INITIAL>"volatile"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOLATILE));
+<INITIAL>"while"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.WHILE));
+<INITIAL>"_Alignas"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNAS));
+<INITIAL>"_Alignof"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNOF));
+<INITIAL>"_Atomic"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ATOMIC));
+<INITIAL>"_Bool"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.BOOL));
+<INITIAL>"_Complex"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.COMPLEX));
+<INITIAL>"_Generic"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.GENERIC));
+<INITIAL>"_Imaginary"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.IMAGINARY));
+<INITIAL>"_Noreturn"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.NORETURN));
+<INITIAL>"_Static_assert"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC_ASSERT));
+<INITIAL>"_Thread_local"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.THREAD_LOCAL));
+<INITIAL>"__func__"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FUNC_NAME));
 
 <INITIAL>{L}{A}*	=> (tok (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER));
 
@@ -221,10 +299,33 @@ lex_rules\<open>
 <INITIAL>{WS}+                             => (lex());
 <INITIAL>.                                  => (lex());
 
-<COMMENT>[^*\n]+                           => (lex());
+<COMMENT>[^*@\\\n]+                        => (lex());
 <COMMENT>\n+                                => (lex());
-<COMMENT>"*"+[^*/\n]*                      => (lex());
+<COMMENT>"*"+[^*/@\\\n]*                   => (lex());
 <COMMENT>"*"+"/"                            => (YYBEGIN INITIAL; lex());
+
+<COMMENT>"@"{HWS}*{L}{A}*                  => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", ""); lex());
+<COMMENT>"@"                               => (lex());
+<COMMENT>"\\"                              => (lex());
+<COMMENT>{OPENCART}                        => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
+                                                antiq_depth := 1; antiq_from_block := true; YYBEGIN ANTIQ; lex());
+
+<LCOMMENT>[^@\\\n]+                        => (lex());
+<LCOMMENT>"@"{HWS}*{L}{A}*                 => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", ""); lex());
+<LCOMMENT>"@"                              => (lex());
+<LCOMMENT>"\\"                             => (lex());
+<LCOMMENT>{OPENCART}                       => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
+                                                antiq_depth := 1; antiq_from_block := false; YYBEGIN ANTIQ; lex());
+<LCOMMENT>\n                               => (YYBEGIN INITIAL; lex());
+
+<ANTIQ>[^\\\n]+                            => (lex());
+<ANTIQ>\n+                                  => (lex());
+<ANTIQ>"\\"                                => (lex());
+<ANTIQ>{OPENCART}                          => (antiq_depth := !antiq_depth + 1; lex());
+<ANTIQ>{CLOSECART}                         => (antiq_depth := !antiq_depth - 1;
+                                                if !antiq_depth = 0
+                                                then ((if !antiq_from_block then YYBEGIN COMMENT else YYBEGIN LCOMMENT); lex())
+                                                else lex());
 \<close>
 and yacc_user_declarations\<open>\<close>
 yacc_definitions\<open>
@@ -655,6 +756,32 @@ val _ = Outer_Syntax.command @{command_keyword "c11"}
         "Syntax check a C11 translation unit"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
 
+(* Isabelle_C's counterpart is "C_file \<open>path\<close>". Resources.parse_file/
+   Token.file_source/Resources.provide_file are the same Isabelle/Pure
+   building blocks the built-in ML_file/SML_file commands use (see
+   Pure/ML/ml_file.ML): the path is resolved relative to this theory's
+   master directory, the resulting Input.source carries correct file
+   positions (so parse errors point at the actual file/line/column, not
+   at the command invocation), and the file is registered as a dependency
+   so `isabelle build` re-checks this theory when it changes. Note the
+   keyword kind below: "c11_file" is declared "thy_load", not "diag" like
+   "c11"/"c11_reject" - Resources.parse_file's file-dependency resolution
+   is only actually wired up by Isabelle's command-span scanner for
+   thy_load-kind commands (matching how ML_file/SML_file/external_file
+   are themselves declared in Pure.thy); under "diag" the file is never
+   read, silently. *)
+fun run_c11_file get_file thy =
+    let
+      val file = get_file thy
+      val source = Token.file_source file
+      val ctxt = Proof_Context.init_global thy
+      val _ = C11.parse_source ctxt source
+    in Resources.provide_file file thy end
+
+val _ = Outer_Syntax.command @{command_keyword "c11_file"}
+        "Read and syntax-check an external C11 source file"
+        (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
+
 (* C11.parse_source (generated by the `linker` template in YaccLib.thy)
    always delegates to Isabelle_lex_yacc.parse_source, which hard-codes
    Isabelle_lex_yacc.print_error as the parser's error callback - it is not
@@ -751,6 +878,22 @@ int main(void) {
   return x;
 }
 \<close>
+
+subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
+text\<open>
+  \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
+  C11 conformance test suite (via its copy in the Isabelle_C AFP entry, see
+  \<^verbatim>\<open>examples/README.md\<close> for provenance and license), the same files
+  Isabelle_C's own \<open>C0.thy\<close> exercises its lexer/parser against. None of them
+  use this fragment's unsupported constructs (real \<open>#define\<close>, \<open>#if\<close>/\<open>#elif\<close>,
+  backslash-newline), so all three are expected to succeed here too - genuine,
+  non-trivial C11 (compound literals, deeply nested declarators, anonymous
+  struct/union members, \<open>[*]\<close> parameter arrays, the dangling-\<open>else\<close> case,
+  \<open>\<dots>\<close>), not code written for this theory.
+\<close>
+c11_file \<open>examples/expressions.c\<close>
+c11_file \<open>examples/dangling_else.c\<close>
+c11_file \<open>examples/declarators.c\<close>
 
 
 subsection\<open>Tests for Arithmetic, Bitwise, Relational and Logical Operators\<close>
@@ -896,8 +1039,8 @@ int test_switch_goto(int x) {
 
 section\<open>Error-recovery / Malformed-input Tests\<close>
 
-text\<open>Each of the following fragments is syntactically invalid, and \<open>c11_reject\<close> 
-  (defined above) fails the theory build if the parser unexpectedly \<^emph>\<open>accepts\<close> 
+text\<open>Each of the following fragments is syntactically invalid, and \<open>c11_reject\<close>
+  (defined above) fails the theory build if the parser unexpectedly \<^emph>\<open>accepts\<close>
   one of them, rather than reporting the expected parse error.\<close>
 
 subsection\<open>Unbalanced braces and parentheses\<close>
@@ -946,6 +1089,96 @@ int x;
 c11_reject\<open>
 #ifdef DEBUG
 int x;
+\<close>
+
+section\<open>Antiquotation-carrying Comments (cf. Isabelle_C's \<^verbatim>\<open>C1.thy\<close>)\<close>
+
+text\<open>
+  A line comment carrying a tag and a properly-nested cartouche, adapted from
+  Isabelle_C's own \<open>#include\<close> example (\<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close>). The
+  lexer reports \<open>@setup\<close> and the cartouche as PIDE markup; nothing is executed.
+\<close>
+c11\<open>
+int b;
+//@ setup \<open>Include.append "tmp" [\<open>b\<close>]\<close>
+int a = b;
+\<close>
+
+text\<open>A block-comment variant, with a doubly-nested cartouche.\<close>
+c11\<open>
+/*@ setup \<open>Include.append "tmp" [\<open>b\<close>, \<open>c\<close>]\<close> */
+int a = 0;
+\<close>
+
+text\<open>
+  A Frama-C/ACSL-style annotation comment (Isabelle_C's other supported style):
+  bare keywords followed by plain strings, no \<open>@\<close>-tag or cartouche. The lexer
+  does not specially recognize \<open>requires\<close>/\<open>ensures\<close> here - it is simply
+  comment text - but must not choke on it either.
+\<close>
+c11\<open>
+/*@ requires "n >= 0"
+    ensures "result >= 0"
+ */
+int abs(int n) {
+  if (n < 0) return -n;
+  return n;
+}
+\<close>
+
+section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+
+text\<open>
+  Adapted from Isabelle_C's own comment-nesting example, which follows
+  \<^url>\<open>https://gcc.gnu.org/onlinedocs/cpp/Initial-processing.html\<close>: a \<open>/* */\<close>
+  comment does \<^emph>\<open>not\<close> nest, so the first \<open>*/\<close> closes it - the code after is
+  live, not still-commented-out. \<open>c11\<close> succeeding on this is itself the test.
+\<close>
+c11\<open>
+/* inside /* inside */ int a = 1;
+// inside // inside until end of line
+int b = 2;
+/* inside
+  // inside
+inside
+*/ int c = 3;
+// inside /* inside until end of line
+int d = 4;
+\<close>
+
+section\<open>What Falls Outside This Fragment (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+
+text\<open>
+  Isabelle_C's directive/macro stress tests use the real C preprocessor's
+  \<open>#define\<close> (juxtaposed replacement-list, no \<open>=\<close>) and general \<open>#if\<close>/\<open>#elif\<close>,
+  neither of which this simplified fragment implements (this theory's own
+  \<open>#define name = expr\<close> and \<open>#ifdef\<close>/\<open>#ifndef\<close> only). \<open>c11_reject\<close> documents
+  the boundary instead of silently skipping it.
+\<close>
+c11_reject\<open>
+#define a zz
+\<close>
+c11_reject\<open>
+#ifdef a
+#elif
+#else
+#if
+#endif
+#endif
+\<close>
+
+text\<open>
+  Likewise, backslash-newline splicing (ISO C11 translation phase 2, which
+  would let a keyword be split across lines by ending each fragment with a
+  backslash, e.g. \<open>i\<close> then a line break then \<open>nt\<close> for \<open>int\<close>) is not
+  implemented: it would require preprocessing the source text before lexing,
+  with its own position-mapping machinery, which is out of scope here. Below,
+  the split keyword is lexed as the two identifiers \<open>i\<close> and \<open>nt\<close> rather
+  than as \<open>int\<close>, so the fragment is correctly rejected.
+\<close>
+c11_reject\<open>
+i\
+nt a = 1;
 \<close>
 
 end
