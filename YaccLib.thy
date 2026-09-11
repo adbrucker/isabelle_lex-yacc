@@ -64,47 +64,94 @@ signature ISABELLE_LEX_YACC =
 structure Isabelle_lex_yacc: ISABELLE_LEX_YACC = struct
   type pos = Position.T
 
-  (* Use a Synchronized variable instead of raw Thread_Data to coordinate state cleanly *)
+  (* Thread-LOCAL state, not a single shared Synchronized.var: Isabelle's
+     parallel command checking can run several "diag"-kind commands (e.g.
+     several "c11"/"c11_file" invocations in the same theory) concurrently
+     on different worker threads. A single shared Synchronized.var makes
+     each individual read/write of the (source, context) pair atomic, but
+     does nothing to stop one command's "set" from overwriting another
+     concurrently-running command's state while its lexer is still mid-scan
+     - every get_pos/report_token call in progress on any other thread would
+     then silently compute positions against the wrong source. That cross-
+     command mix-up, not any arithmetic in get_pos, is what produced
+     positions from unrelated parts of the theory colliding with each other.
+     Thread_Data.var gives every thread its own independent cell, so one
+     command's state can never be visible to another's lexer run - which is
+     exactly what the pre-refactor code (see the comment this replaces) used
+     Thread_Data for in the first place. *)
   type state = Input.source * Proof.context
-  val global_state : state Synchronized.var =
-    Synchronized.var "isabelle_lex_yacc_state" (Input.string "", Context.the_local_context ())
+  val global_state : state Thread_Data.var = Thread_Data.var ()
+
+  fun default_state () = (Input.string "", Context.the_local_context ())
 
   fun set source ctx =
-    Synchronized.change global_state (fn _ => (source, ctx))
+    Thread_Data.put global_state (SOME (source, ctx))
 
-  fun get_src () = #1 (Synchronized.value global_state)
-  fun get_ctxt () = #2 (Synchronized.value global_state)
+  fun get_state () = the_default (default_state ()) (Thread_Data.get global_state)
 
-  fun reset () =
-    Synchronized.change global_state (fn _ => (Input.string "", Context.the_local_context ()))
+  fun get_src () = #1 (get_state ())
+  fun get_ctxt () = #2 (get_state ())
 
-  (* Helper: Explodes the source but strips the ‹ and › markers *)
-  fun get_inner_syms source =
+  fun reset () = Thread_Data.put global_state NONE
+
+  (* Build a vector with one Position.T per raw CHARACTER of the full source
+     text (Input.source_content source, delimiters included) - i.e. exactly
+     the string that "parse_source" below feeds character by character to
+     the generated ml-lex scanner as its input, so that yypos (which the
+     scanner counts in raw characters, via "String.size"/"String.sub") can
+     be used to index this vector directly.
+
+     Input.source_explode instead gives one (symbol, pos) pair per Isabelle
+     *symbol*: the named opening/closing cartouche delimiter symbols, or any
+     other named symbol, are each a single list entry even though they span
+     several raw characters (e.g. seven, for the cartouche delimiters).
+     Indexing such a symbol-granularity list directly by a character-based
+     yypos (as the previous "get_inner_syms" - stripped of its two outer
+     symbols to skip the cartouche delimiters, then indexed as if 1 symbol
+     = 1 character) silently desynchronizes: first by a constant equal to
+     the raw length of the opening delimiter, since the delimiter is never
+     actually stripped from input_text itself, only from this position
+     table, and then cumulatively further, by the extra raw character count
+     of every multi-character symbol lexed *within* the source text - which
+     reliably happens for this theory's own antiquotation tests, whose C
+     source content itself contains a literal, nested cartouche. The drift
+     compounds with every such symbol, which is why it showed up as
+     ever-growing, unrelated-looking markup ranges deep into larger test
+     blocks rather than a fixed, uniform shift. Expanding each symbol's
+     position across all of its raw characters (instead of just once) keeps
+     this vector aligned with input_text/yypos by construction, with no
+     separate delimiter-stripping needed. *)
+  fun get_char_positions source =
     let
       val syms = Input.source_explode source
-    in
-      if length syms >= 2 then List.take (tl syms, length syms - 2) else syms
-    end
+      fun expand (sym, pos) = List.tabulate (String.size sym, fn _ => pos)
+    in List.concat (map expand syms) end
 
   fun get_pos yypos =
     let
       val src = get_src ()
-      val inner_syms = get_inner_syms src
-      val pos_vec = Vector.fromList inner_syms
-      val idx = yypos - 1
+      val pos_vec = Vector.fromList (get_char_positions src)
+      (* yypos, as computed by the generated ml-lex scanner (see LexGen.sml:
+         "val yypos = YYPosInt.+(YYPosInt.fromInt i0, !yygone)", with the
+         default yygone0 = ~1 and 0-based buffer index i0), is already
+         0-based: yypos = 0 addresses the first character of the source. It
+         must therefore index pos_vec directly, with no "yypos - 1" shift -
+         that extra shift previously pulled every reported position one
+         character too early, i.e. exactly the "-1 column" symptom. *)
+      val idx = yypos
     in
       if Vector.length pos_vec = 0 then Input.pos_of src
-      else if idx < 0 then #2 (Vector.sub (pos_vec, 0))
+      else if idx < 0 then Vector.sub (pos_vec, 0)
       else if idx >= Vector.length pos_vec then
-        #2 (Vector.sub (pos_vec, Vector.length pos_vec - 1))
-      else #2 (Vector.sub (pos_vec, idx))
+        Vector.sub (pos_vec, Vector.length pos_vec - 1)
+      else Vector.sub (pos_vec, idx)
     end
 
   fun report_token (start_idx, len, markup, token_type, token_sort) =
     if 0 < len then
-      let 
-        val p_start = get_pos start_idx 
-        val p_end = get_pos (start_idx + len) 
+      let
+        val p_start = get_pos start_idx
+        val p_end = get_pos (start_idx + len)
         val p = Position.range_position (Position.range(p_start, p_end))
         val ctxt = get_ctxt ()
       in
@@ -117,8 +164,7 @@ structure Isabelle_lex_yacc: ISABELLE_LEX_YACC = struct
   fun get_line_col p =
     let
       val src = get_src ()
-      val inner_syms = get_inner_syms src
-      val pos_vec = Vector.fromList inner_syms
+      val pos_vec = Vector.fromList (get_char_positions src)
       val (input_text, _) = Input.source_content src
       val target_offset = Position.offset_of p
 
@@ -129,7 +175,7 @@ structure Isabelle_lex_yacc: ISABELLE_LEX_YACC = struct
 
       fun find_idx i =
         if i >= Vector.length pos_vec then Vector.length pos_vec
-        else if is_target (#2 (Vector.sub (pos_vec, i))) then i
+        else if is_target (Vector.sub (pos_vec, i)) then i
         else find_idx (i + 1)
 
       val limit = find_idx 0
@@ -169,7 +215,7 @@ structure Isabelle_lex_yacc: ISABELLE_LEX_YACC = struct
   fun parse_source parse makeLexer get sameToken EOF source =
     let
       val (input_text, _) = Input.source_content source
-      
+
       fun invoke lexstream =
         parse (0, lexstream, print_error, ())
       
@@ -183,7 +229,8 @@ structure Isabelle_lex_yacc: ISABELLE_LEX_YACC = struct
 
       val lexer = makeLexer input_string
       
-      val eof_pos = get_pos (String.size input_text + 1)
+      (* One past the last valid 0-based character index - see get_pos. *)
+      val eof_pos = get_pos (String.size input_text)
       val dummyEOF = EOF (eof_pos, eof_pos)
       
       fun loop lexer =

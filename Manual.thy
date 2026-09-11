@@ -310,11 +310,12 @@ section\<open>Defining Lex/Yacc Specifications\<close>text\<open>\label{sec:comm
 
 text \<open>
 
-  The theory @{theory "Isabelle_Lex-Yacc.LexYacc"} (which also is the main entry point for the Isabelle 
-  Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, Isar-level 
-  interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc directly within 
-  Isabelle theories. It processes lexical and grammatical specifications, compiles them into SML 
-  structures, and loads them into the current Isabelle theory context. Its general syntax is as follows:
+  The theory @{verbatim "Isabelle_Lex-Yacc.LexYacc"} (which also is the main entry point for the 
+  Isabelle Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, 
+  Isar-level interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc 
+  directly within Isabelle theories. It processes lexical and grammatical specifications, compiles 
+  them into SML structures, and loads them into the current Isabelle theory context. Its general 
+  syntax is as follows:
 
   @{rail \<open>
     @@{command ml_lex_yacc} ('[' options ']')? name \<newline> 'where'
@@ -414,9 +415,124 @@ it needs to be imported into SML using the @{command "SML_import"} command. For 
 
 @{theory_text[display]\<open>SML_import \<open>structure Datalog_AST = Datalog_AST\<close>\<close>}
 
-The theory @{theory "Isabelle_Lex-Yacc.Datalog"} contains an example of using  ML code defined 
+The theory @{theory "Isabelle_Lex-Yacc.Datalog"} contains an example of using  ML code defined
 within an @{command "ML"}-environment.
 \<close>
+
+section\<open>Calculating Positions\<close>text\<open>\label{sec:positions}\<close>
+
+text\<open>
+  Every token reported via @{ML \<open>tok\<close>} or @{ML \<open>tok_val\<close>} (\secref{sec:command}) ends up
+  highlighted, hoverable, and clickable in the PIDE IDE, and every parse error points back at
+  the exact offending line and column of the \<^emph>\<open>original\<close> theory source - not at the generated
+  SML code. None of this is automatic: it rests on a small, easy-to-misuse bridge between the
+  generated ML-Lex scanner's own, low-level notion of ``where am I in the input'' and Isabelle's
+  own @{ML_type \<open>Position.T\<close>}. Ordinary lex/yacc specifications never need to know any of this -
+  @{ML \<open>tok\<close>} and @{ML \<open>tok_val\<close>} already do the right thing. This section is for the rarer
+  case of writing custom yacc actions that report additional markup themselves, or debugging why
+  highlighting looks wrong, as happened in early examples handled in this framework.
+\<close>
+
+subsection\<open>Positions Count Symbols, not Characters\<close>
+
+text\<open>
+  @{ML_type \<open>Position.T\<close>} (@{ML_structure \<open>Position\<close>}) is an abstract record of a line number,
+  an offset, and (for a range) an end offset, plus a few properties such as a file name. Crucially,
+  \<^bold>\<open>offset counts Isabelle \<^emph>\<open>symbols\<close>, not raw characters\<close>. A ``symbol''
+  (@{ML_type \<open>Symbol.symbol\<close>}, itself just a @{ML_type \<open>string\<close>}) is Isabelle's unit of text:
+  an ordinary ASCII character is one symbol, but so is an entire named symbol such as the
+  cartouche delimiters or \<^verbatim>\<open>\<dots>\<close>, even though its raw spelling is several characters long.
+  @{ML \<open>Position.symbol_explode\<close>} - the function that advances a position across a stretch of
+  text - reflects this directly: for every symbol the text explodes into, the offset is
+  incremented by exactly one, regardless of how many raw characters that symbol's own textual
+  spelling occupies.
+
+  The practical consequence: two pieces of source text that look the same length character-for-
+  character can have different \<^emph>\<open>symbol\<close> counts, and anything that mixes up ``the \<open>n\<close>-th
+  character'' with ``the \<open>n\<close>-th symbol'' will silently compute the wrong position as soon as a
+  multi-character symbol is involved - which is easy to miss during testing, since plain-ASCII
+  source text never exposes the difference.
+\<close>
+
+subsection\<open>From Source Text to Positions\<close>
+
+text\<open>
+  @{ML_structure \<open>Input\<close>} is the wrapper used throughout the framework for delimited source text,
+  such as the cartouche argument of a command or the content of a file read via
+  @{ML \<open>Resources.parse_file\<close>}. It bundles the raw text together with the @{ML_type
+  \<open>Position.range\<close>} at which that text starts in the theory source. @{ML \<open>Input.source_explode\<close>}
+  and @{ML \<open>Input.source_content\<close>} are thin wrappers over @{ML \<open>Symbol_Pos.explode\<close>}, which walks
+  the text symbol by symbol (via @{ML \<open>Symbol.explode\<close>}, not raw character indexing) and tags
+  each one with its own @{ML_type \<open>Position.T\<close>}, threading the running position forward one
+  symbol at a time with @{ML \<open>Position.symbol\<close>} as it goes.
+
+  A single point position is rarely what a caller wants to highlight - a \<^emph>\<open>range\<close> is.
+  @{ML \<open>Position.range\<close>} pairs a start and an end position, and
+  @{ML \<open>Position.range_position\<close>} folds such a pair into one @{ML_type \<open>Position.T\<close>} whose own
+  offset/end-offset mark the span; that is the value @{ML \<open>Context_Position.report\<close>} needs to
+  push a piece of markup into the PIDE document model, which is what makes jEdit render it (color,
+  tooltip, hyperlink). @{ML \<open>Position.here\<close>} renders a position as the human-readable
+  \<^verbatim>\<open>"(line N)"\<close>-style string used in error messages.
+\<close>
+
+subsection\<open>Positions Inside the Generated Lexer: the \<open>yypos\<close> Gap\<close>
+
+text\<open>
+  The generated ML-Lex scanner has no notion of Isabelle symbols at all: it is handed one plain
+  SML \<^ML_type>\<open>string\<close> (the full source content) and counts its own \<open>yypos\<close> in raw characters,
+  using ordinary \<^ML>\<open>String.size\<close>/\<^ML>\<open>String.sub\<close> - \<^bold>\<open>0-based\<close>, i.e. \<open>yypos = 0\<close> addresses the
+  very first character of the input. This is a genuinely different coordinate system from
+  @{ML_type \<open>Position.T\<close>}'s symbol-counted, 1-based offset, and the two coincide only as long as
+  every symbol in the source happens to be exactly one character wide.
+
+  @{ML_structure \<open>Isabelle_lex_yacc\<close>}'s @{ML[display]\<open>get_pos: int -> Position.T\<close>} is the
+  bridge: given a raw \<open>yypos\<close> value from the lexer, it must return the right
+  @{ML_type \<open>Position.T\<close>} in the \<^emph>\<open>original\<close> theory source. It does this by building a lookup
+  table indexed in the \<^emph>\<open>same\<close> raw-character coordinates the lexer itself uses: each symbol's
+  position (from @{ML \<open>Input.source_explode\<close>}) is repeated once for every raw character that
+  symbol's own spelling occupies, rather than appearing just once per symbol. Indexing that table
+  directly by \<open>yypos\<close> then requires no further adjustment. Skipping this expansion step - i.e.
+  treating the symbol list as if it already had one entry per character - silently desynchronizes
+  as soon as a multi-character symbol appears anywhere in the lexed text, with an error that grows
+  the further past that symbol the lexer has read.
+
+  @{ML \<open>tok\<close>} and @{ML \<open>tok_val\<close>} call @{ML \<open>get_pos\<close>} for you; a custom yacc action that wants
+  to report a position of its own (for a synthesized token, say) should go through the same
+  function rather than converting a \<open>yypos\<close>-style offset into a @{ML_type \<open>Position.T\<close>} by hand.
+\<close>
+
+subsection\<open>Lexer State Must Be Thread-Local\<close>
+
+text\<open>
+  @{ML \<open>get_pos\<close>} needs to know not just \<^emph>\<open>which\<close> raw offset, but \<^emph>\<open>which source\<close> that
+  offset is relative to - a \<open>yypos\<close> value is meaningless on its own. 
+  @{ML[display]\<open>set: Input.source -> Proof.context -> unit\<close>}
+  is called once, at the start of @{ML \<open>parse_source\<close>}, to stash the current source (and
+  proof context, needed for reporting) somewhere @{ML \<open>get_pos\<close>} can retrieve it from for the
+  remainder of that lex/parse run.
+
+  Isabelle checks independent theory commands \<^emph>\<open>in parallel\<close>, across multiple worker threads -
+  including, for instance, several separate uses of a command built on this framework within the
+  same theory. If that stashed state lived in one single, shared, mutable location, two such
+  commands running concurrently could interfere with each other: one command's call to
+  @{ML \<open>set\<close>} could overwrite the source that a \<^emph>\<open>different\<close> command's lexer, running on another
+  thread, is still mid-scan against, so that its subsequent @{ML \<open>get_pos\<close>}/@{ML \<open>report_token\<close>}
+  calls would silently compute positions against the wrong source text - producing markup that
+  looks essentially random and inconsistent, without any single wrong calculation to point at, and
+  which does not reproduce reliably since it depends on how the two commands happened to be
+  scheduled. Using a plain, globally-shared \<^ML_structure>\<open>Synchronized\<close> variable for this state
+  does \<^emph>\<open>not\<close> avoid the problem: it only makes each individual read or write of that variable
+  atomic, not the whole command's run.
+
+  The fix is to give each thread its own, independent copy of this state, using
+  @{ML_structure \<open>Thread_Data\<close>}: @{ML \<open>Thread_Data.var\<close>} allocates a cell that
+  @{ML \<open>Thread_Data.get\<close>}/@{ML \<open>Thread_Data.put\<close>} read and write per-thread, so that one
+  command's @{ML \<open>set\<close>} can never become visible to another, concurrently-running command's
+  @{ML \<open>get_pos\<close>}. This works because everything within one @{ML \<open>parse_source\<close>} invocation -
+  from @{ML \<open>set\<close>} through the whole lex/parse loop - runs synchronously on a single thread; only
+  \<^emph>\<open>different\<close> invocations, not calls within one, may end up on different threads.
+\<close>
+
 section \<open>Expert Mode: The Calculator Example Revisited\<close>text\<open>\label{sec:expert}\<close>
 
 text \<open>

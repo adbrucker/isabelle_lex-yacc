@@ -1118,7 +1118,7 @@ text\<open>
 \<close>
 c11\<open>
 /*@ requires "n >= 0"
-    ensures "result >= 0"
+  @ ensures "result >= 0"
  */
 int abs(int n) {
   if (n < 0) return -n;
