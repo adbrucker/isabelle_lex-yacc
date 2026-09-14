@@ -1,5 +1,5 @@
 (***********************************************************************************
- * Copyright (c) University of Exeter, UK
+ * Copyright (c) University of Paris-Saclay
  *
  * All rights reserved.
  *
@@ -27,9 +27,10 @@
  ***********************************************************************************)
 
 theory C11
-  imports "../LexYacc"
-  keywords "c11" "c11_reject" :: diag
+  imports "C11_Parser"
+  keywords "c11" "c11_ident" "c11_expr" "c11_statement" :: thy_decl
   and "c11_file" :: thy_load
+  and "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
 begin
 
 text\<open>
@@ -37,9 +38,35 @@ text\<open>
   ported from the reference grammar published at
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
-  standard. As in the reference grammar, this is a pure recognizer: no abstract syntax
-  tree is built, all semantic actions are the trivial \<open>()\<close>. Following the reference
-  grammar's own note, identifiers are never lexed as \<open>TYPEDEF_NAME\<close> or
+  standard. Semantic actions build a real abstract syntax tree, defined in
+  \<^verbatim>\<open>c_ast.ML\<close> (a hand-pruned port of the Isabelle_C AFP entry's own C11 AST) and
+  instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
+  \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which carries
+  not just a position but also, where present, the source comments and \<open>@tag \<open>...\<close>\<close>
+  antiquotations attached to that node (see \<^verbatim>\<open>C11_Comments\<close>, below, and the
+  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c_ast.ML\<close> itself). The grammar's
+  own start symbol accepts a bare identifier, a standalone expression, a standalone
+  statement, or a whole translation unit, wrapping whichever one actually matched into
+  \<^verbatim>\<open>c_ast_root\<close>'s \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close> case respectively - a bare identifier
+  resolves to \<open>Id\<close>, not to the (also grammatically valid) one-token \<open>Expr\<close> reading, since
+  \<open>start_rule\<close> lists the \<open>IDENTIFIER\<close> alternative first and ml-yacc's reduce/reduce
+  conflict resolution favours the earlier-declared rule. A handful of deliberate,
+  documented simplifications keep this a tractable single pass rather than a full
+  semantic C front-end: array-declarator type-qualifier lists are dropped (\<^verbatim>\<open>cArraySize\<close>
+  has no room for them); a parenthesized declarator that itself has a pointer prefix
+  \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully correct
+  suffix-binding precedence (the classic C "declarator inversion" problem, needing a
+  genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
+  \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
+  language-c - has no separate case for it; and preprocessor directives are recognized
+  syntactically but do not become real AST nodes (\<open>external_declaration\<close> is a
+  \<^verbatim>\<open>Position.T cExternalDeclaration option\<close>, \<open>NONE\<close> for a directive, filtered out when
+  a translation unit's declaration list is assembled) - c_ast.ML's \<open>cExternalDeclaration\<close>
+  has no slot for one, and adding one was out of scope for this pass. Constant-literal
+  parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
+  than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
+  below. Following the reference grammar's own note, identifiers are never lexed as
+  \<open>TYPEDEF_NAME\<close> or
   \<open>ENUMERATION_CONSTANT\<close> (which would require a symbol table); these tokens remain
   part of the grammar, but are only ever produced were a symbol table to be added later.
   The grammar has two known shift/reduce conflicts (the dangling \<open>ELSE\<close> and the
@@ -105,6 +132,29 @@ text\<open>
     rule; see the \<open>ANTIQ\<close> lexer state below for how a small amount of \<^verbatim>\<open>lex_user_declarations\<close>
     state (a depth counter) turns this into a well-defined \<^emph>\<open>non-expert-mode\<close>
     ml-lex specification - no \<open>[expert]\<close> switch turned out to be necessary after all.
+    Comments and antiquotations are, beyond that markup, now also genuinely
+    \<^emph>\<open>registered\<close>: \<^verbatim>\<open>C11_Comments\<close> (defined just above the lexer/parser definition,
+    \<^verbatim>\<open>SML_import\<close>ed into the lex/yacc sandbox the same way \<^verbatim>\<open>YaccLib.thy\<close> already
+    does for \<^verbatim>\<open>Position\<close>/\<open>Markup\<close>) accumulates raw text and antiquotation fragments as
+    the lexer scans them and attaches each batch to whichever real token follows, so
+    the grammar can fold them into that token's \<^verbatim>\<open>nodeInfo\<close> once it decides which AST
+    node owns them - see the fuller rationale on \<^verbatim>\<open>C11_Comments\<close> itself for why
+    attachment happens at the token's own lex time rather than at the point some later
+    LALR(1) reduction gets around to it. Recognizing a genuine nested cartouche this way
+    surfaced a latent, previously invisible bug in \<open>OPENCART\<close>/\<open>CLOSECART\<close> themselves.
+    Isabelle's cartouche-open and cartouche-close symbols are each spelled, in the raw
+    source text ml-lex's generated scanner actually reads character by character, as a
+    literal backslash followed by an angle-bracketed name - seven and eight raw
+    characters respectively, not one special codepoint. As a plain ml-lex regular
+    expression this needs \<^emph>\<open>three\<close> backslashes, not one: one escaped pair to match
+    that leading literal backslash, and a second escaped pair for the angle bracket right
+    after it, since a bare, unescaped angle bracket is ml-lex's own syntax for a start-state
+    prefix (as in the \<open><INITIAL>\<close> seen throughout the rules below) rather than a literal
+    character - the letters of the symbol's name and its closing angle bracket need no
+    escaping of their own. With only one backslash, as the original definitions had it, the
+    pattern silently compiled to matching the six-character angle-bracketed name alone,
+    missing its leading backslash - invisible before now because the antiquotation content
+    it should have captured was simply discarded either way.
   \<^enum> \<^bold>\<open>The lexer test suite.\<close> Isabelle_C's own lexer/parser stress tests live in
     \<^verbatim>\<open>C11-FrontEnd/examples/C0.thy\<close> (obfuscated/adversarial C, comment nesting,
     preprocessor directives, and a battery of real-world \<open>.c\<close> files borrowed from the
@@ -118,643 +168,161 @@ text\<open>
     (real \<open>#define\<close>/\<open>#if\<close>/\<open>#elif\<close>, backslash-newline splicing, \<open>_Pragma\<close>).
 \<close>
 
-section\<open>The Lex/Yacc Definition\<close>
+subsection\<open>Defining Infrastructure for storing Ast's and Environments\<close>
 
-ml_lex_yacc [verbose] "C11" where
-lex_user_declarations\<open>
-(* State kept for lexically recognizing "@tag \<open>...\<close>" antiquotations inside
-   comments (see the ANTIQ state below): the nesting depth of the cartouche
-   currently being skipped, and which comment state (block "/* */" or line
-   "//") to return to once it closes. Plain "ref", not Isabelle_lex_yacc's
-   own machinery, so it needs no qualification here. *)
-val antiq_depth = ref 0
-val antiq_from_block = ref true
-
-(* Position handling for keyword tokens, following Pascal.thy's convention:
-   report the token's full span under the given markup (Markup.keyword1 for
-   C keywords, Markup.keyword2 for preprocessor directives) - carrying the
-   literal spelling itself, not a fixed type name, as Pascal.thy does - so
-   it is coloured and hoverable in the IDE, but hand the parser a single,
-   zero-width position for the token, exactly as Pascal.thy's keyword case
-   calls "v(p, p)" rather than "tok"'s "cons(p, p')". Unlike ordinary tokens
-   (identifiers, numerals, operators, ...), where "tok"'s full start/end span
-   is used unchanged, collapsing keyword positions this way avoids the
-   position ranges of adjacent keyword and identifier tokens overlapping in
-   the PIDE markup tree, where such overlaps are silently dropped - which
-   otherwise suppressed keyword coloring intermittently. *)
-fun kw_tok markup (yypos, yytext, cons) =
-    let
-      val p = get_pos yypos
-      val _ = report_token (yypos, String.size yytext, markup, yytext, "")
-    in cons (p, p) end
+text\<open>
+  \<open>CEnv\<close> and \<open>CAst_Store\<close> are both plain \<^verbatim>\<open>Generic_Data\<close> registries (the
+  standard Isabelle/Pure idiom for per-theory, persistent-through-merge state), so they
+  are declared as two \<^emph>\<open>sibling\<close> structures - not one nested inside the other under
+  the same name, which would just shadow itself. \<open>CEnv\<close> holds the (still largely
+  unused - \<open>types\<close>/\<open>c_antiq\<close> are placeholders for a future symbol table and
+  antiquotation-command registry) symbolic environment, plus the running \<open>units\<close>
+  counter that gives every AST this theory stores a fresh, per-theory sequence number.
+  \<open>CAst_Store\<close> maps \<open>(theory_name, unit_number)\<close> - encoded as one \<^verbatim>\<open>Symtab\<close> key,
+  since \<^verbatim>\<open>Symtab.table\<close> is string-keyed - to the \<^verbatim>\<open>Position.T root\<close> that one of
+  the \<open>c11\<close>/\<open>c11_file\<close>/\<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> commands parsed there;
+  see \<open>store_root\<close>, below, for the key format and the counter update.
 \<close>
-lex_definitions\<open>
-O=[0-7];
-D=[0-9];
-NZ=[1-9];
-L=[A-Za-z_];
-A=[A-Za-z_0-9];
-H=[a-fA-F0-9];
-HP=(0[xX]);
-E=([eE][+-]?{D}+);
-P=([pP][+-]?{D}+);
-FS=(f|F|l|L);
-IS=(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?));
-CP=(u|U|L);
-SP=(u8|u|U|L);
-ES=(\\(['"?\\abfnrtv]|{O}{1,3}|x{H}+));
-WS=[\ \t\r\n\011\012];
-HWS=[\ \t\011\012];
-OPENCART=\<open>;
-CLOSECART=\<close>;
-%s COMMENT INCLUDE LCOMMENT ANTIQ;
-\<close>
-lex_rules\<open>
-<INITIAL>"/*"                            => (YYBEGIN COMMENT; lex());
-<INITIAL>"//"                            => (antiq_from_block := false; YYBEGIN LCOMMENT; lex());
-
-<INITIAL>"#"{HWS}*"include"               => (YYBEGIN INCLUDE; kw_tok Markup.keyword2 (yypos, yytext, Tokens.INCLUDE));
-<INCLUDE>{HWS}+                          => (lex());
-<INCLUDE>"<"[^>\n]*">"                   => (YYBEGIN INITIAL; tok (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME));
-<INCLUDE>["][^"\n]*["]                   => (YYBEGIN INITIAL; tok (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME));
-<INCLUDE>\n                              => (YYBEGIN INITIAL; lex());
-<INCLUDE>.                               => (YYBEGIN INITIAL; lex());
-
-<INITIAL>"#"{HWS}*"define"               => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
-<INITIAL>"#"{HWS}*"ifndef"               => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFNDEF));
-<INITIAL>"#"{HWS}*"ifdef"                => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFDEF));
-<INITIAL>"#"{HWS}*"else"                 => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.PP_ELSE));
-<INITIAL>"#"{HWS}*"endif"                => (kw_tok Markup.keyword2 (yypos, yytext, Tokens.ENDIF));
-
-<INITIAL>"auto"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.AUTO));
-<INITIAL>"break"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.BREAK));
-<INITIAL>"case"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CASE));
-<INITIAL>"char"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CHAR));
-<INITIAL>"const"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONST));
-<INITIAL>"continue"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONTINUE));
-<INITIAL>"default"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DEFAULT));
-<INITIAL>"do"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DO));
-<INITIAL>"double"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.DOUBLE));
-<INITIAL>"else"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ELSE));
-<INITIAL>"enum"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ENUM));
-<INITIAL>"extern"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.EXTERN));
-<INITIAL>"float"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FLOAT));
-<INITIAL>"for"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FOR));
-<INITIAL>"goto"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.GOTO));
-<INITIAL>"if"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.IF));
-<INITIAL>"inline"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.INLINE));
-<INITIAL>"int"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.INT));
-<INITIAL>"long"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.LONG));
-<INITIAL>"register"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.REGISTER));
-<INITIAL>"restrict"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.RESTRICT));
-<INITIAL>"return"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.RETURN));
-<INITIAL>"short"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SHORT));
-<INITIAL>"signed"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIGNED));
-<INITIAL>"sizeof"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIZEOF));
-<INITIAL>"static"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC));
-<INITIAL>"struct"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STRUCT));
-<INITIAL>"switch"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.SWITCH));
-<INITIAL>"typedef"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.TYPEDEF));
-<INITIAL>"union"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNION));
-<INITIAL>"unsigned"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNSIGNED));
-<INITIAL>"void"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOID));
-<INITIAL>"volatile"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOLATILE));
-<INITIAL>"while"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.WHILE));
-<INITIAL>"_Alignas"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNAS));
-<INITIAL>"_Alignof"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNOF));
-<INITIAL>"_Atomic"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.ATOMIC));
-<INITIAL>"_Bool"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.BOOL));
-<INITIAL>"_Complex"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.COMPLEX));
-<INITIAL>"_Generic"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.GENERIC));
-<INITIAL>"_Imaginary"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.IMAGINARY));
-<INITIAL>"_Noreturn"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.NORETURN));
-<INITIAL>"_Static_assert"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC_ASSERT));
-<INITIAL>"_Thread_local"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.THREAD_LOCAL));
-<INITIAL>"__func__"	=> (kw_tok Markup.keyword1 (yypos, yytext, Tokens.FUNC_NAME));
-
-<INITIAL>{L}{A}*	=> (tok (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER));
-
-<INITIAL>{HP}{H}+{IS}?	=> (tok (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT));
-<INITIAL>{NZ}{D}*{IS}?	=> (tok (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT));
-<INITIAL>"0"{O}*{IS}?	=> (tok (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT));
-<INITIAL>{CP}?'([^'\\\n]|{ES})+'	=> (tok (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT));
-
-<INITIAL>{D}+{E}{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-<INITIAL>{D}*"."{D}+{E}?{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-<INITIAL>{D}+"."{E}?{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-<INITIAL>{HP}{H}+{P}{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-<INITIAL>{HP}{H}*"."{H}+{P}{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-<INITIAL>{HP}{H}+"."{P}{FS}?	=> (tok (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT));
-
-<INITIAL>({SP}?["]([^"\\\n]|{ES})*["]{WS}*)+	=> (tok (yypos, yytext, Markup.string, "STRING_LITERAL", "", Tokens.STRING_LITERAL));
-
-<INITIAL>"..."	=> (tok (yypos, yytext, Markup.operator, "ELLIPSIS", "", Tokens.ELLIPSIS));
-<INITIAL>">>="	=> (tok (yypos, yytext, Markup.operator, "RIGHT_ASSIGN", "", Tokens.RIGHT_ASSIGN));
-<INITIAL>"<<="	=> (tok (yypos, yytext, Markup.operator, "LEFT_ASSIGN", "", Tokens.LEFT_ASSIGN));
-<INITIAL>"+="	=> (tok (yypos, yytext, Markup.operator, "ADD_ASSIGN", "", Tokens.ADD_ASSIGN));
-<INITIAL>"-="	=> (tok (yypos, yytext, Markup.operator, "SUB_ASSIGN", "", Tokens.SUB_ASSIGN));
-<INITIAL>"*="	=> (tok (yypos, yytext, Markup.operator, "MUL_ASSIGN", "", Tokens.MUL_ASSIGN));
-<INITIAL>"/="	=> (tok (yypos, yytext, Markup.operator, "DIV_ASSIGN", "", Tokens.DIV_ASSIGN));
-<INITIAL>"%="	=> (tok (yypos, yytext, Markup.operator, "MOD_ASSIGN", "", Tokens.MOD_ASSIGN));
-<INITIAL>"&="	=> (tok (yypos, yytext, Markup.operator, "AND_ASSIGN", "", Tokens.AND_ASSIGN));
-<INITIAL>"^="	=> (tok (yypos, yytext, Markup.operator, "XOR_ASSIGN", "", Tokens.XOR_ASSIGN));
-<INITIAL>"|="	=> (tok (yypos, yytext, Markup.operator, "OR_ASSIGN", "", Tokens.OR_ASSIGN));
-<INITIAL>">>"	=> (tok (yypos, yytext, Markup.operator, "RIGHT_OP", "", Tokens.RIGHT_OP));
-<INITIAL>"<<"	=> (tok (yypos, yytext, Markup.operator, "LEFT_OP", "", Tokens.LEFT_OP));
-<INITIAL>"++"	=> (tok (yypos, yytext, Markup.operator, "INC_OP", "", Tokens.INC_OP));
-<INITIAL>"--"	=> (tok (yypos, yytext, Markup.operator, "DEC_OP", "", Tokens.DEC_OP));
-<INITIAL>"->"	=> (tok (yypos, yytext, Markup.operator, "PTR_OP", "", Tokens.PTR_OP));
-<INITIAL>"&&"	=> (tok (yypos, yytext, Markup.operator, "AND_OP", "", Tokens.AND_OP));
-<INITIAL>"||"	=> (tok (yypos, yytext, Markup.operator, "OR_OP", "", Tokens.OR_OP));
-<INITIAL>"<="	=> (tok (yypos, yytext, Markup.operator, "LE_OP", "", Tokens.LE_OP));
-<INITIAL>">="	=> (tok (yypos, yytext, Markup.operator, "GE_OP", "", Tokens.GE_OP));
-<INITIAL>"=="	=> (tok (yypos, yytext, Markup.operator, "EQ_OP", "", Tokens.EQ_OP));
-<INITIAL>"!="	=> (tok (yypos, yytext, Markup.operator, "NE_OP", "", Tokens.NE_OP));
-
-<INITIAL>";"	=> (tok (yypos, yytext, Markup.operator, "SEMI", "", Tokens.SEMI));
-<INITIAL>("{"|"<%")	=> (tok (yypos, yytext, Markup.operator, "LBRACE", "", Tokens.LBRACE));
-<INITIAL>("}"|"%>")	=> (tok (yypos, yytext, Markup.operator, "RBRACE", "", Tokens.RBRACE));
-<INITIAL>","	=> (tok (yypos, yytext, Markup.operator, "COMMA", "", Tokens.COMMA));
-<INITIAL>":"	=> (tok (yypos, yytext, Markup.operator, "COLON", "", Tokens.COLON));
-<INITIAL>"="	=> (tok (yypos, yytext, Markup.operator, "ASSIGN", "", Tokens.ASSIGN));
-<INITIAL>"("	=> (tok (yypos, yytext, Markup.operator, "LPAREN", "", Tokens.LPAREN));
-<INITIAL>")"	=> (tok (yypos, yytext, Markup.operator, "RPAREN", "", Tokens.RPAREN));
-<INITIAL>("["|"<:")	=> (tok (yypos, yytext, Markup.operator, "LBRACKET", "", Tokens.LBRACKET));
-<INITIAL>("]"|":>")	=> (tok (yypos, yytext, Markup.operator, "RBRACKET", "", Tokens.RBRACKET));
-<INITIAL>"."	=> (tok (yypos, yytext, Markup.operator, "DOT", "", Tokens.DOT));
-<INITIAL>"&"	=> (tok (yypos, yytext, Markup.operator, "AMP", "", Tokens.AMP));
-<INITIAL>"!"	=> (tok (yypos, yytext, Markup.operator, "BANG", "", Tokens.BANG));
-<INITIAL>"~"	=> (tok (yypos, yytext, Markup.operator, "TILDE", "", Tokens.TILDE));
-<INITIAL>"-"	=> (tok (yypos, yytext, Markup.operator, "MINUS", "", Tokens.MINUS));
-<INITIAL>"+"	=> (tok (yypos, yytext, Markup.operator, "PLUS", "", Tokens.PLUS));
-<INITIAL>"*"	=> (tok (yypos, yytext, Markup.operator, "STAR", "", Tokens.STAR));
-<INITIAL>"/"	=> (tok (yypos, yytext, Markup.operator, "SLASH", "", Tokens.SLASH));
-<INITIAL>"%"	=> (tok (yypos, yytext, Markup.operator, "PERCENT", "", Tokens.PERCENT));
-<INITIAL>"<"	=> (tok (yypos, yytext, Markup.operator, "LT", "", Tokens.LT));
-<INITIAL>">"	=> (tok (yypos, yytext, Markup.operator, "GT", "", Tokens.GT));
-<INITIAL>"^"	=> (tok (yypos, yytext, Markup.operator, "CARET", "", Tokens.CARET));
-<INITIAL>"|"	=> (tok (yypos, yytext, Markup.operator, "PIPE", "", Tokens.PIPE));
-<INITIAL>"?"	=> (tok (yypos, yytext, Markup.operator, "QUESTION", "", Tokens.QUESTION));
-
-<INITIAL>{WS}+                             => (lex());
-<INITIAL>.                                  => (lex());
-
-<COMMENT>[^*@\\\n]+                        => (lex());
-<COMMENT>\n+                                => (lex());
-<COMMENT>"*"+[^*/@\\\n]*                   => (lex());
-<COMMENT>"*"+"/"                            => (YYBEGIN INITIAL; lex());
-
-<COMMENT>"@"{HWS}*{L}{A}*                  => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", ""); lex());
-<COMMENT>"@"                               => (lex());
-<COMMENT>"\\"                              => (lex());
-<COMMENT>{OPENCART}                        => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
-                                                antiq_depth := 1; antiq_from_block := true; YYBEGIN ANTIQ; lex());
-
-<LCOMMENT>[^@\\\n]+                        => (lex());
-<LCOMMENT>"@"{HWS}*{L}{A}*                 => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", ""); lex());
-<LCOMMENT>"@"                              => (lex());
-<LCOMMENT>"\\"                             => (lex());
-<LCOMMENT>{OPENCART}                       => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
-                                                antiq_depth := 1; antiq_from_block := false; YYBEGIN ANTIQ; lex());
-<LCOMMENT>\n                               => (YYBEGIN INITIAL; lex());
-
-<ANTIQ>[^\\\n]+                            => (lex());
-<ANTIQ>\n+                                  => (lex());
-<ANTIQ>"\\"                                => (lex());
-<ANTIQ>{OPENCART}                          => (antiq_depth := !antiq_depth + 1; lex());
-<ANTIQ>{CLOSECART}                         => (antiq_depth := !antiq_depth - 1;
-                                                if !antiq_depth = 0
-                                                then ((if !antiq_from_block then YYBEGIN COMMENT else YYBEGIN LCOMMENT); lex())
-                                                else lex());
-\<close>
-and yacc_user_declarations\<open>\<close>
-yacc_definitions\<open>
-%eop EOF
-%pure
-%noshift EOF
-
-%term
-        IDENTIFIER | I_CONSTANT | F_CONSTANT | STRING_LITERAL | FUNC_NAME | SIZEOF |
-        INCLUDE | HEADER_NAME | DEFINE | IFDEF | IFNDEF | PP_ELSE | ENDIF |
-        PTR_OP | INC_OP | DEC_OP | LEFT_OP | RIGHT_OP | LE_OP | GE_OP | EQ_OP | NE_OP |
-        AND_OP | OR_OP | MUL_ASSIGN | DIV_ASSIGN | MOD_ASSIGN | ADD_ASSIGN |
-        SUB_ASSIGN | LEFT_ASSIGN | RIGHT_ASSIGN | AND_ASSIGN |
-        XOR_ASSIGN | OR_ASSIGN |
-        TYPEDEF_NAME | ENUMERATION_CONSTANT |
-        TYPEDEF | EXTERN | STATIC | AUTO | REGISTER | INLINE |
-        CONST | RESTRICT | VOLATILE |
-        BOOL | CHAR | SHORT | INT | LONG | SIGNED | UNSIGNED | FLOAT | DOUBLE | VOID |
-        COMPLEX | IMAGINARY |
-        STRUCT | UNION | ENUM | ELLIPSIS |
-        CASE | DEFAULT | IF | ELSE | SWITCH | WHILE | DO | FOR | GOTO | CONTINUE | BREAK | RETURN |
-        ALIGNAS | ALIGNOF | ATOMIC | GENERIC | NORETURN | STATIC_ASSERT | THREAD_LOCAL |
-        LPAREN | RPAREN | LBRACKET | RBRACKET | LBRACE | RBRACE |
-        COMMA | DOT | COLON | SEMI | ASSIGN |
-        STAR | AMP | PLUS | MINUS | TILDE | BANG |
-        LT | GT | CARET | PIPE | QUESTION | PERCENT | SLASH |
-        EOF
-
-%nonterm
-        primary_expression | constant | enumeration_constant | string |
-        generic_selection | generic_assoc_list | generic_association | postfix_expression |
-        argument_expression_list | unary_expression | unary_operator | cast_expression |
-        multiplicative_expression | additive_expression | shift_expression | relational_expression |
-        equality_expression | and_expression | exclusive_or_expression | inclusive_or_expression |
-        logical_and_expression | logical_or_expression | conditional_expression | assignment_expression |
-        assignment_operator | expression | constant_expression | declaration |
-        declaration_specifiers | init_declarator_list | init_declarator | storage_class_specifier |
-        type_specifier | struct_or_union_specifier | struct_or_union | struct_declaration_list |
-        struct_declaration | specifier_qualifier_list | struct_declarator_list | struct_declarator |
-        enum_specifier | enumerator_list | enumerator | atomic_type_specifier |
-        type_qualifier | function_specifier | alignment_specifier | declarator |
-        direct_declarator | pointer | type_qualifier_list | parameter_type_list |
-        parameter_list | parameter_declaration | identifier_list | type_name |
-        abstract_declarator | direct_abstract_declarator | initializer | initializer_list |
-        designation | designator_list | designator | static_assert_declaration |
-        statement | labeled_statement | compound_statement | block_item_list |
-        block_item | expression_statement | selection_statement | iteration_statement |
-        jump_statement | translation_unit | external_declaration | function_definition |
-        declaration_list | preproc_directive | external_declaration_list |
-        start_rule of unit option
-\<close>
-yacc_rules\<open>
-start_rule: translation_unit (SOME ())
-primary_expression: IDENTIFIER    ()
-|       constant    ()
-|       string    ()
-|       LPAREN expression RPAREN    ()
-|       generic_selection    ()
-
-constant: I_CONSTANT    ()
-|       F_CONSTANT    ()
-|       ENUMERATION_CONSTANT    ()
-
-enumeration_constant: IDENTIFIER    ()
-
-string: STRING_LITERAL    ()
-|       FUNC_NAME    ()
-
-generic_selection: GENERIC LPAREN assignment_expression COMMA generic_assoc_list RPAREN    ()
-
-generic_assoc_list: generic_association    ()
-|       generic_assoc_list COMMA generic_association    ()
-
-generic_association: type_name COLON assignment_expression    ()
-|       DEFAULT COLON assignment_expression    ()
-
-postfix_expression: primary_expression    ()
-|       postfix_expression LBRACKET expression RBRACKET    ()
-|       postfix_expression LPAREN RPAREN    ()
-|       postfix_expression LPAREN argument_expression_list RPAREN    ()
-|       postfix_expression DOT IDENTIFIER    ()
-|       postfix_expression PTR_OP IDENTIFIER    ()
-|       postfix_expression INC_OP    ()
-|       postfix_expression DEC_OP    ()
-|       LPAREN type_name RPAREN LBRACE initializer_list RBRACE    ()
-|       LPAREN type_name RPAREN LBRACE initializer_list COMMA RBRACE    ()
-
-argument_expression_list: assignment_expression    ()
-|       argument_expression_list COMMA assignment_expression    ()
-
-unary_expression: postfix_expression    ()
-|       INC_OP unary_expression    ()
-|       DEC_OP unary_expression    ()
-|       unary_operator cast_expression    ()
-|       SIZEOF unary_expression    ()
-|       SIZEOF LPAREN type_name RPAREN    ()
-|       ALIGNOF LPAREN type_name RPAREN    ()
-
-unary_operator: AMP    ()
-|       STAR    ()
-|       PLUS    ()
-|       MINUS    ()
-|       TILDE    ()
-|       BANG    ()
-
-cast_expression: unary_expression    ()
-|       LPAREN type_name RPAREN cast_expression    ()
-
-multiplicative_expression: cast_expression    ()
-|       multiplicative_expression STAR cast_expression    ()
-|       multiplicative_expression SLASH cast_expression    ()
-|       multiplicative_expression PERCENT cast_expression    ()
-
-additive_expression: multiplicative_expression    ()
-|       additive_expression PLUS multiplicative_expression    ()
-|       additive_expression MINUS multiplicative_expression    ()
-
-shift_expression: additive_expression    ()
-|       shift_expression LEFT_OP additive_expression    ()
-|       shift_expression RIGHT_OP additive_expression    ()
-
-relational_expression: shift_expression    ()
-|       relational_expression LT shift_expression    ()
-|       relational_expression GT shift_expression    ()
-|       relational_expression LE_OP shift_expression    ()
-|       relational_expression GE_OP shift_expression    ()
-
-equality_expression: relational_expression    ()
-|       equality_expression EQ_OP relational_expression    ()
-|       equality_expression NE_OP relational_expression    ()
-
-and_expression: equality_expression    ()
-|       and_expression AMP equality_expression    ()
-
-exclusive_or_expression: and_expression    ()
-|       exclusive_or_expression CARET and_expression    ()
-
-inclusive_or_expression: exclusive_or_expression    ()
-|       inclusive_or_expression PIPE exclusive_or_expression    ()
-
-logical_and_expression: inclusive_or_expression    ()
-|       logical_and_expression AND_OP inclusive_or_expression    ()
-
-logical_or_expression: logical_and_expression    ()
-|       logical_or_expression OR_OP logical_and_expression    ()
-
-conditional_expression: logical_or_expression    ()
-|       logical_or_expression QUESTION expression COLON conditional_expression    ()
-
-assignment_expression: conditional_expression    ()
-|       unary_expression assignment_operator assignment_expression    ()
-
-assignment_operator: ASSIGN    ()
-|       MUL_ASSIGN    ()
-|       DIV_ASSIGN    ()
-|       MOD_ASSIGN    ()
-|       ADD_ASSIGN    ()
-|       SUB_ASSIGN    ()
-|       LEFT_ASSIGN    ()
-|       RIGHT_ASSIGN    ()
-|       AND_ASSIGN    ()
-|       XOR_ASSIGN    ()
-|       OR_ASSIGN    ()
-
-expression: assignment_expression    ()
-|       expression COMMA assignment_expression    ()
-
-constant_expression: conditional_expression    ()
-
-declaration: declaration_specifiers SEMI    ()
-|       declaration_specifiers init_declarator_list SEMI    ()
-|       static_assert_declaration    ()
-
-declaration_specifiers: storage_class_specifier declaration_specifiers    ()
-|       storage_class_specifier    ()
-|       type_specifier declaration_specifiers    ()
-|       type_specifier    ()
-|       type_qualifier declaration_specifiers    ()
-|       type_qualifier    ()
-|       function_specifier declaration_specifiers    ()
-|       function_specifier    ()
-|       alignment_specifier declaration_specifiers    ()
-|       alignment_specifier    ()
-
-init_declarator_list: init_declarator    ()
-|       init_declarator_list COMMA init_declarator    ()
-
-init_declarator: declarator ASSIGN initializer    ()
-|       declarator    ()
-
-storage_class_specifier: TYPEDEF    ()
-|       EXTERN    ()
-|       STATIC    ()
-|       THREAD_LOCAL    ()
-|       AUTO    ()
-|       REGISTER    ()
-
-type_specifier: VOID    ()
-|       CHAR    ()
-|       SHORT    ()
-|       INT    ()
-|       LONG    ()
-|       FLOAT    ()
-|       DOUBLE    ()
-|       SIGNED    ()
-|       UNSIGNED    ()
-|       BOOL    ()
-|       COMPLEX    ()
-|       IMAGINARY    ()
-|       atomic_type_specifier    ()
-|       struct_or_union_specifier    ()
-|       enum_specifier    ()
-|       TYPEDEF_NAME    ()
-
-struct_or_union_specifier: struct_or_union LBRACE struct_declaration_list RBRACE    ()
-|       struct_or_union IDENTIFIER LBRACE struct_declaration_list RBRACE    ()
-|       struct_or_union IDENTIFIER    ()
-
-struct_or_union: STRUCT    ()
-|       UNION    ()
-
-struct_declaration_list: struct_declaration    ()
-|       struct_declaration_list struct_declaration    ()
-
-struct_declaration: specifier_qualifier_list SEMI    ()
-|       specifier_qualifier_list struct_declarator_list SEMI    ()
-|       static_assert_declaration    ()
-
-specifier_qualifier_list: type_specifier specifier_qualifier_list    ()
-|       type_specifier    ()
-|       type_qualifier specifier_qualifier_list    ()
-|       type_qualifier    ()
-
-struct_declarator_list: struct_declarator    ()
-|       struct_declarator_list COMMA struct_declarator    ()
-
-struct_declarator: COLON constant_expression    ()
-|       declarator COLON constant_expression    ()
-|       declarator    ()
-
-enum_specifier: ENUM LBRACE enumerator_list RBRACE    ()
-|       ENUM LBRACE enumerator_list COMMA RBRACE    ()
-|       ENUM IDENTIFIER LBRACE enumerator_list RBRACE    ()
-|       ENUM IDENTIFIER LBRACE enumerator_list COMMA RBRACE    ()
-|       ENUM IDENTIFIER    ()
-
-enumerator_list: enumerator    ()
-|       enumerator_list COMMA enumerator    ()
-
-enumerator: enumeration_constant ASSIGN constant_expression    ()
-|       enumeration_constant    ()
-
-atomic_type_specifier: ATOMIC LPAREN type_name RPAREN    ()
-
-type_qualifier: CONST    ()
-|       RESTRICT    ()
-|       VOLATILE    ()
-|       ATOMIC    ()
-
-function_specifier: INLINE    ()
-|       NORETURN    ()
-
-alignment_specifier: ALIGNAS LPAREN type_name RPAREN    ()
-|       ALIGNAS LPAREN constant_expression RPAREN    ()
-
-declarator: pointer direct_declarator    ()
-|       direct_declarator    ()
-
-direct_declarator: IDENTIFIER    ()
-|       LPAREN declarator RPAREN    ()
-|       direct_declarator LBRACKET RBRACKET    ()
-|       direct_declarator LBRACKET STAR RBRACKET    ()
-|       direct_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    ()
-|       direct_declarator LBRACKET STATIC assignment_expression RBRACKET    ()
-|       direct_declarator LBRACKET type_qualifier_list STAR RBRACKET    ()
-|       direct_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    ()
-|       direct_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    ()
-|       direct_declarator LBRACKET type_qualifier_list RBRACKET    ()
-|       direct_declarator LBRACKET assignment_expression RBRACKET    ()
-|       direct_declarator LPAREN parameter_type_list RPAREN    ()
-|       direct_declarator LPAREN RPAREN    ()
-|       direct_declarator LPAREN identifier_list RPAREN    ()
-
-pointer: STAR type_qualifier_list pointer    ()
-|       STAR type_qualifier_list    ()
-|       STAR pointer    ()
-|       STAR    ()
-
-type_qualifier_list: type_qualifier    ()
-|       type_qualifier_list type_qualifier    ()
-
-parameter_type_list: parameter_list COMMA ELLIPSIS    ()
-|       parameter_list    ()
-
-parameter_list: parameter_declaration    ()
-|       parameter_list COMMA parameter_declaration    ()
-
-parameter_declaration: declaration_specifiers declarator    ()
-|       declaration_specifiers abstract_declarator    ()
-|       declaration_specifiers    ()
-
-identifier_list: IDENTIFIER    ()
-|       identifier_list COMMA IDENTIFIER    ()
-
-type_name: specifier_qualifier_list abstract_declarator    ()
-|       specifier_qualifier_list    ()
-
-abstract_declarator: pointer direct_abstract_declarator    ()
-|       pointer    ()
-|       direct_abstract_declarator    ()
-
-direct_abstract_declarator: LPAREN abstract_declarator RPAREN    ()
-|       LBRACKET RBRACKET    ()
-|       LBRACKET STAR RBRACKET    ()
-|       LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    ()
-|       LBRACKET STATIC assignment_expression RBRACKET    ()
-|       LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    ()
-|       LBRACKET type_qualifier_list assignment_expression RBRACKET    ()
-|       LBRACKET type_qualifier_list RBRACKET    ()
-|       LBRACKET assignment_expression RBRACKET    ()
-|       direct_abstract_declarator LBRACKET RBRACKET    ()
-|       direct_abstract_declarator LBRACKET STAR RBRACKET    ()
-|       direct_abstract_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    ()
-|       direct_abstract_declarator LBRACKET STATIC assignment_expression RBRACKET    ()
-|       direct_abstract_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    ()
-|       direct_abstract_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    ()
-|       direct_abstract_declarator LBRACKET type_qualifier_list RBRACKET    ()
-|       direct_abstract_declarator LBRACKET assignment_expression RBRACKET    ()
-|       LPAREN RPAREN    ()
-|       LPAREN parameter_type_list RPAREN    ()
-|       direct_abstract_declarator LPAREN RPAREN    ()
-|       direct_abstract_declarator LPAREN parameter_type_list RPAREN    ()
-
-initializer: LBRACE initializer_list RBRACE    ()
-|       LBRACE initializer_list COMMA RBRACE    ()
-|       assignment_expression    ()
-
-initializer_list: designation initializer    ()
-|       initializer    ()
-|       initializer_list COMMA designation initializer    ()
-|       initializer_list COMMA initializer    ()
-
-designation: designator_list ASSIGN    ()
-
-designator_list: designator    ()
-|       designator_list designator    ()
-
-designator: LBRACKET constant_expression RBRACKET    ()
-|       DOT IDENTIFIER    ()
-
-static_assert_declaration: STATIC_ASSERT LPAREN constant_expression COMMA STRING_LITERAL RPAREN SEMI    ()
-
-statement: labeled_statement    ()
-|       compound_statement    ()
-|       expression_statement    ()
-|       selection_statement    ()
-|       iteration_statement    ()
-|       jump_statement    ()
-
-labeled_statement: IDENTIFIER COLON statement    ()
-|       CASE constant_expression COLON statement    ()
-|       DEFAULT COLON statement    ()
-
-compound_statement: LBRACE RBRACE    ()
-|       LBRACE block_item_list RBRACE    ()
-
-block_item_list: block_item    ()
-|       block_item_list block_item    ()
-
-block_item: declaration    ()
-|       statement    ()
-
-expression_statement: SEMI    ()
-|       expression SEMI    ()
-
-selection_statement: IF LPAREN expression RPAREN statement ELSE statement    ()
-|       IF LPAREN expression RPAREN statement    ()
-|       SWITCH LPAREN expression RPAREN statement    ()
-
-iteration_statement: WHILE LPAREN expression RPAREN statement    ()
-|       DO statement WHILE LPAREN expression RPAREN SEMI    ()
-|       FOR LPAREN expression_statement expression_statement RPAREN statement    ()
-|       FOR LPAREN expression_statement expression_statement expression RPAREN statement    ()
-|       FOR LPAREN declaration expression_statement RPAREN statement    ()
-|       FOR LPAREN declaration expression_statement expression RPAREN statement    ()
-
-jump_statement: GOTO IDENTIFIER SEMI    ()
-|       CONTINUE SEMI    ()
-|       BREAK SEMI    ()
-|       RETURN SEMI    ()
-|       RETURN expression SEMI    ()
-
-translation_unit: external_declaration    ()
-|       translation_unit external_declaration    ()
-
-external_declaration: function_definition    ()
-|       declaration    ()
-|       preproc_directive    ()
-
-preproc_directive: INCLUDE HEADER_NAME    ()
-|       DEFINE IDENTIFIER ASSIGN constant_expression    ()
-|       DEFINE IDENTIFIER LPAREN RPAREN ASSIGN constant_expression    ()
-|       DEFINE IDENTIFIER LPAREN identifier_list RPAREN ASSIGN constant_expression    ()
-|       IFDEF IDENTIFIER external_declaration_list ENDIF    ()
-|       IFDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF    ()
-|       IFNDEF IDENTIFIER external_declaration_list ENDIF    ()
-|       IFNDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF    ()
-
-external_declaration_list:    ()
-|       external_declaration_list external_declaration    ()
-
-function_definition: declaration_specifiers declarator declaration_list compound_statement    ()
-|       declaration_specifiers declarator compound_statement    ()
-
-declaration_list: declaration    ()
-|       declaration_list declaration    ()
-\<close>
-
-subsection\<open>Defining a simple Isar-toplevel command to test the Parser\<close>
 ML\<open>
-fun run_c11 source thy =
+datatype ident_kind = Global of (Position.T C_Ast.cDeclaration)
+                    | Local  of (Position.T C_Ast.cDeclaration)
+                    | Enum
+                    | Parameter of (Position.T C_Ast.cDeclaration) (* really  ? *)
+                    | Cpp_const
+                    | Cpp_macro
+
+datatype type_ident = NOT_YET_DEFINED
+
+datatype cenv = mk of {idents  : ident_kind Symtab.table,
+                       types   : type_ident Symtab.table,
+                       c_antiq : (string -> cenv ->  theory -> theory) Symtab.table,
+                       units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
+
+structure CEnv = Generic_Data
+  (type T = cenv
+   val empty = mk{idents  = Symtab.empty,
+                  types   = Symtab.empty ,
+                  c_antiq = Symtab.empty, units = 0}
+   val merge = K empty) (* or something with merge ? Necessary if non-single-threaded use wanted*)
+
+structure CAst_Store = Generic_Data
+  (type T = (Position.T C_Ast.root) Symtab.table
+   val  empty = Symtab.empty
+   val  merge = K empty)
+
+(* The (theory_name, unit_number) pair, encoded as one Symtab key ("name#N") -
+   theory_name via "Context.theory_name {long = false}" (the short name, not the
+   fully qualified session-path one), unit_number as the decimal string of the
+   CEnv-held counter's current value before it is bumped. *)
+fun ast_store_key thy unit_no =
+  Context.theory_name {long = false} thy ^ "#" ^ Int.toString unit_no
+
+(* Stores "root" under a fresh unit number for "thy", bumping CEnv's counter.
+   Returns the store key (for user-facing reporting) and the updated theory. *)
+fun store_root (root : Position.T C_Ast.root) thy =
+    let
+      val mk {idents, types, c_antiq, units} = CEnv.get (Context.Theory thy)
+      val key = ast_store_key thy units
+      val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq, units = units + 1}
+      val thy' = thy
+        |> Context.theory_map (CEnv.put cenv')
+        |> Context.theory_map (CAst_Store.map (Symtab.update (key, root)))
+    in (key, thy') end
+
+fun get_ast key thy =
+    let val store = CAst_Store.get (Context.Theory thy)
+    in  Symtab.lookup store key end 
+
+\<close>
+
+
+subsection\<open>Defining the Isar-toplevel Commands\<close>
+
+text\<open>
+  Four accepting commands share the one grammar (\<open>C11.parse_source\<close>, whose
+  \<open>start_rule\<close> can produce any of \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close>), each simply
+  \<^emph>\<open>gating\<close> on the shape it wants rather than having its own grammar entry point:
+  \<open>c11\<close>/\<open>c11_file\<close> are reserved for a whole translation unit (\<open>Units\<close>) and error
+  if the input parses as anything else, while \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close>
+  each similarly require \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>. Every successful parse is stored into
+  \<open>CAst_Store\<close> under a fresh, per-theory \<open>store_root\<close> key. Each has a
+  \<open>_reject\<close> counterpart (\<open>c11_reject\<close> - pre-existing, kept general-purpose across
+  all four shapes - and the three new \<open>c11_ident_reject\<close>/\<open>c11_expr_reject\<close>/
+  \<open>c11_statement_reject\<close>) that documents a fragment as correctly \<^emph>\<open>not\<close> that
+  shape: either a genuine parse failure, or a successful parse of the \<^emph>\<open>wrong\<close>
+  shape - both count as "rejected" for that command's purposes, since the command's
+  contract is "this fragment is a valid \<open>X\<close>", not merely "this fragment parses
+  somehow". Reject variants never touch \<open>CAst_Store\<close>.
+\<close>
+ML\<open>
+(* A shallow, top-level-only summary of the parsed result - not a full AST
+   pretty-printer - just enough to confirm, from "c11" and friends, that a
+   real AST (positions and comment counts included) came out the other end,
+   not only that parsing succeeded. *)
+fun string_of_root (C_Ast.Id (C_Ast.Ident0 (s, _, ndI))) =
+      "Id " ^ s ^ " " ^ Position.here (C_Ast.pos_of_NodeInfo ndI)
+  | string_of_root (C_Ast.Expr e) =
+      "Expr " ^ Position.here (C_Ast.pos_of_CExpr e)
+  | string_of_root (C_Ast.Stmt s) =
+      "Stmt " ^ Position.here (C_Ast.pos_of_CStat s)
+  | string_of_root (C_Ast.Units us) =
+      "Units (" ^ Int.toString (length us) ^ " top-level declaration(s))"
+
+fun classify (C_Ast.Id _) = "identifier"
+  | classify (C_Ast.Expr _) = "expression"
+  | classify (C_Ast.Stmt _) = "statement"
+  | classify (C_Ast.Units _) = "translation unit"
+
+val is_units = fn C_Ast.Units _ => true | _ => false
+val is_id    = fn C_Ast.Id _ => true | _ => false
+val is_expr  = fn C_Ast.Expr _ => true | _ => false
+val is_stmt  = fn C_Ast.Stmt _ => true | _ => false
+
+fun require_kind check kind_name cmd_name root =
+  if check root then root
+  else error (cmd_name ^ " is reserved for a " ^ kind_name ^
+              "; this input parses instead as a " ^ classify root ^ ".")
+
+(* Shared by every accepting command: parse, gate on the expected shape,
+   store under a fresh CAst_Store key, and report both. *)
+fun run_c11_kind check kind_name cmd_name source thy =
     let
       val ctxt = Proof_Context.init_global thy
-      val _ = C11.parse_source ctxt source
-    in thy end
+      val res = C11.parse_source ctxt source
+    in
+      case res of
+        NONE => error (cmd_name ^ ": no result")
+      | SOME root =>
+          let
+            val root = require_kind check kind_name cmd_name root
+            val (key, thy') = store_root root thy
+            val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+          in thy' end
+    end
+
+fun run_c11 source = run_c11_kind is_units "translation unit" "c11" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
-        "Syntax check a C11 translation unit"
+        "Syntax check a C11 translation unit and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
+
+fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_ident"}
+        "Syntax check a bare C11 identifier and store its AST"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident source)))
+
+fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_expr"}
+        "Syntax check a C11 expression and store its AST"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr source)))
+
+fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
+        "Syntax check a C11 statement and store its AST"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement source)))
 
 (* Isabelle_C's counterpart is "C_file \<open>path\<close>". Resources.parse_file/
    Token.file_source/Resources.provide_file are the same Isabelle/Pure
@@ -764,22 +332,37 @@ val _ = Outer_Syntax.command @{command_keyword "c11"}
    positions (so parse errors point at the actual file/line/column, not
    at the command invocation), and the file is registered as a dependency
    so `isabelle build` re-checks this theory when it changes. Note the
-   keyword kind below: "c11_file" is declared "thy_load", not "diag" like
-   "c11"/"c11_reject" - Resources.parse_file's file-dependency resolution
-   is only actually wired up by Isabelle's command-span scanner for
-   thy_load-kind commands (matching how ML_file/SML_file/external_file
+   keyword kind below: "c11_file" is declared "thy_load" (a specialised
+   "thy_decl"), not "diag" - Resources.parse_file's file-dependency
+   resolution is only actually wired up by Isabelle's command-span scanner
+   for thy_load-kind commands (matching how ML_file/SML_file/external_file
    are themselves declared in Pure.thy); under "diag" the file is never
-   read, silently. *)
+   read, silently. "c11"/"c11_ident"/"c11_expr"/"c11_statement" are "thy_decl"
+   for a related but different reason: each mutates CEnv/CAst_Store (persistent
+   theory-level state, via store_root below), and "diag" - Isabelle's kind for
+   read-only, disposable diagnostic commands - does not reliably thread such
+   mutations into the following command's starting theory the way "thy_decl"
+   does. Only the "_reject" variants, which store nothing, stay "diag". Like
+   "c11", "c11_file" is reserved for a whole translation unit. *)
 fun run_c11_file get_file thy =
     let
       val file = get_file thy
       val source = Token.file_source file
       val ctxt = Proof_Context.init_global thy
-      val _ = C11.parse_source ctxt source
-    in Resources.provide_file file thy end
+      val res = C11.parse_source ctxt source
+    in
+      case res of
+        NONE => error "c11_file: no result"
+      | SOME root =>
+          let
+            val root = require_kind is_units "translation unit" "c11_file" root
+            val (key, thy') = store_root root thy
+            val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+          in Resources.provide_file file thy' end
+    end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
-        "Read and syntax-check an external C11 source file"
+        "Read and syntax-check an external C11 source file, and store its AST"
         (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
 
 (* C11.parse_source (generated by the `linker` template in YaccLib.thy)
@@ -795,9 +378,9 @@ val _ = Outer_Syntax.command @{command_keyword "c11_file"}
    from plain Isabelle/ML (exception matching is by constructor identity,
    not by name).
 
-   Rather than patch YaccLib.thy (out of scope here), run_c11_reject below
-   re-implements parse_source's control flow directly against the public
-   C11Lex/C11Parser/C11LrVals structures and the exposed
+   Rather than patch YaccLib.thy (out of scope here), every reject command
+   below re-implements parse_source's control flow directly against the
+   public C11Lex/C11Parser/C11LrVals structures and the exposed
    Isabelle_lex_yacc.set/get_pos, substituting a private, silent error
    callback that raises a *locally declared* exception - so it is caught
    by construction, with no cross-environment identity mismatch possible,
@@ -828,21 +411,48 @@ fun parse_source_quiet ctxt source =
       #2 (loop lexer)
     end
 
-fun run_c11_reject source thy =
+(* Shared by every reject command: a fragment is correctly rejected either
+   by a genuine parse failure, or by parsing successfully as the *wrong*
+   shape ("check" then returns false on the SOME branch). Never touches
+   CAst_Store - a rejected fragment has nothing to store. *)
+fun run_c11_kind_reject check kind_name source thy =
     let
       val ctxt = Proof_Context.init_global thy
       val rejected =
-        (parse_source_quiet ctxt source; false)
+        (case parse_source_quiet ctxt source of
+           SOME root => not (check root)
+         | NONE => true)
           handle Rejected _ => true
       val _ =
         if rejected
-        then writeln "OK: malformed input was correctly rejected by the parser."
-        else error "Malformed-input test FAILED: the parser unexpectedly accepted this input."
+        then writeln ("OK: malformed input was correctly rejected as a " ^ kind_name ^ ".")
+        else error ("Malformed-input test FAILED: the parser unexpectedly accepted this as a " ^
+                     kind_name ^ ".")
     in thy end
+
+fun run_c11_reject source = run_c11_kind_reject is_units "translation unit" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_reject"}
         "Check that a C11 fragment is correctly rejected (error-recovery / malformed-input tests)"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_reject source)))
+
+fun run_c11_ident_reject source = run_c11_kind_reject is_id "identifier" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_ident_reject"}
+        "Check that a fragment is correctly rejected as a C11 identifier"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident_reject source)))
+
+fun run_c11_expr_reject source = run_c11_kind_reject is_expr "expression" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_expr_reject"}
+        "Check that a fragment is correctly rejected as a C11 expression"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr_reject source)))
+
+fun run_c11_statement_reject source = run_c11_kind_reject is_stmt "statement" source
+
+val _ = Outer_Syntax.command @{command_keyword "c11_statement_reject"}
+        "Check that a fragment is correctly rejected as a C11 statement"
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement_reject source)))
 \<close>
 
 section\<open>Testing the generated C11 Parser with Syntax Highlighting\<close>
@@ -906,7 +516,7 @@ c11\<open>
 int test_arith(void) {
   int a = 10, b = 3, c;
   c = a + b - a * b / b % a;
-  c = (a << 1) >> 1;
+  c = (a << 1) >> 1; /* bla */
   c = (a & b) | (a ^ b);
   c = ~a & !b;
   c = a < b || a > b;
@@ -916,6 +526,8 @@ int test_arith(void) {
   return c;
 }
 \<close>
+
+ML\<open>get_ast "C11#4" @{theory}\<close>
 
 subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
 c11\<open>
@@ -994,6 +606,10 @@ int test_loops(void) {
 
   return sum;
 }
+\<close>
+
+ML\<open>
+
 \<close>
 
 subsection\<open>Switch statement, fallthrough, labeled statements, and goto\<close>
@@ -1179,6 +795,10 @@ text\<open>
 c11_reject\<open>
 i\
 nt a = 1;
+\<close>
+
+ML\<open>
+open Position
 \<close>
 
 end
