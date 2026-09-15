@@ -54,11 +54,11 @@ text\<open>
   \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully correct
   suffix-binding precedence (the classic C "declarator inversion" problem, needing a
   genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
-  \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
+  \<open>CComplexType\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
   language-c - has no separate case for it; and a small fragment of the C preprocessor is
   recognized directly and kept as genuine AST nodes rather than being silently discarded -
   see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
-  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
+  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
   below. Following the reference grammar's own note, identifiers are never lexed as
@@ -299,8 +299,8 @@ structure C11_Comments = struct
      correct regardless of how wide the node's own reported span is. *)
   fun mk_nodeInfo (claimed_at : Position.T) (report_pos : Position.T) : Position.T C_Ast.nodeInfo =
     case claim claimed_at of
-      [] => C_Ast.OnlyPos0 report_pos
-    | cs => C_Ast.NodeInfo0 (cs, report_pos)
+      [] => C_Ast.OnlyPos report_pos
+    | cs => C_Ast.NodeInfo (cs, report_pos)
 
   fun reset () = Synchronized.change state (fn _ => {pending = [], attached = []})
 end
@@ -635,7 +635,7 @@ open C_Ast
 (* --- Literal parsing helpers -------------------------------------------
    Deliberately modest, not a full C11 constant-literal decoder: covers the
    common cases (decimal/hex/octal integers, the usual u/l/ll suffixes,
-   float literals kept verbatim since CFloat0 already wants the raw text,
+   float literals kept verbatim since CFloat already wants the raw text,
    and the ordinary backslash escapes in char/string literals). Anything
    past that (unusual escape forms, exotic suffix combinations) falls back
    to a safe default rather than raising, since this is a syntax-directed
@@ -650,12 +650,12 @@ fun opt_int NONE = 0
 
 fun parse_c_int_repr (core : string) : int * cIntRepr =
   if String.isPrefix "0x" core orelse String.isPrefix "0X" core
-  then (opt_int (StringCvt.scanString (Int.scan StringCvt.HEX) core), HexRepr0)
+  then (opt_int (StringCvt.scanString (Int.scan StringCvt.HEX) core), HexRepr)
   else if core <> "" andalso String.sub (core, 0) = #"0" andalso size core > 1
-  then (opt_int (StringCvt.scanString (Int.scan StringCvt.OCT) core), OctalRepr0)
-  else (opt_int (Int.fromString core), DecRepr0)
+  then (opt_int (StringCvt.scanString (Int.scan StringCvt.OCT) core), OctalRepr)
+  else (opt_int (Int.fromString core), DecRepr)
 
-(* Bit-encoding of cIntFlag into "cIntFlag flags" (= "Flags0 of int"): no
+(* Bit-encoding of cIntFlag into "cIntFlag flags" (= "Flags of int"): no
    encoder survived c_ast.ML's own pruning of the generic HOL flag-set
    machinery, so this is a fresh, self-contained convention (bit 0
    unsigned, bit 1 long, bit 2 long long, bit 3 imaginary) - nothing
@@ -667,14 +667,14 @@ fun parse_c_int_flags (s : string) : cIntFlag flags =
     val ll = String.isSubstring "ll" s orelse String.isSubstring "LL" s
     val l = (String.isSubstring "l" s orelse String.isSubstring "L" s) andalso not ll
   in
-    Flags0 ((if u then 1 else 0) + (if l then 2 else 0) + (if ll then 4 else 0))
+    Flags ((if u then 1 else 0) + (if l then 2 else 0) + (if ll then 4 else 0))
   end
 
 fun parse_c_integer (text : string) : cInteger =
   let
     val core = strip_int_suffix text
     val (n, repr) = parse_c_int_repr core
-  in CInteger0 (n, repr, parse_c_int_flags text) end
+  in CInteger (n, repr, parse_c_int_flags text) end
 
 fun unescape_c (s : string) : string =
   let
@@ -704,20 +704,20 @@ fun parse_c_char (text : string) : cChar =
     val inner = unescape_c (strip_quotes #"'" text)
   in
     case String.explode inner of
-      [c] => CChar0 (c, is_wide)
-    | cs => CChars0 (cs, is_wide)
+      [c] => CChar (c, is_wide)
+    | cs => CChars (cs, is_wide)
   end
 
 fun const_of_i_constant (text, ndI) =
   if String.isSubstring "'" text
-  then CCharConst0 (parse_c_char text, ndI)
-  else CIntConst0 (parse_c_integer text, ndI)
+  then CCharConst (parse_c_char text, ndI)
+  else CIntConst (parse_c_integer text, ndI)
 
 fun parse_c_string (text : string) : cString =
   let val is_wide = String.size text > 0 andalso String.sub (text, 0) <> #"\""
-  in CString0 (unescape_c (strip_quotes #"\"" text), is_wide) end
+  in CString (unescape_c (strip_quotes #"\"" text), is_wide) end
 
-fun strLit_to_constant (CStrLit0 (s, ndI)) = CStrConst0 (s, ndI)
+fun strLit_to_constant (CStrLit (s, ndI)) = CStrConst (s, ndI)
 
 (* --- Declarator assembly -------------------------------------------------
    direct_declarator's value is (base identifier option, derived-declarator
@@ -736,7 +736,7 @@ fun strLit_to_constant (CStrLit0 (s, ndI)) = CStrConst0 (s, ndI)
    simple function declarators, ordinary nesting) is unaffected. *)
 
 fun mk_declarator (ident_opt, derived, str_lit_opt, attrs, ndI) =
-  CDeclr0 (ident_opt, derived, str_lit_opt, attrs, ndI)
+  CDeclr (ident_opt, derived, str_lit_opt, attrs, ndI)
 
 (* type_name / parameter_declaration / struct member: wrap a
    specifier-qualifier list plus an optional declarator/abstract-declarator
@@ -744,9 +744,9 @@ fun mk_declarator (ident_opt, derived, str_lit_opt, attrs, ndI) =
    expects for this ("val cSizeofType : ... -> 'a cExpression" etc. all
    take a plain "'a cDeclaration"). *)
 fun mk_type_decl (specs, declr_opt, ndI) =
-  CDecl0 (specs, [((declr_opt, NONE), NONE)], ndI)
+  CDecl (specs, [((declr_opt, NONE), NONE)], ndI)
 
-fun ident_of_declr (CDeclr0 (io, _, _, _, _)) = io
+fun ident_of_declr (CDeclr (io, _, _, _, _)) = io
 
 exception Parse_gap of string
 
@@ -838,35 +838,35 @@ yacc_definitions\<open>
 \<close>
 yacc_rules\<open>
 start_rule: 
-        IDENTIFIER    (SOME (Id (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft))))
+        IDENTIFIER    (SOME (Id (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft))))
 |       expression    (SOME (Expr expression))
 |       statement     (SOME (Stmt statement))
 |       translation_unit    
-                      (SOME (Units [CTranslUnit0 (translation_unit, 
+                      (SOME (Units [CTranslUnit (translation_unit, 
                                                   ndi2 (translation_unitleft, 
                                                         translation_unitright))]))
 
 primary_expression: 
-        IDENTIFIER    (CVar0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi IDENTIFIERleft))
-|       constant      (CConst0 constant)
-|       string        (CConst0 (strLit_to_constant string))
+        IDENTIFIER    (CVar (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi IDENTIFIERleft))
+|       constant      (CConst constant)
+|       string        (CConst (strLit_to_constant string))
 |       LPAREN expression RPAREN    (expression)
 |       generic_selection           (generic_selection)
 
 constant: 
         I_CONSTANT           (const_of_i_constant (I_CONSTANT, ndi I_CONSTANTleft))
-|       F_CONSTANT           (CFloatConst0 (CFloat0 F_CONSTANT, ndi F_CONSTANTleft))
-|       ENUMERATION_CONSTANT    (CIntConst0 (CInteger0 (0, DecRepr0, Flags0 0), 
+|       F_CONSTANT           (CFloatConst (CFloat F_CONSTANT, ndi F_CONSTANTleft))
+|       ENUMERATION_CONSTANT    (CIntConst (CInteger (0, DecRepr, Flags 0), 
                                              ndi ENUMERATION_CONSTANTleft))
 
-enumeration_constant: IDENTIFIER     (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft))
+enumeration_constant: IDENTIFIER     (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft))
 
-string: STRING_LITERAL    (CStrLit0 (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft))
-|       FUNC_NAME         (CStrLit0 (CString0 ("__func__", false), ndi FUNC_NAMEleft))
+string: STRING_LITERAL    (CStrLit (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft))
+|       FUNC_NAME         (CStrLit (CString ("__func__", false), ndi FUNC_NAMEleft))
 
 generic_selection: 
         GENERIC LPAREN assignment_expression COMMA generic_assoc_list RPAREN    
-                          (CGenericSelection0 (assignment_expression, generic_assoc_list, 
+                          (CGenericSelection (assignment_expression, generic_assoc_list, 
                                                ndi2 (GENERICleft, RPARENright)))
 
 generic_assoc_list: generic_association                ([generic_association])
@@ -879,34 +879,34 @@ generic_association:
 postfix_expression: 
         primary_expression    (primary_expression)
 |       postfix_expression LBRACKET expression RBRACKET    
-                              (CIndex0 (postfix_expression, expression, 
+                              (CIndex (postfix_expression, expression, 
                                         ndi2 (postfix_expressionleft, RBRACKETright)))
 |       postfix_expression LPAREN RPAREN    
-                              (CCall0 (postfix_expression, [], 
+                              (CCall (postfix_expression, [], 
                                         ndi2 (postfix_expressionleft, RPARENright)))
 |       postfix_expression LPAREN argument_expression_list RPAREN    
-                              (CCall0 (postfix_expression, argument_expression_list, 
+                              (CCall (postfix_expression, argument_expression_list, 
                                        ndi2 (postfix_expressionleft, RPARENright)))
 |       postfix_expression DOT IDENTIFIER    
-                              (CMember0 (postfix_expression, Ident0 (IDENTIFIER, 0, 
+                              (CMember (postfix_expression, Ident (IDENTIFIER, 0, 
                                                                      ndi IDENTIFIERleft), 
                                          false, 
                                          ndi2 (postfix_expressionleft, IDENTIFIERright)))
 |       postfix_expression PTR_OP IDENTIFIER    
-                              (CMember0 (postfix_expression, 
-                                         Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), true, 
+                              (CMember (postfix_expression, 
+                                         Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), true, 
                                          ndi2 (postfix_expressionleft, IDENTIFIERright)))
 |       postfix_expression INC_OP    
-                              (CUnary0 (CPostIncOp0, postfix_expression, 
+                              (CUnary (CPostIncOp, postfix_expression, 
                                         ndi2 (postfix_expressionleft, INC_OPright)))
 |       postfix_expression DEC_OP    
-                              (CUnary0 (CPostDecOp0, postfix_expression, 
+                              (CUnary (CPostDecOp, postfix_expression, 
                                         ndi2 (postfix_expressionleft, DEC_OPright)))
 |       LPAREN type_name RPAREN LBRACE initializer_list RBRACE    
-                              (CCompoundLit0 (type_name, initializer_list, 
+                              (CCompoundLit (type_name, initializer_list, 
                                               ndi2 (LPARENleft, RBRACEright)))
 |       LPAREN type_name RPAREN LBRACE initializer_list COMMA RBRACE    
-                              (CCompoundLit0 (type_name, initializer_list, 
+                              (CCompoundLit (type_name, initializer_list, 
                                               ndi2 (LPARENleft, RBRACEright)))
 
 argument_expression_list: 
@@ -916,158 +916,158 @@ argument_expression_list:
 
 unary_expression: 
         postfix_expression         (postfix_expression)
-|       INC_OP unary_expression    (CUnary0 (CPreIncOp0, unary_expression, 
+|       INC_OP unary_expression    (CUnary (CPreIncOp, unary_expression, 
                                              ndi2 (INC_OPleft, unary_expressionright)))
-|       DEC_OP unary_expression    (CUnary0 (CPreDecOp0, unary_expression, 
+|       DEC_OP unary_expression    (CUnary (CPreDecOp, unary_expression, 
                                              ndi2 (DEC_OPleft, unary_expressionright)))
 |       unary_operator cast_expression    
-                                   (CUnary0 (unary_operator, cast_expression, 
+                                   (CUnary (unary_operator, cast_expression, 
                                              ndi2 (unary_operatorleft, cast_expressionright)))
-|       SIZEOF unary_expression    (CSizeofExpr0 (unary_expression, 
+|       SIZEOF unary_expression    (CSizeofExpr (unary_expression, 
                                                   ndi2 (SIZEOFleft, unary_expressionright)))
 |       SIZEOF LPAREN type_name RPAREN    
-                                   (CSizeofType0 (type_name, 
+                                   (CSizeofType (type_name, 
                                                   ndi2 (SIZEOFleft, RPARENright)))
 |       ALIGNOF LPAREN type_name RPAREN    
-                                   (CAlignofType0 (type_name, ndi2 (ALIGNOFleft, RPARENright)))
+                                   (CAlignofType (type_name, ndi2 (ALIGNOFleft, RPARENright)))
 
 unary_operator: 
-        AMP     (CAdrOp0)
-|       STAR    (CIndOp0)
-|       PLUS    (CPlusOp0)
-|       MINUS   (CMinOp0)
-|       TILDE   (CCompOp0)
-|       BANG    (CNegOp0)
+        AMP     (CAdrOp)
+|       STAR    (CIndOp)
+|       PLUS    (CPlusOp)
+|       MINUS   (CMinOp)
+|       TILDE   (CCompOp)
+|       BANG    (CNegOp)
 
 cast_expression: 
         unary_expression    (unary_expression)
 |       LPAREN type_name RPAREN cast_expression    
-                            (CCast0 (type_name, cast_expression, 
+                            (CCast (type_name, cast_expression, 
                                      ndi2 (LPARENleft, cast_expressionright)))
 
 multiplicative_expression: 
         cast_expression    (cast_expression)
 |       multiplicative_expression STAR cast_expression    
-                           (CBinary0 (CMulOp0, multiplicative_expression, cast_expression, 
+                           (CBinary (CMulOp, multiplicative_expression, cast_expression, 
                                       ndi2 (multiplicative_expressionleft, cast_expressionright)))
 |       multiplicative_expression SLASH cast_expression    
-                           (CBinary0 (CDivOp0, multiplicative_expression, cast_expression, 
+                           (CBinary (CDivOp, multiplicative_expression, cast_expression, 
                                       ndi2 (multiplicative_expressionleft, cast_expressionright)))
 |       multiplicative_expression PERCENT cast_expression    
-                           (CBinary0 (CRmdOp0, multiplicative_expression, cast_expression, 
+                           (CBinary (CRmdOp, multiplicative_expression, cast_expression, 
                                       ndi2 (multiplicative_expressionleft, cast_expressionright)))
 
 additive_expression: 
         multiplicative_expression    
                            (multiplicative_expression)
 |       additive_expression PLUS multiplicative_expression    
-                           (CBinary0 (CAddOp0, additive_expression, multiplicative_expression, 
+                           (CBinary (CAddOp, additive_expression, multiplicative_expression, 
                                       ndi2 (additive_expressionleft, multiplicative_expressionright)))
 |       additive_expression MINUS multiplicative_expression    
-                           (CBinary0 (CSubOp0, additive_expression, multiplicative_expression, 
+                           (CBinary (CSubOp, additive_expression, multiplicative_expression, 
                                       ndi2 (additive_expressionleft, 
                                             multiplicative_expressionright)))
 
 shift_expression: 
         additive_expression(additive_expression)
 |       shift_expression LEFT_OP additive_expression    
-                           (CBinary0 (CShlOp0, shift_expression, additive_expression, 
+                           (CBinary (CShlOp, shift_expression, additive_expression, 
                                       ndi2 (shift_expressionleft, additive_expressionright)))
 |       shift_expression RIGHT_OP additive_expression    
-                           (CBinary0 (CShrOp0, shift_expression, additive_expression, 
+                           (CBinary (CShrOp, shift_expression, additive_expression, 
                                       ndi2 (shift_expressionleft, additive_expressionright)))
 
 relational_expression: 
         shift_expression(shift_expression)
 |       relational_expression LT shift_expression    
-                        (CBinary0 (CLeOp0, relational_expression, shift_expression, 
+                        (CBinary (CLeOp, relational_expression, shift_expression, 
                                    ndi2 (relational_expressionleft, shift_expressionright)))
 |       relational_expression GT shift_expression    
-                        (CBinary0 (CGrOp0, relational_expression, shift_expression, 
+                        (CBinary (CGrOp, relational_expression, shift_expression, 
                                    ndi2 (relational_expressionleft, shift_expressionright)))
 |       relational_expression LE_OP shift_expression    
-                        (CBinary0 (CLeqOp0, relational_expression, shift_expression, 
+                        (CBinary (CLeqOp, relational_expression, shift_expression, 
                                    ndi2 (relational_expressionleft, shift_expressionright)))
 |       relational_expression GE_OP shift_expression    
-                        (CBinary0 (CGeqOp0, relational_expression, shift_expression, 
+                        (CBinary (CGeqOp, relational_expression, shift_expression, 
                                    ndi2 (relational_expressionleft, shift_expressionright)))
 
 equality_expression: 
         relational_expression    
                         (relational_expression)
 |       equality_expression EQ_OP relational_expression    
-                        (CBinary0 (CEqOp0, equality_expression, relational_expression, 
+                        (CBinary (CEqOp, equality_expression, relational_expression, 
                                    ndi2 (equality_expressionleft, relational_expressionright)))
 |       equality_expression NE_OP relational_expression    
-                        (CBinary0 (CNeqOp0, equality_expression, relational_expression, 
+                        (CBinary (CNeqOp, equality_expression, relational_expression, 
                                    ndi2 (equality_expressionleft, relational_expressionright)))
 
 and_expression: 
         equality_expression    
                         (equality_expression)
 |       and_expression AMP equality_expression    
-                        (CBinary0 (CAndOp0, and_expression, equality_expression, 
+                        (CBinary (CAndOp, and_expression, equality_expression, 
                                    ndi2 (and_expressionleft, equality_expressionright)))
 
 exclusive_or_expression: 
         and_expression  (and_expression)
 |       exclusive_or_expression CARET and_expression    
-                        (CBinary0 (CXorOp0, exclusive_or_expression, and_expression, 
+                        (CBinary (CXorOp, exclusive_or_expression, and_expression, 
                                    ndi2 (exclusive_or_expressionleft, and_expressionright)))
 
 inclusive_or_expression: 
         exclusive_or_expression    
                         (exclusive_or_expression)
 |       inclusive_or_expression PIPE exclusive_or_expression    
-                        (CBinary0 (COrOp0, inclusive_or_expression, exclusive_or_expression, 
+                        (CBinary (COrOp, inclusive_or_expression, exclusive_or_expression, 
                                    ndi2 (inclusive_or_expressionleft, exclusive_or_expressionright)))
 
 logical_and_expression: 
         inclusive_or_expression    
                         (inclusive_or_expression)
 |       logical_and_expression AND_OP inclusive_or_expression    
-                        (CBinary0 (CLndOp0, logical_and_expression, inclusive_or_expression, 
+                        (CBinary (CLndOp, logical_and_expression, inclusive_or_expression, 
                                    ndi2 (logical_and_expressionleft, inclusive_or_expressionright)))
 
 logical_or_expression: 
         logical_and_expression    
                         (logical_and_expression)
 |       logical_or_expression OR_OP logical_and_expression    
-                        (CBinary0 (CLorOp0, logical_or_expression, logical_and_expression, 
+                        (CBinary (CLorOp, logical_or_expression, logical_and_expression, 
                                    ndi2 (logical_or_expressionleft, logical_and_expressionright)))
 
 conditional_expression: 
         logical_or_expression    
                         (logical_or_expression)
 |       logical_or_expression QUESTION expression COLON conditional_expression    
-                        (CCond0 (logical_or_expression, SOME expression, conditional_expression, 
+                        (CCond (logical_or_expression, SOME expression, conditional_expression, 
                                  ndi2 (logical_or_expressionleft, conditional_expressionright)))
 
 assignment_expression: 
         conditional_expression    
                         (conditional_expression)
 |       unary_expression assignment_operator assignment_expression    
-                        (CAssign0 (assignment_operator, unary_expression, assignment_expression, 
+                        (CAssign (assignment_operator, unary_expression, assignment_expression, 
                                    ndi2 (unary_expressionleft, assignment_expressionright)))
 
 assignment_operator: 
-        ASSIGN        (CAssignOp0)
-|       MUL_ASSIGN    (CMulAssOp0)
-|       DIV_ASSIGN    (CDivAssOp0)
-|       MOD_ASSIGN    (CRmdAssOp0)
-|       ADD_ASSIGN    (CAddAssOp0)
-|       SUB_ASSIGN    (CSubAssOp0)
-|       LEFT_ASSIGN   (CShlAssOp0)
-|       RIGHT_ASSIGN  (CShrAssOp0)
-|       AND_ASSIGN    (CAndAssOp0)
-|       XOR_ASSIGN    (CXorAssOp0)
-|       OR_ASSIGN     (COrAssOp0)
+        ASSIGN        (CAssignOp)
+|       MUL_ASSIGN    (CMulAssOp)
+|       DIV_ASSIGN    (CDivAssOp)
+|       MOD_ASSIGN    (CRmdAssOp)
+|       ADD_ASSIGN    (CAddAssOp)
+|       SUB_ASSIGN    (CSubAssOp)
+|       LEFT_ASSIGN   (CShlAssOp)
+|       RIGHT_ASSIGN  (CShrAssOp)
+|       AND_ASSIGN    (CAndAssOp)
+|       XOR_ASSIGN    (CXorAssOp)
+|       OR_ASSIGN     (COrAssOp)
 
 expression: 
         assignment_expression    
                       (assignment_expression)
 |       expression COMMA assignment_expression    
-                      (CComma0 ((case expression of CComma0 (l,_) => l | e => [e]) 
+                      (CComma ((case expression of CComma (l,_) => l | e => [e]) 
                                 @ [assignment_expression], 
                                 ndi2 (expressionleft, assignment_expressionright)))
 
@@ -1076,32 +1076,32 @@ constant_expression:
 
 declaration: 
         declaration_specifiers SEMI    
-                      (CDecl0 (declaration_specifiers, [], ndi2 (declaration_specifiersleft, SEMIright)))
+                      (CDecl (declaration_specifiers, [], ndi2 (declaration_specifiersleft, SEMIright)))
 |       declaration_specifiers init_declarator_list SEMI    
-                      (CDecl0 (declaration_specifiers, init_declarator_list, 
+                      (CDecl (declaration_specifiers, init_declarator_list, 
                                ndi2 (declaration_specifiersleft, SEMIright)))
 |       static_assert_declaration    
                       (static_assert_declaration)
 
 declaration_specifiers: 
         storage_class_specifier declaration_specifiers    
-                      (CStorageSpec0 storage_class_specifier :: declaration_specifiers)
+                      (CStorageSpec storage_class_specifier :: declaration_specifiers)
 |       storage_class_specifier    
-                      ([CStorageSpec0 storage_class_specifier])
+                      ([CStorageSpec storage_class_specifier])
 |       type_specifier declaration_specifiers    
-                      (CTypeSpec0 type_specifier :: declaration_specifiers)
-|       type_specifier([CTypeSpec0 type_specifier])
+                      (CTypeSpec type_specifier :: declaration_specifiers)
+|       type_specifier([CTypeSpec type_specifier])
 |       type_qualifier declaration_specifiers    
-                      (CTypeQual0 type_qualifier :: declaration_specifiers)
-|       type_qualifier([CTypeQual0 type_qualifier])
+                      (CTypeQual type_qualifier :: declaration_specifiers)
+|       type_qualifier([CTypeQual type_qualifier])
 |       function_specifier declaration_specifiers    
-                      (CFunSpec0 function_specifier :: declaration_specifiers)
+                      (CFunSpec function_specifier :: declaration_specifiers)
 |       function_specifier    
-                      ([CFunSpec0 function_specifier])
+                      ([CFunSpec function_specifier])
 |       alignment_specifier declaration_specifiers    
-                      (CAlignSpec0 alignment_specifier :: declaration_specifiers)
+                      (CAlignSpec alignment_specifier :: declaration_specifiers)
 |       alignment_specifier    
-                      ([CAlignSpec0 alignment_specifier])
+                      ([CAlignSpec alignment_specifier])
 
 init_declarator_list: 
         init_declarator    
@@ -1115,51 +1115,51 @@ init_declarator:
 |       declarator    ((SOME declarator, NONE), NONE)
 
 storage_class_specifier: 
-        TYPEDEF       (CTypedef0 (ndi TYPEDEFleft))
-|       EXTERN        (CExtern0 (ndi EXTERNleft))
-|       STATIC        (CStatic0 (ndi STATICleft))
-|       THREAD_LOCAL  (CThread0 (ndi THREAD_LOCALleft))
-|       AUTO          (CAuto0 (ndi AUTOleft))
-|       REGISTER      (CRegister0 (ndi REGISTERleft))
+        TYPEDEF       (CTypedef (ndi TYPEDEFleft))
+|       EXTERN        (CExtern (ndi EXTERNleft))
+|       STATIC        (CStatic (ndi STATICleft))
+|       THREAD_LOCAL  (CThread (ndi THREAD_LOCALleft))
+|       AUTO          (CAuto (ndi AUTOleft))
+|       REGISTER      (CRegister (ndi REGISTERleft))
 
 type_specifier: 
-        VOID          (CVoidType0 (ndi VOIDleft))
-|       CHAR          (CCharType0 (ndi CHARleft))
-|       SHORT         (CShortType0 (ndi SHORTleft))
-|       INT           (CIntType0 (ndi INTleft))
-|       LONG          (CLongType0 (ndi LONGleft))
-|       FLOAT         (CFloatType0 (ndi FLOATleft))
-|       DOUBLE        (CDoubleType0 (ndi DOUBLEleft))
-|       SIGNED        (CSignedType0 (ndi SIGNEDleft))
-|       UNSIGNED      (CUnsigType0 (ndi UNSIGNEDleft))
-|       BOOL          (CBoolType0 (ndi BOOLleft))
-|       COMPLEX       (CComplexType0 (ndi COMPLEXleft))
-|       IMAGINARY     (CComplexType0 (ndi IMAGINARYleft))
+        VOID          (CVoidType (ndi VOIDleft))
+|       CHAR          (CCharType (ndi CHARleft))
+|       SHORT         (CShortType (ndi SHORTleft))
+|       INT           (CIntType (ndi INTleft))
+|       LONG          (CLongType (ndi LONGleft))
+|       FLOAT         (CFloatType (ndi FLOATleft))
+|       DOUBLE        (CDoubleType (ndi DOUBLEleft))
+|       SIGNED        (CSignedType (ndi SIGNEDleft))
+|       UNSIGNED      (CUnsigType (ndi UNSIGNEDleft))
+|       BOOL          (CBoolType (ndi BOOLleft))
+|       COMPLEX       (CComplexType (ndi COMPLEXleft))
+|       IMAGINARY     (CComplexType (ndi IMAGINARYleft))
 |       atomic_type_specifier    
                       (atomic_type_specifier)
 |       struct_or_union_specifier    
                       (struct_or_union_specifier)
 |       enum_specifier(enum_specifier)
-|       TYPEDEF_NAME  (CTypeDef0 (Ident0 ("", 0, ndi TYPEDEF_NAMEleft), ndi TYPEDEF_NAMEleft))
+|       TYPEDEF_NAME  (CTypeDef (Ident ("", 0, ndi TYPEDEF_NAMEleft), ndi TYPEDEF_NAMEleft))
 
 struct_or_union_specifier: 
         struct_or_union LBRACE struct_declaration_list RBRACE    
-                      (CSUType0 (CStruct0 (struct_or_union, NONE, SOME struct_declaration_list, [], 
+                      (CSUType (CStruct (struct_or_union, NONE, SOME struct_declaration_list, [], 
                                            ndi2 (struct_or_unionleft, RBRACEright)), 
                                  ndi2 (struct_or_unionleft, RBRACEright)))
 |       struct_or_union IDENTIFIER LBRACE struct_declaration_list RBRACE    
-                      (CSUType0 (CStruct0 (struct_or_union, SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
+                      (CSUType (CStruct (struct_or_union, SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
                                  SOME struct_declaration_list, [], ndi2 (struct_or_unionleft, RBRACEright)), 
                                  ndi2 (struct_or_unionleft, RBRACEright)))
 |       struct_or_union IDENTIFIER    
-                      (CSUType0 (CStruct0 (struct_or_union, 
-                                           SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)),NONE,[], 
+                      (CSUType (CStruct (struct_or_union, 
+                                           SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)),NONE,[], 
                                                  ndi2 (struct_or_unionleft, IDENTIFIERright)), 
                                  ndi2 (struct_or_unionleft, IDENTIFIERright)))
 
 struct_or_union: 
-        STRUCT        (CStructTag0)
-|       UNION         (CUnionTag0)
+        STRUCT        (CStructTag)
+|       UNION         (CUnionTag)
 
 struct_declaration_list: 
         struct_declaration    
@@ -1169,21 +1169,21 @@ struct_declaration_list:
 
 struct_declaration: 
         specifier_qualifier_list SEMI    
-                      (CDecl0 (specifier_qualifier_list, [], 
+                      (CDecl (specifier_qualifier_list, [], 
                                ndi2 (specifier_qualifier_listleft, SEMIright)))
 |       specifier_qualifier_list struct_declarator_list SEMI    
-                      (CDecl0 (specifier_qualifier_list, struct_declarator_list, 
+                      (CDecl (specifier_qualifier_list, struct_declarator_list, 
                                ndi2 (specifier_qualifier_listleft, SEMIright)))
 |       static_assert_declaration    
                       (static_assert_declaration)
 
 specifier_qualifier_list: 
         type_specifier specifier_qualifier_list    
-                      (CTypeSpec0 type_specifier :: specifier_qualifier_list)
-|       type_specifier([CTypeSpec0 type_specifier])
+                      (CTypeSpec type_specifier :: specifier_qualifier_list)
+|       type_specifier([CTypeSpec type_specifier])
 |       type_qualifier specifier_qualifier_list    
-                      (CTypeQual0 type_qualifier :: specifier_qualifier_list)
-|       type_qualifier([CTypeQual0 type_qualifier])
+                      (CTypeQual type_qualifier :: specifier_qualifier_list)
+|       type_qualifier([CTypeQual type_qualifier])
 
 struct_declarator_list: 
         struct_declarator    
@@ -1200,23 +1200,23 @@ struct_declarator:
 
 enum_specifier: 
         ENUM LBRACE enumerator_list RBRACE    
-                      (CEnumType0 (CEnum0 (NONE, SOME enumerator_list, [], 
+                      (CEnumType (CEnum (NONE, SOME enumerator_list, [], 
                                       ndi2 (ENUMleft, RBRACEright)), ndi2 (ENUMleft, RBRACEright)))
 |       ENUM LBRACE enumerator_list COMMA RBRACE    
-                      (CEnumType0 (CEnum0 (NONE, SOME enumerator_list, [], 
+                      (CEnumType (CEnum (NONE, SOME enumerator_list, [], 
                                            ndi2 (ENUMleft, RBRACEright)), 
                                    ndi2 (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER LBRACE enumerator_list RBRACE    
-                      (CEnumType0 (CEnum0 (SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
                                            SOME enumerator_list, [], ndi2 (ENUMleft, RBRACEright)), 
                                    ndi2 (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER LBRACE enumerator_list COMMA RBRACE    
-                      (CEnumType0 (CEnum0 (SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
                                                  SOME enumerator_list, [], 
                                            ndi2 (ENUMleft, RBRACEright)), 
                                    ndi2 (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER
-                      (CEnumType0 (CEnum0 (SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
                                            NONE, [], ndi2 (ENUMleft, IDENTIFIERright)), 
                                    ndi2 (ENUMleft, IDENTIFIERright)))
 
@@ -1233,23 +1233,23 @@ enumerator:
 
 atomic_type_specifier: 
         ATOMIC LPAREN type_name RPAREN    
-                      (CAtomicType0 (type_name, ndi2 (ATOMICleft, RPARENright)))
+                      (CAtomicType (type_name, ndi2 (ATOMICleft, RPARENright)))
 
 type_qualifier: 
-        CONST         (CConstQual0 (ndi CONSTleft))
-|       RESTRICT      (CRestrQual0 (ndi RESTRICTleft))
-|       VOLATILE      (CVolatQual0 (ndi VOLATILEleft))
-|       ATOMIC        (CAtomicQual0 (ndi ATOMICleft))
+        CONST         (CConstQual (ndi CONSTleft))
+|       RESTRICT      (CRestrQual (ndi RESTRICTleft))
+|       VOLATILE      (CVolatQual (ndi VOLATILEleft))
+|       ATOMIC        (CAtomicQual (ndi ATOMICleft))
 
 function_specifier: 
-        INLINE        (CInlineQual0 (ndi INLINEleft))
-|       NORETURN      (CNoreturnQual0 (ndi NORETURNleft))
+        INLINE        (CInlineQual (ndi INLINEleft))
+|       NORETURN      (CNoreturnQual (ndi NORETURNleft))
 
 alignment_specifier: 
         ALIGNAS LPAREN type_name RPAREN    
-                      (CAlignAsType0 (type_name, ndi2 (ALIGNASleft, RPARENright)))
+                      (CAlignAsType (type_name, ndi2 (ALIGNASleft, RPARENright)))
 |       ALIGNAS LPAREN constant_expression RPAREN    
-                      (CAlignAsExpr0 (constant_expression, ndi2 (ALIGNASleft, RPARENright)))
+                      (CAlignAsExpr (constant_expression, ndi2 (ALIGNASleft, RPARENright)))
 
 declarator: 
         pointer direct_declarator    
@@ -1264,79 +1264,79 @@ declarator:
                        end)
 
 direct_declarator: 
-        IDENTIFIER    (SOME (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)), [])
+        IDENTIFIER    (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), [])
 |       LPAREN declarator RPAREN    
-                      (let val CDeclr0 (io, derived, _, _, _) = declarator in (io, derived) end)
+                      (let val CDeclr (io, derived, _, _, _) = declarator in (io, derived) end)
 |       direct_declarator LBRACKET RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 ([], CNoArrSize0 false, 
+                       in (io, d @ [CArrDeclr ([], CNoArrSize false, 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STAR RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 ([], CNoArrSize0 false, 
+                       in (io, d @ [CArrDeclr ([], CNoArrSize false, 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 (type_qualifier_list, 
-                                                CArrSize0 (true, assignment_expression), 
+                       in (io, d @ [CArrDeclr (type_qualifier_list, 
+                                                CArrSize (true, assignment_expression), 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STATIC assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 ([], CArrSize0 (true, assignment_expression), 
+                       in (io, d @ [CArrDeclr ([], CArrSize (true, assignment_expression), 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list STAR RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 (type_qualifier_list, CNoArrSize0 false, 
+                       in (io, d @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 (type_qualifier_list, CArrSize0 (true, assignment_expression), 
+                       in (io, d @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 (type_qualifier_list, CArrSize0 (false, assignment_expression), 
+                       in (io, d @ [CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 (type_qualifier_list, CNoArrSize0 false, 
+                       in (io, d @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CArrDeclr0 ([], CArrSize0 (false, assignment_expression), 
+                       in (io, d @ [CArrDeclr ([], CArrSize (false, assignment_expression), 
                                                 ndi2 (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LPAREN parameter_type_list RPAREN    
                       (let val (io, d) = direct_declarator 
                            val (params, ellipsis) = parameter_type_list 
-                       in (io, d @ [CFunDeclr0 (Right (params, ellipsis), [], 
+                       in (io, d @ [CFunDeclr (Right (params, ellipsis), [], 
                                                 ndi2 (direct_declaratorleft, RPARENright))]) 
                        end)
 |       direct_declarator LPAREN RPAREN    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CFunDeclr0 (Right ([], false), [], 
+                       in (io, d @ [CFunDeclr (Right ([], false), [], 
                                                        ndi2 (direct_declaratorleft, RPARENright))]) 
                        end)
 |       direct_declarator LPAREN identifier_list RPAREN    
                       (let val (io, d) = direct_declarator 
-                       in (io, d @ [CFunDeclr0 (Left identifier_list, [], 
+                       in (io, d @ [CFunDeclr (Left identifier_list, [], 
                                                 ndi2 (direct_declaratorleft, RPARENright))]) 
                        end)
 
 pointer:STAR type_qualifier_list pointer    
-                     (CPtrDeclr0 (type_qualifier_list, 
+                     (CPtrDeclr (type_qualifier_list, 
                                   ndi2 (STARleft, type_qualifier_listright)) :: pointer)
 |       STAR type_qualifier_list    
-                     ([CPtrDeclr0 (type_qualifier_list, ndi2 (STARleft, type_qualifier_listright))])
-|       STAR pointer (CPtrDeclr0 ([], ndi STARleft) :: pointer)
-|       STAR         ([CPtrDeclr0 ([], ndi STARleft)])
+                     ([CPtrDeclr (type_qualifier_list, ndi2 (STARleft, type_qualifier_listright))])
+|       STAR pointer (CPtrDeclr ([], ndi STARleft) :: pointer)
+|       STAR         ([CPtrDeclr ([], ndi STARleft)])
 
 type_qualifier_list: 
         type_qualifier
@@ -1366,9 +1366,9 @@ parameter_declaration:
                      (mk_type_decl (declaration_specifiers, NONE, ndi declaration_specifiersleft))
 
 identifier_list: 
-        IDENTIFIER    ([Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)])
+        IDENTIFIER    ([Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)])
 |       identifier_list COMMA IDENTIFIER    
-                      (identifier_list @ [Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft)])
+                      (identifier_list @ [Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)])
 
 type_name: specifier_qualifier_list abstract_declarator    
                       (mk_type_decl (specifier_qualifier_list, SOME abstract_declarator, 
@@ -1388,83 +1388,83 @@ abstract_declarator:
 
 direct_abstract_declarator: 
         LPAREN abstract_declarator RPAREN    
-                      (let val CDeclr0 (_, d, _, _, _) = abstract_declarator in d end)
+                      (let val CDeclr (_, d, _, _, _) = abstract_declarator in d end)
 |       LBRACKET RBRACKET    
-                      ([CArrDeclr0 ([], CNoArrSize0 false, ndi2 (LBRACKETleft, RBRACKETright))])
+                      ([CArrDeclr ([], CNoArrSize false, ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STAR RBRACKET    
-                      ([CArrDeclr0 ([], CNoArrSize0 false, ndi2 (LBRACKETleft, RBRACKETright))])
+                      ([CArrDeclr ([], CNoArrSize false, ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
-                      ([CArrDeclr0 (type_qualifier_list, CArrSize0 (true, assignment_expression), 
+                      ([CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STATIC assignment_expression RBRACKET    
-                      ([CArrDeclr0 ([], CArrSize0 (true, assignment_expression), 
+                      ([CArrDeclr ([], CArrSize (true, assignment_expression), 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
-                      ([CArrDeclr0 (type_qualifier_list, CArrSize0 (true, assignment_expression), 
+                      ([CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list assignment_expression RBRACKET    
-                      ([CArrDeclr0 (type_qualifier_list, CArrSize0 (false, assignment_expression), 
+                      ([CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list RBRACKET    
-                      ([CArrDeclr0 (type_qualifier_list, CNoArrSize0 false, 
+                      ([CArrDeclr (type_qualifier_list, CNoArrSize false, 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       LBRACKET assignment_expression RBRACKET    
-                      ([CArrDeclr0 ([], CArrSize0 (false, assignment_expression), 
+                      ([CArrDeclr ([], CArrSize (false, assignment_expression), 
                                     ndi2 (LBRACKETleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 ([], CNoArrSize0 false, 
+                       @ [CArrDeclr ([], CNoArrSize false, 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STAR RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 ([], CNoArrSize0 false, 
+                       @ [CArrDeclr ([], CNoArrSize false, 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 (type_qualifier_list, CArrSize0 (true, assignment_expression), 
+                       @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STATIC assignment_expression RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 ([], CArrSize0 (true, assignment_expression), 
+                       @ [CArrDeclr ([], CArrSize (true, assignment_expression), 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 (type_qualifier_list, CArrSize0 (false, assignment_expression), 
+                       @ [CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 (type_qualifier_list, CArrSize0 (true, assignment_expression), 
+                       @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 (type_qualifier_list, CNoArrSize0 false, 
+                       @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET assignment_expression RBRACKET    
                       (direct_abstract_declarator 
-                       @ [CArrDeclr0 ([], CArrSize0 (false, assignment_expression), 
+                       @ [CArrDeclr ([], CArrSize (false, assignment_expression), 
                                       ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
-|       LPAREN RPAREN ([CFunDeclr0 (Right ([], false), [], ndi2 (LPARENleft, RPARENright))])
+|       LPAREN RPAREN ([CFunDeclr (Right ([], false), [], ndi2 (LPARENleft, RPARENright))])
 |       LPAREN parameter_type_list RPAREN    
                       (let val (params, ell) = parameter_type_list 
-                       in [CFunDeclr0 (Right (params, ell),[], ndi2 (LPARENleft, RPARENright))] end)
+                       in [CFunDeclr (Right (params, ell),[], ndi2 (LPARENleft, RPARENright))] end)
 |       direct_abstract_declarator LPAREN RPAREN    
                       (direct_abstract_declarator 
-                       @ [CFunDeclr0 (Right ([], false), [], 
+                       @ [CFunDeclr (Right ([], false), [], 
                                       ndi2 (direct_abstract_declaratorleft, RPARENright))])
 |       direct_abstract_declarator LPAREN parameter_type_list RPAREN    
                       (let val (params, ell) = parameter_type_list 
                        in direct_abstract_declarator 
-                          @ [CFunDeclr0 (Right (params, ell), [], 
+                          @ [CFunDeclr (Right (params, ell), [], 
                                          ndi2 (direct_abstract_declaratorleft, RPARENright))] 
                        end)
 
 initializer: 
         LBRACE initializer_list RBRACE    
-                      (CInitList0 (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CInitList (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
 |       LBRACE initializer_list COMMA RBRACE    
-                      (CInitList0 (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CInitList (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
 |       assignment_expression    
-                      (CInitExpr0 (assignment_expression, ndi assignment_expressionleft))
+                      (CInitExpr (assignment_expression, ndi assignment_expressionleft))
 
 initializer_list: 
         designation initializer    
@@ -1484,14 +1484,14 @@ designator_list:
 
 designator: 
         LBRACKET constant_expression RBRACKET    
-                      (CArrDesig0 (constant_expression, ndi2 (LBRACKETleft, RBRACKETright)))
-|       DOT IDENTIFIER(CMemberDesig0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), 
+                      (CArrDesig (constant_expression, ndi2 (LBRACKETleft, RBRACKETright)))
+|       DOT IDENTIFIER(CMemberDesig (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), 
                                       ndi2 (DOTleft, IDENTIFIERright)))
 
 static_assert_declaration: 
         STATIC_ASSERT LPAREN constant_expression COMMA STRING_LITERAL RPAREN SEMI    
-                      (CStaticAssert0 (constant_expression, 
-                                       CStrLit0 (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft), 
+                      (CStaticAssert (constant_expression, 
+                                       CStrLit (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft), 
                                        ndi2 (STATIC_ASSERTleft, SEMIright)))
 
 statement: 
@@ -1509,17 +1509,17 @@ statement:
 
 labeled_statement: 
         IDENTIFIER COLON statement    
-                      (CLabel0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), statement, [], 
+                      (CLabel (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), statement, [], 
                                 ndi2 (IDENTIFIERleft, statementright)))
 |       CASE constant_expression COLON statement    
-                      (CCase0 (constant_expression, statement, ndi2 (CASEleft, statementright)))
+                      (CCase (constant_expression, statement, ndi2 (CASEleft, statementright)))
 |       DEFAULT COLON statement    
-                      (CDefault0 (statement, ndi2 (DEFAULTleft, statementright)))
+                      (CDefault (statement, ndi2 (DEFAULTleft, statementright)))
 
 compound_statement: LBRACE RBRACE    
-                      (CCompound0 ([], [], ndi2 (LBRACEleft, RBRACEright)))
+                      (CCompound ([], [], ndi2 (LBRACEleft, RBRACEright)))
 |       LBRACE block_item_list RBRACE    
-                      (CCompound0 ([], block_item_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CCompound ([], block_item_list, ndi2 (LBRACEleft, RBRACEright)))
 
 block_item_list: 
         block_item    ([block_item])
@@ -1527,52 +1527,52 @@ block_item_list:
                       (block_item_list @ [block_item])
 
 block_item: declaration    
-                      (CBlockDecl0 declaration)
-|       statement     (CBlockStmt0 statement)
+                      (CBlockDecl declaration)
+|       statement     (CBlockStmt statement)
 
 expression_statement: 
-        SEMI          (CExpr0 (NONE, ndi SEMIleft))
-|       expression SEMI(CExpr0 (SOME expression, ndi2 (expressionleft, SEMIright)))
+        SEMI          (CExpr (NONE, ndi SEMIleft))
+|       expression SEMI(CExpr (SOME expression, ndi2 (expressionleft, SEMIright)))
 
 selection_statement: 
         IF LPAREN expression RPAREN statement ELSE statement    
-           (CIf0 (expression, statement1, SOME statement2, ndi2 (IFleft, statement2right)))
+           (CIf (expression, statement1, SOME statement2, ndi2 (IFleft, statement2right)))
 |       IF LPAREN expression RPAREN statement    
-           (CIf0 (expression, statement, NONE, ndi2 (IFleft, statementright)))
+           (CIf (expression, statement, NONE, ndi2 (IFleft, statementright)))
 |       SWITCH LPAREN expression RPAREN statement    
-           (CSwitch0 (expression, statement, ndi2 (SWITCHleft, statementright)))
+           (CSwitch (expression, statement, ndi2 (SWITCHleft, statementright)))
 
 iteration_statement: 
         WHILE LPAREN expression RPAREN statement    
-           (CWhile0 (expression, statement, false, ndi2 (WHILEleft, statementright)))
+           (CWhile (expression, statement, false, ndi2 (WHILEleft, statementright)))
 |       DO statement WHILE LPAREN expression RPAREN SEMI    
-           (CWhile0 (expression, statement, true, ndi2 (DOleft, SEMIright)))
+           (CWhile (expression, statement, true, ndi2 (DOleft, SEMIright)))
 |       FOR LPAREN expression_statement expression_statement RPAREN statement    
-           (CFor0 (Left (case expression_statement1 of CExpr0 (eo,_) => eo), 
-                        (case expression_statement2 of CExpr0 (eo,_) => eo), NONE, statement, 
+           (CFor (Left (case expression_statement1 of CExpr (eo,_) => eo), 
+                        (case expression_statement2 of CExpr (eo,_) => eo), NONE, statement, 
                    ndi2 (FORleft, statementright)))
 |       FOR LPAREN expression_statement expression_statement expression RPAREN statement    
-           (CFor0 (Left (case expression_statement1 of CExpr0 (eo,_) => eo), 
-                   (case expression_statement2 of CExpr0 (eo,_) => eo), SOME expression, statement, 
+           (CFor (Left (case expression_statement1 of CExpr (eo,_) => eo), 
+                   (case expression_statement2 of CExpr (eo,_) => eo), SOME expression, statement, 
                    ndi2 (FORleft, statementright)))
 |       FOR LPAREN declaration expression_statement RPAREN statement    
-           (CFor0 (Right declaration, (case expression_statement of CExpr0 (eo,_) => eo), 
+           (CFor (Right declaration, (case expression_statement of CExpr (eo,_) => eo), 
                    NONE, statement, ndi2 (FORleft, statementright)))
 |       FOR LPAREN declaration expression_statement expression RPAREN statement    
-           (CFor0 (Right declaration, (case expression_statement of CExpr0 (eo,_) => eo), 
+           (CFor (Right declaration, (case expression_statement of CExpr (eo,_) => eo), 
                    SOME expression, statement, ndi2 (FORleft, statementright)))
 
 jump_statement: 
         GOTO IDENTIFIER SEMI    
-           (CGoto0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi2 (GOTOleft, SEMIright)))
+           (CGoto (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi2 (GOTOleft, SEMIright)))
 |       CONTINUE SEMI    
-           (CCont0 (ndi2 (CONTINUEleft, SEMIright)))
+           (CCont (ndi2 (CONTINUEleft, SEMIright)))
 |       BREAK SEMI    
-           (CBreak0 (ndi2 (BREAKleft, SEMIright)))
+           (CBreak (ndi2 (BREAKleft, SEMIright)))
 |       RETURN SEMI    
-           (CReturn0 (NONE, ndi2 (RETURNleft, SEMIright)))
+           (CReturn (NONE, ndi2 (RETURNleft, SEMIright)))
 |       RETURN expression SEMI    
-           (CReturn0 (SOME expression, ndi2 (RETURNleft, SEMIright)))
+           (CReturn (SOME expression, ndi2 (RETURNleft, SEMIright)))
 
 translation_unit: 
         external_declaration    
@@ -1582,38 +1582,38 @@ translation_unit:
 
 external_declaration: 
         function_definition    
-           (SOME (CFDefExt0 function_definition))
+           (SOME (CFDefExt function_definition))
 |       declaration    
-           (SOME (CDeclExt0 declaration))
+           (SOME (CDeclExt declaration))
 |       preproc_directive
-           (SOME (CPPExt0 preproc_directive))
+           (SOME (CPPExt preproc_directive))
 
 preproc_directive:
         INCLUDE HEADER_NAME
            (let val system = String.isPrefix "<" HEADER_NAME
                 val name = String.substring (HEADER_NAME, 1, String.size HEADER_NAME - 2)
-            in CPPInclude0 (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright)) end)
+            in CPPInclude (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright)) end)
 |       DEFINE IDENTIFIER ASSIGN constant_expression
-           (CPPDefine0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
+           (CPPDefine (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
                         ndi2 (DEFINEleft, constant_expressionright)))
 |       DEFINE IDENTIFIER LPAREN RPAREN ASSIGN constant_expression
-           (CPPDefineFun0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), [], constant_expression,
+           (CPPDefineFun (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), [], constant_expression,
                            ndi2 (DEFINEleft, constant_expressionright)))
 |       DEFINE IDENTIFIER LPAREN identifier_list RPAREN ASSIGN constant_expression
-           (CPPDefineFun0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), identifier_list, constant_expression,
+           (CPPDefineFun (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), identifier_list, constant_expression,
                            ndi2 (DEFINEleft, constant_expressionright)))
 |       IFDEF IDENTIFIER external_declaration_list ENDIF
-           (CPPIfdef0 (false, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
+           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
                        ndi2 (IFDEFleft, ENDIFright)))
 |       IFDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
-           (CPPIfdef0 (false, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft),
+           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft),
                        external_declaration_list1, external_declaration_list2,
                        ndi2 (IFDEFleft, ENDIFright)))
 |       IFNDEF IDENTIFIER external_declaration_list ENDIF
-           (CPPIfdef0 (true, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
+           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
                        ndi2 (IFNDEFleft, ENDIFright)))
 |       IFNDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
-           (CPPIfdef0 (true, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft),
+           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft),
                        external_declaration_list1, external_declaration_list2,
                        ndi2 (IFNDEFleft, ENDIFright)))
 
@@ -1623,10 +1623,10 @@ external_declaration_list:    ([])
 
 function_definition: 
         declaration_specifiers declarator declaration_list compound_statement    
-           (CFunDef0 (declaration_specifiers, declarator, declaration_list, compound_statement, 
+           (CFunDef (declaration_specifiers, declarator, declaration_list, compound_statement, 
                       ndi2 (declaration_specifiersleft, compound_statementright)))
 |       declaration_specifiers declarator compound_statement    
-           (CFunDef0 (declaration_specifiers, declarator, [], compound_statement, 
+           (CFunDef (declaration_specifiers, declarator, [], compound_statement, 
                       ndi2 (declaration_specifiersleft, compound_statementright)))
 
 declaration_list: 

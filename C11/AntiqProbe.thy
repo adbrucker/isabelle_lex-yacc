@@ -80,15 +80,15 @@ fun pp_comment (C_Ast.Raw_txt frags) =
       "Antiquotation tag=" ^ tag ^ " level=" ^ Int.toString level ^ " body=[" ^ body ^ "]"
 
 fun comments_of_ni ni = (case ni of
-      C_Ast.OnlyPos0 _ => [] | C_Ast.NodeInfo0 (cs, _) => cs)
+      C_Ast.OnlyPos _ => [] | C_Ast.NodeInfo (cs, _) => cs)
 
-fun comments_of (C_Ast.CDeclExt0 d) = comments_of_ni (C_Ast.nodeInfo_of_CDecl d)
-  | comments_of (C_Ast.CFDefExt0 f) = comments_of_ni (C_Ast.nodeInfo_of_CFunDef f)
+fun comments_of (C_Ast.CDeclExt d) = comments_of_ni (C_Ast.nodeInfo_of_CDecl d)
+  | comments_of (C_Ast.CFDefExt f) = comments_of_ni (C_Ast.nodeInfo_of_CFunDef f)
   | comments_of _ = []
 
 fun dump_unit key =
   let
-    val SOME (C_Ast.Units [C_Ast.CTranslUnit0 (eds, _)]) = get_ast key @{theory}
+    val SOME (C_Ast.Units [C_Ast.CTranslUnit (eds, _)]) = get_ast key @{theory}
     val all = List.concat (map comments_of eds)
   in String.concatWith "\n" (map pp_comment all) end
 

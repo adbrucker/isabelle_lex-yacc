@@ -196,25 +196,31 @@ text\<open>
   see \<open>store_root\<close>, below, for the key format and the counter update.
 \<close>
 ML\<open>
-datatype ident_kind = Global of (Position.T C_Ast.cDeclaration)
-                    | Local  of (Position.T C_Ast.cDeclaration)
+
+type pos = Position.T
+
+datatype ident_kind = Global of (pos C_Ast.cDeclaration)
+                    | Local  of (pos C_Ast.cDeclaration)
                     | Enum
-                    | Parameter of (Position.T C_Ast.cDeclaration) (* really  ? *)
+                    | Parameter of (pos C_Ast.cDeclaration) (* really  ? *)
                     | Cpp_const
                     | Cpp_macro
 
 datatype type_ident = NOT_YET_DEFINED
 
+type 'a type_antiq_fun = 'a * pos C_Ast.root * int -> string ->  theory -> theory
+
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
-                       c_antiq : (string -> cenv ->  theory -> theory) Symtab.table,
+                       c_antiq : (cenv type_antiq_fun) Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
 
 structure CEnv = Generic_Data
   (type T = cenv
    val empty = mk{idents  = Symtab.empty,
                   types   = Symtab.empty ,
-                  c_antiq = Symtab.empty, units = 0}
+                  c_antiq = Symtab.empty, 
+                  units = 0}
    val merge = K empty) (* or something with merge ? Necessary if non-single-threaded use wanted*)
 
 structure CAst_Store = Generic_Data
@@ -245,6 +251,27 @@ fun get_ast key thy =
     let val store = CAst_Store.get (Context.Theory thy)
     in  Symtab.lookup store key end 
 
+fun store_antiq (name, antiq_fun) thy =
+    let
+       val mk {idents, types, c_antiq, units} = CEnv.get (Context.Theory thy)
+       val c_antiq' = Symtab.update(name, antiq_fun) c_antiq
+       val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq', units = units}
+    in thy |> Context.theory_map (CEnv.put cenv')
+    end
+
+fun get_antiq name thy = 
+    let
+       val mk {c_antiq, ...} = CEnv.get (Context.Theory thy)
+    in Symtab.lookup c_antiq name end 
+
+\<close>
+
+subsection\<open>Analyse and Eval\<close>
+
+ML\<open>
+
+fun analyse_and_eval (ast : pos C_Ast.root) thy = thy
+
 \<close>
 
 
@@ -271,7 +298,7 @@ ML\<open>
    pretty-printer - just enough to confirm, from "c11" and friends, that a
    real AST (positions and comment counts included) came out the other end,
    not only that parsing succeeded. *)
-fun string_of_root (C_Ast.Id (C_Ast.Ident0 (s, _, ndI))) =
+fun string_of_root (C_Ast.Id (C_Ast.Ident (s, _, ndI))) =
       "Id " ^ s ^ " " ^ Position.here (C_Ast.pos_of_NodeInfo ndI)
   | string_of_root (C_Ast.Expr e) =
       "Expr " ^ Position.here (C_Ast.pos_of_CExpr e)
