@@ -208,8 +208,14 @@
    embedded in C comments, e.g. for Isabelle_C-style annotations), since a
    parser needs somewhere to attach them once it has to track them at all:
    "'a comment = Raw_txt of (string * 'a) list | Antiquotation of
-   {tag : string * 'a} * {cartouche : string * 'a}" - each piece of text
-   tagged with its own position. "nodeInfo" was redesigned around this:
+   {tag : string * 'a} * {level : int} * {cartouche : string * 'a}" - each
+   piece of text tagged with its own position, "level" an optional integer
+   written as "@tag(level) ..." (0 when omitted) distinguishing several uses
+   of the same tag, and "cartouche" the antiquotation's body text - written
+   either as a nested Isabelle cartouche "\<open>...\<close>" or, equivalently, as a
+   double-quoted string "..." (the field keeps its original name for either
+   spelling, since both denote the same body). "nodeInfo" was redesigned
+   around this:
    instead of the old "OnlyPos0 of 'a * ('a * int) | NodeInfo0 of 'a *
    ('a * int) * namea" pair-of-positions-plus-a-name shape, it is now
    "'a nodeInfo = OnlyPos0 of 'a | NodeInfo0 of 'a comment list * 'a" - a
@@ -338,7 +344,7 @@ structure C_Ast : sig
   datatype cChar = CChar0 of char * bool | CChars0 of char list * bool
 
   datatype 'a comment = Raw_txt of (string*'a) list  
-                      | Antiquotation of {tag : string * 'a} * {cartouche : string * 'a} 
+                      | Antiquotation of {tag : string*'a} * {level:int} * {cartouche:string * 'a} 
 
   datatype 'a nodeInfo = OnlyPos0 of 'a | NodeInfo0 of 'a comment list * 'a
 
@@ -532,9 +538,27 @@ structure C_Ast : sig
 
   datatype clangCVersion = ClangCVersion0 of string
 
-  datatype 'a cExternalDeclaration = CDeclExt0 of 'a cDeclaration 
-                                   | CFDefExt0 of 'a cFunctionDef 
-                                   | CAsmExt0 of 'a cStringLiteral * 'a nodeInfo
+  (* A small, genuinely syntactic slice of the preprocessor (ISO C11 6.10,
+     Annex A.3) kept as real AST nodes instead of being discarded - see the
+     "preproc_directive" note in C11_Parser.thy for exactly which forms are
+     recognized. "CPPInclude0"'s "bool" is true for "<...>" (system), false
+     for "\"...\"" (local); its "string" is the bare header name with the
+     delimiters already stripped. "CPPDefine0"/"CPPDefineFun0" hold this
+     fragment's simplified "#define name = expr"/"#define name(args) = expr"
+     (a single expression, not a replacement-token sequence). "CPPIfdef0"'s
+     "bool" is true for "#ifndef", false for "#ifdef"; its two declaration
+     lists are the "#else" branch and the then-branch, the latter empty when
+     there is no "#else". *)
+  datatype 'a cPreprocDirective = CPPInclude0 of bool * string * 'a nodeInfo
+                                 | CPPDefine0 of 'a ident * 'a cExpression * 'a nodeInfo
+                                 | CPPDefineFun0 of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
+                                 | CPPIfdef0 of bool * 'a ident * 'a cExternalDeclaration list
+                                              * 'a cExternalDeclaration list * 'a nodeInfo
+
+  and 'a cExternalDeclaration = CDeclExt0 of 'a cDeclaration
+                               | CFDefExt0 of 'a cFunctionDef
+                               | CAsmExt0 of 'a cStringLiteral * 'a nodeInfo
+                               | CPPExt0 of 'a cPreprocDirective
 
   datatype 'a cTranslationUnit = CTranslUnit0 of 'a cExternalDeclaration list * 'a nodeInfo
 
@@ -575,14 +599,27 @@ structure C_Ast : sig
 
   val nodeInfo_of_CExtDecl : 'a cExternalDeclaration -> 'a nodeInfo
   val pos_of_CExtDecl      : 'a cExternalDeclaration -> 'a
+  val nodeInfo_of_CPPDirective : 'a cPreprocDirective -> 'a nodeInfo
+  val pos_of_CPPDirective      : 'a cPreprocDirective -> 'a
 
 
   val consts_value : string
 
-  datatype 'a root = Id of 'a ident 
-                   | Expr of 'a cExpression 
-                   | Stmt of 'a cStatement 
+  datatype 'a root = Id of 'a ident
+                   | Expr of 'a cExpression
+                   | Stmt of 'a cStatement
                    | Units of 'a cTranslationUnit list
+
+  (* Small, indentation-aware pretty-printer for "root" and the pieces it is
+     built from - not a faithful, re-parseable C unparser (no minimal
+     parenthesization by operator precedence; declarators/types are a
+     simple "name : shape" summary rather than genuine C declarator syntax).
+     Good enough to read back what was parsed at a glance. *)
+  val pp_root : 'a root -> string
+  val pp_expression : 'a cExpression -> string
+  val pp_declaration : 'a cDeclaration -> string
+  val pp_statement : int -> 'a cStatement -> string
+  val pp_translationUnit : 'a cTranslationUnit -> string
 
 end = struct
 
@@ -593,7 +630,7 @@ datatype cChar = CChar0 of char * bool | CChars0 of char list * bool;
 datatype 'a flags = Flags0 of int;
 
 datatype 'a comment = Raw_txt of (string*'a) list  
-                    | Antiquotation of {tag : string * 'a} * {cartouche : string * 'a} 
+                    | Antiquotation of {tag : string * 'a} * {level : int} * {cartouche : string * 'a} 
 
 datatype 'a nodeInfo = OnlyPos0 of 'a | NodeInfo0 of 'a comment list * 'a
 
@@ -671,9 +708,16 @@ and 'a cTypeSpecifier = CVoidType0 of 'a nodeInfo | CCharType0 of 'a nodeInfo | 
 
 datatype clangCVersion = ClangCVersion0 of string;
 
-datatype 'a cExternalDeclaration = CDeclExt0 of 'a cDeclaration 
-                                 | CFDefExt0 of 'a cFunctionDef 
-                                 | CAsmExt0 of 'a cStringLiteral * 'a nodeInfo;
+datatype 'a cPreprocDirective = CPPInclude0 of bool * string * 'a nodeInfo
+                               | CPPDefine0 of 'a ident * 'a cExpression * 'a nodeInfo
+                               | CPPDefineFun0 of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
+                               | CPPIfdef0 of bool * 'a ident * 'a cExternalDeclaration list
+                                            * 'a cExternalDeclaration list * 'a nodeInfo
+
+and 'a cExternalDeclaration = CDeclExt0 of 'a cDeclaration
+                             | CFDefExt0 of 'a cFunctionDef
+                             | CAsmExt0 of 'a cStringLiteral * 'a nodeInfo
+                             | CPPExt0 of 'a cPreprocDirective;
 
 datatype 'a cTranslationUnit = CTranslUnit0 of 'a cExternalDeclaration list * 'a nodeInfo;
 
@@ -873,11 +917,278 @@ fun statement0_case l s =
 
 fun stringLiteral x = (fn CStrLit0 (CString0 (s, _), _) => replace_integersa (fn xa => (if xa = (10 : IntInf.int) then "\092n" else (STa [xa]))) s) x;
 
-fun nodeInfo_of_CExtDecl x = (fn a => (case a of CDeclExt0 aa => nodeInfo_of_CDecl aa | CFDefExt0 aa => nodeInfo_of_CFunDef aa | CAsmExt0 (_, ndI) => ndI)) x;
+fun nodeInfo_of_CPPDirective x = (fn a => (case a of
+    CPPInclude0 (_, _, ndI) => ndI
+  | CPPDefine0 (_, _, ndI) => ndI
+  | CPPDefineFun0 (_, _, _, ndI) => ndI
+  | CPPIfdef0 (_, _, _, _, ndI) => ndI)) x;
+
+fun pos_of_CPPDirective x = (pos_of_NodeInfo o nodeInfo_of_CPPDirective) x;
+
+fun nodeInfo_of_CExtDecl x = (fn a => (case a of CDeclExt0 aa => nodeInfo_of_CDecl aa | CFDefExt0 aa => nodeInfo_of_CFunDef aa | CAsmExt0 (_, ndI) => ndI | CPPExt0 aa => nodeInfo_of_CPPDirective aa)) x;
 
 fun pos_of_CExtDecl x = (pos_of_NodeInfo o nodeInfo_of_CExtDecl) x;
 
 val consts_value : string = "(_)";
+
+(* ============================================================================
+   Small pretty-printer for "root" values (Id/Expr/Stmt/Units) and the
+   expression/declaration/statement machinery they're built from. Not a
+   faithful, re-parseable C unparser - no minimal-parenthesization by operator
+   precedence (every binary/ternary/cast expression is fully parenthesized
+   instead, to stay unambiguous without tracking precedence tables), and
+   declarators/types are rendered in a simple, readable "name : shape" form
+   rather than reconstructing genuine C declarator syntax (the very thing
+   a pointer-to-array declarator, star inside the parens and the array
+   bound outside, makes famously awkward - see the "declarator inversion"
+   note elsewhere in this file's history). Good enough to read back what was
+   parsed at a glance; not a substitute for the real grammar.
+   ========================================================================= *)
+
+fun pp_indent n = String.implode (List.tabulate (2 * n, fn _ => #" "));
+
+fun pp_join sep f xs = String.concatWith sep (List.map f xs);
+
+fun pp_option f NONE = ""
+  | pp_option f (SOME x) = f x;
+
+fun pp_unaryOp CPreIncOp0 = "++" | pp_unaryOp CPreDecOp0 = "--"
+  | pp_unaryOp CPostIncOp0 = "++" | pp_unaryOp CPostDecOp0 = "--"
+  | pp_unaryOp CAdrOp0 = "&" | pp_unaryOp CIndOp0 = "*"
+  | pp_unaryOp CPlusOp0 = "+" | pp_unaryOp CMinOp0 = "-"
+  | pp_unaryOp CCompOp0 = "~" | pp_unaryOp CNegOp0 = "!";
+
+fun pp_binaryOp CMulOp0 = "*" | pp_binaryOp CDivOp0 = "/" | pp_binaryOp CRmdOp0 = "%"
+  | pp_binaryOp CAddOp0 = "+" | pp_binaryOp CSubOp0 = "-"
+  | pp_binaryOp CShlOp0 = "<<" | pp_binaryOp CShrOp0 = ">>"
+  | pp_binaryOp CLeOp0 = "<" | pp_binaryOp CGrOp0 = ">"
+  | pp_binaryOp CLeqOp0 = "<=" | pp_binaryOp CGeqOp0 = ">="
+  | pp_binaryOp CEqOp0 = "==" | pp_binaryOp CNeqOp0 = "!="
+  | pp_binaryOp CAndOp0 = "&" | pp_binaryOp CXorOp0 = "^" | pp_binaryOp COrOp0 = "|"
+  | pp_binaryOp CLndOp0 = "&&" | pp_binaryOp CLorOp0 = "||";
+
+fun pp_assignOp CAssignOp0 = "=" | pp_assignOp CMulAssOp0 = "*="
+  | pp_assignOp CDivAssOp0 = "/=" | pp_assignOp CRmdAssOp0 = "%="
+  | pp_assignOp CAddAssOp0 = "+=" | pp_assignOp CSubAssOp0 = "-="
+  | pp_assignOp CShlAssOp0 = "<<=" | pp_assignOp CShrAssOp0 = ">>="
+  | pp_assignOp CAndAssOp0 = "&=" | pp_assignOp CXorAssOp0 = "^=" | pp_assignOp COrAssOp0 = "|=";
+
+fun pp_integer (CInteger0 (n, _, _)) = IntInf.toString n;
+fun pp_float (CFloat0 s) = s;
+fun pp_char (CChar0 (c, _)) = "'" ^ Char.toString c ^ "'"
+  | pp_char (CChars0 (cs, _)) = "'" ^ String.implode cs ^ "'";
+fun pp_string (CString0 (s, _)) = "\"" ^ s ^ "\"";
+
+fun pp_constant (CIntConst0 (i, _)) = pp_integer i
+  | pp_constant (CCharConst0 (c, _)) = pp_char c
+  | pp_constant (CFloatConst0 (f, _)) = pp_float f
+  | pp_constant (CStrConst0 (s, _)) = pp_string s;
+
+fun pp_stringLiteral (CStrLit0 (s, _)) = pp_string s;
+
+fun pp_structTag CStructTag0 = "struct" | pp_structTag CUnionTag0 = "union";
+
+(* Declarators/types: a simple, readable summary rather than genuine C
+   syntax - see the top-of-section note. *)
+fun pp_derived (CPtrDeclr0 _) = "*"
+  | pp_derived (CArrDeclr0 (_, CNoArrSize0 _, _)) = "[]"
+  | pp_derived (CArrDeclr0 (_, CArrSize0 (_, e), _)) = "[" ^ pp_expression e ^ "]"
+  | pp_derived (CFunDeclr0 (Left ids, _, _)) = "(" ^ pp_join ", " ident ids ^ ")"
+  | pp_derived (CFunDeclr0 (Right (params, has_ellipsis), _, _)) =
+      "(" ^ pp_join ", " pp_declaration params ^
+      (if has_ellipsis then (if null params then "..." else ", ...") else "") ^ ")"
+
+and pp_declarator (CDeclr0 (id_opt, derived, _, _, _)) =
+  (* A leading run of pointers prints as a prefix, e.g. "*name", with any
+     remaining array/function suffixes staying after the name, e.g.
+     "name[]" or "name()" - the common case. A pointer after a suffix,
+     i.e. a pointer to an array or a function, is not reconstructed
+     correctly, same known limitation as the parser's own declarator
+     handling - see the "declarator inversion" note in C11_Parser.thy. *)
+  let
+    fun is_ptr (CPtrDeclr0 _) = true | is_ptr _ = false
+    fun split_prefix [] = ([], [])
+      | split_prefix (d :: ds) =
+          if is_ptr d
+          then let val (ptrs, rest) = split_prefix ds in (d :: ptrs, rest) end
+          else ([], d :: ds)
+    val (ptrs, rest) = split_prefix derived
+  in
+    pp_join "" pp_derived ptrs ^ pp_option ident id_opt ^ pp_join "" pp_derived rest
+  end
+
+and pp_typeSpecifier (CVoidType0 _) = "void"
+  | pp_typeSpecifier (CCharType0 _) = "char"
+  | pp_typeSpecifier (CShortType0 _) = "short"
+  | pp_typeSpecifier (CIntType0 _) = "int"
+  | pp_typeSpecifier (CLongType0 _) = "long"
+  | pp_typeSpecifier (CFloatType0 _) = "float"
+  | pp_typeSpecifier (CDoubleType0 _) = "double"
+  | pp_typeSpecifier (CSignedType0 _) = "signed"
+  | pp_typeSpecifier (CUnsigType0 _) = "unsigned"
+  | pp_typeSpecifier (CBoolType0 _) = "_Bool"
+  | pp_typeSpecifier (CComplexType0 _) = "_Complex"
+  | pp_typeSpecifier (CInt128Type0 _) = "__int128"
+  | pp_typeSpecifier (CSUType0 (CStruct0 (tag, id_opt, _, _, _), _)) =
+      pp_structTag tag ^ pp_option (fn i => " " ^ ident i) id_opt
+  | pp_typeSpecifier (CEnumType0 (CEnum0 (id_opt, _, _, _), _)) =
+      "enum" ^ pp_option (fn i => " " ^ ident i) id_opt
+  | pp_typeSpecifier (CTypeDef0 (id, _)) = ident id
+  | pp_typeSpecifier (CTypeOfExpr0 (e, _)) = "typeof(" ^ pp_expression e ^ ")"
+  | pp_typeSpecifier (CTypeOfType0 (d, _)) = "typeof(" ^ pp_declaration d ^ ")"
+  | pp_typeSpecifier (CAtomicType0 (d, _)) = "_Atomic(" ^ pp_declaration d ^ ")"
+
+and pp_typeQualifier (CConstQual0 _) = "const"
+  | pp_typeQualifier (CVolatQual0 _) = "volatile"
+  | pp_typeQualifier (CRestrQual0 _) = "restrict"
+  | pp_typeQualifier (CAtomicQual0 _) = "_Atomic"
+  | pp_typeQualifier (CAttrQual0 _) = "__attribute__"
+  | pp_typeQualifier (CNullableQual0 _) = "_Nullable"
+  | pp_typeQualifier (CNonnullQual0 _) = "_Nonnull"
+
+and pp_storageSpecifier (CAuto0 _) = "auto"
+  | pp_storageSpecifier (CRegister0 _) = "register"
+  | pp_storageSpecifier (CStatic0 _) = "static"
+  | pp_storageSpecifier (CExtern0 _) = "extern"
+  | pp_storageSpecifier (CTypedef0 _) = "typedef"
+  | pp_storageSpecifier (CThread0 _) = "_Thread_local"
+
+and pp_functionSpecifier (CInlineQual0 _) = "inline"
+  | pp_functionSpecifier (CNoreturnQual0 _) = "_Noreturn"
+
+and pp_alignmentSpecifier (CAlignAsType0 (d, _)) = "_Alignas(" ^ pp_declaration d ^ ")"
+  | pp_alignmentSpecifier (CAlignAsExpr0 (e, _)) = "_Alignas(" ^ pp_expression e ^ ")"
+
+and pp_declarationSpecifier (CStorageSpec0 s) = pp_storageSpecifier s
+  | pp_declarationSpecifier (CTypeSpec0 s) = pp_typeSpecifier s
+  | pp_declarationSpecifier (CTypeQual0 s) = pp_typeQualifier s
+  | pp_declarationSpecifier (CFunSpec0 s) = pp_functionSpecifier s
+  | pp_declarationSpecifier (CAlignSpec0 s) = pp_alignmentSpecifier s
+
+and pp_specifiers specs = pp_join " " pp_declarationSpecifier specs
+
+and pp_declaration (CDecl0 (specs, dis, _)) =
+      pp_specifiers specs ^
+      (if null dis then "" else " " ^ pp_join ", " pp_init_declarator dis)
+  | pp_declaration (CStaticAssert0 (e, s, _)) =
+      "_Static_assert(" ^ pp_expression e ^ ", " ^ pp_stringLiteral s ^ ")"
+
+and pp_init_declarator ((declr_opt, init_opt), width_opt) =
+  pp_option pp_declarator declr_opt ^
+  pp_option (fn i => " = " ^ pp_initializer i) init_opt ^
+  pp_option (fn e => " : " ^ pp_expression e) width_opt
+
+and pp_partDesignator (CArrDesig0 (e, _)) = "[" ^ pp_expression e ^ "]"
+  | pp_partDesignator (CMemberDesig0 (id, _)) = "." ^ ident id
+  | pp_partDesignator (CRangeDesig0 (e1, e2, _)) =
+      "[" ^ pp_expression e1 ^ " ... " ^ pp_expression e2 ^ "]"
+
+and pp_init_pair (desigs, init) =
+  (if null desigs then "" else pp_join "" pp_partDesignator desigs ^ " = ") ^ pp_initializer init
+
+and pp_initializer (CInitExpr0 (e, _)) = pp_expression e
+  | pp_initializer (CInitList0 (inits, _)) = "{" ^ pp_join ", " pp_init_pair inits ^ "}"
+
+and pp_builtinThing (CBuiltinVaArg0 (e, d, _)) =
+      "__builtin_va_arg(" ^ pp_expression e ^ ", " ^ pp_declaration d ^ ")"
+  | pp_builtinThing (CBuiltinOffsetOf0 (d, desigs, _)) =
+      "__builtin_offsetof(" ^ pp_declaration d ^ ", " ^ pp_join "" pp_partDesignator desigs ^ ")"
+  | pp_builtinThing (CBuiltinTypesCompatible0 (d1, d2, _)) =
+      "__builtin_types_compatible_p(" ^ pp_declaration d1 ^ ", " ^ pp_declaration d2 ^ ")"
+
+and pp_generic_assoc (NONE, e) = "default: " ^ pp_expression e
+  | pp_generic_assoc (SOME d, e) = pp_declaration d ^ ": " ^ pp_expression e
+
+and pp_expression e = (case e of
+    CComma0 (es, _) => pp_join ", " pp_expression es
+  | CAssign0 (op_, e1, e2, _) => pp_expression e1 ^ " " ^ pp_assignOp op_ ^ " " ^ pp_expression e2
+  | CCond0 (e1, oe2, e3, _) =>
+      "(" ^ pp_expression e1 ^ " ? " ^
+      (case oe2 of NONE => "" | SOME e2 => pp_expression e2 ^ " ") ^ ": " ^ pp_expression e3 ^ ")"
+  | CBinary0 (op_, e1, e2, _) => "(" ^ pp_expression e1 ^ " " ^ pp_binaryOp op_ ^ " " ^ pp_expression e2 ^ ")"
+  | CCast0 (d, e1, _) => "(" ^ pp_declaration d ^ ") " ^ pp_expression e1
+  | CUnary0 (op_, e1, _) => pp_unaryOp op_ ^ pp_expression e1
+  | CSizeofExpr0 (e1, _) => "sizeof(" ^ pp_expression e1 ^ ")"
+  | CSizeofType0 (d, _) => "sizeof(" ^ pp_declaration d ^ ")"
+  | CAlignofExpr0 (e1, _) => "_Alignof(" ^ pp_expression e1 ^ ")"
+  | CAlignofType0 (d, _) => "_Alignof(" ^ pp_declaration d ^ ")"
+  | CComplexReal0 (e1, _) => "__real__ " ^ pp_expression e1
+  | CComplexImag0 (e1, _) => "__imag__ " ^ pp_expression e1
+  | CIndex0 (e1, e2, _) => pp_expression e1 ^ "[" ^ pp_expression e2 ^ "]"
+  | CCall0 (e1, es, _) => pp_expression e1 ^ "(" ^ pp_join ", " pp_expression es ^ ")"
+  | CMember0 (e1, id, arrow, _) => pp_expression e1 ^ (if arrow then "->" else ".") ^ ident id
+  | CVar0 (id, _) => ident id
+  | CConst0 c => pp_constant c
+  | CCompoundLit0 (d, inits, _) => "(" ^ pp_declaration d ^ ") {" ^ pp_join ", " pp_init_pair inits ^ "}"
+  | CGenericSelection0 (e1, assocs, _) =>
+      "_Generic(" ^ pp_expression e1 ^ ", " ^ pp_join ", " pp_generic_assoc assocs ^ ")"
+  | CStatExpr0 (s, _) => "({ " ^ pp_statement 0 s ^ " })"
+  | CLabAddrExpr0 (id, _) => "&&" ^ ident id
+  | CBuiltinExpr0 b => pp_builtinThing b)
+
+and pp_statement n s = (case s of
+    CLabel0 (id, s1, _, _) => ident id ^ ":\n" ^ pp_statement n s1
+  | CCase0 (e, s1, _) => pp_indent n ^ "case " ^ pp_expression e ^ ":\n" ^ pp_statement (n + 1) s1
+  | CCases0 (e1, e2, s1, _) =>
+      pp_indent n ^ "case " ^ pp_expression e1 ^ " ... " ^ pp_expression e2 ^ ":\n" ^ pp_statement (n + 1) s1
+  | CDefault0 (s1, _) => pp_indent n ^ "default:\n" ^ pp_statement (n + 1) s1
+  | CExpr0 (eo, _) => pp_indent n ^ pp_option pp_expression eo ^ ";"
+  | CCompound0 (_, items, _) =>
+      pp_indent n ^ "{\n" ^
+      pp_join "\n" (pp_blockItem (n + 1)) items ^
+      "\n" ^ pp_indent n ^ "}"
+  | CIf0 (e, s1, os2, _) =>
+      pp_indent n ^ "if (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1 ^
+      (case os2 of NONE => "" | SOME s2 => "\n" ^ pp_indent n ^ "else\n" ^ pp_statement (n + 1) s2)
+  | CSwitch0 (e, s1, _) => pp_indent n ^ "switch (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1
+  | CWhile0 (e, s1, is_do, _) =>
+      if is_do
+      then pp_indent n ^ "do\n" ^ pp_statement (n + 1) s1 ^ "\n" ^ pp_indent n ^ "while (" ^ pp_expression e ^ ");"
+      else pp_indent n ^ "while (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1
+  | CFor0 (init, cond, step, s1, _) =>
+      pp_indent n ^ "for (" ^
+      (case init of Left eo => pp_option pp_expression eo | Right d => pp_declaration d) ^ "; " ^
+      pp_option pp_expression cond ^ "; " ^ pp_option pp_expression step ^ ")\n" ^
+      pp_statement (n + 1) s1
+  | CGoto0 (id, _) => pp_indent n ^ "goto " ^ ident id ^ ";"
+  | CGotoPtr0 (e, _) => pp_indent n ^ "goto *" ^ pp_expression e ^ ";"
+  | CCont0 _ => pp_indent n ^ "continue;"
+  | CBreak0 _ => pp_indent n ^ "break;"
+  | CReturn0 (eo, _) => pp_indent n ^ "return" ^ pp_option (fn e => " " ^ pp_expression e) eo ^ ";"
+  | CAsm0 _ => pp_indent n ^ "__asm__(...);")
+
+and pp_blockItem n (CBlockStmt0 s) = pp_statement n s
+  | pp_blockItem n (CBlockDecl0 d) = pp_indent n ^ pp_declaration d ^ ";"
+  | pp_blockItem n (CNestedFunDef0 f) = pp_functionDef n f
+
+and pp_functionDef n (CFunDef0 (specs, declr, decls, body, _)) =
+  pp_indent n ^ pp_specifiers specs ^ " " ^ pp_declarator declr ^
+  (if null decls then "" else " " ^ pp_join " " pp_declaration decls) ^ "\n" ^
+  pp_statement n body
+
+and pp_externalDeclaration (CDeclExt0 d) = pp_declaration d ^ ";"
+  | pp_externalDeclaration (CFDefExt0 f) = pp_functionDef 0 f
+  | pp_externalDeclaration (CAsmExt0 (s, _)) = "__asm__(" ^ pp_stringLiteral s ^ ");"
+  | pp_externalDeclaration (CPPExt0 d) = pp_preprocDirective d
+
+and pp_preprocDirective (CPPInclude0 (system, name, _)) =
+      "#include " ^ (if system then "<" ^ name ^ ">" else "\"" ^ name ^ "\"")
+  | pp_preprocDirective (CPPDefine0 (id, e, _)) =
+      "#define " ^ ident id ^ " = " ^ pp_expression e
+  | pp_preprocDirective (CPPDefineFun0 (id, params, e, _)) =
+      "#define " ^ ident id ^ "(" ^ pp_join ", " ident params ^ ") = " ^ pp_expression e
+  | pp_preprocDirective (CPPIfdef0 (negate, id, thn, els, _)) =
+      "#" ^ (if negate then "ifndef " else "ifdef ") ^ ident id ^ "\n" ^
+      pp_join "\n" pp_externalDeclaration thn ^
+      (if null els then "" else "\n#else\n" ^ pp_join "\n" pp_externalDeclaration els) ^
+      "\n#endif"
+
+and pp_translationUnit (CTranslUnit0 (eds, _)) = pp_join "\n\n" pp_externalDeclaration eds;
+
+fun pp_root (Id id) = ident id
+  | pp_root (Expr e) = pp_expression e
+  | pp_root (Stmt s) = pp_statement 0 s
+  | pp_root (Units us) = pp_join "\n\n" pp_translationUnit us;
 
 end; (*struct C_Ast*)
 

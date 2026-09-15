@@ -58,11 +58,10 @@ text\<open>
   suffix-binding precedence (the classic C "declarator inversion" problem, needing a
   genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
   \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
-  language-c - has no separate case for it; and preprocessor directives are recognized
-  syntactically but do not become real AST nodes (\<open>external_declaration\<close> is a
-  \<^verbatim>\<open>Position.T cExternalDeclaration option\<close>, \<open>NONE\<close> for a directive, filtered out when
-  a translation unit's declaration list is assembled) - c_ast.ML's \<open>cExternalDeclaration\<close>
-  has no slot for one, and adding one was out of scope for this pass. Constant-literal
+  language-c - has no separate case for it; and a small fragment of the C preprocessor is
+  recognized directly and kept as genuine AST nodes rather than being silently discarded -
+  see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
+  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
   below. Following the reference grammar's own note, identifiers are never lexed as
@@ -122,17 +121,30 @@ text\<open>
     comments carry Isar-level \<^emph>\<open>annotation commands\<close> (\<open>ensures\<close>, \<open>invariant\<close>, a
     user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax tree
     and executed as the file is processed. Here, the lexer instead \<^emph>\<open>lexically\<close>
-    recognizes the shape \<open>@tag \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag optionally followed
-    by whitespace, and, independently, a properly-nested Isabelle cartouche
-    \<open>\<open>\<dots>\<close>\<close> - anywhere inside a comment, reporting both as PIDE markup
-    (\<^ML>\<open>Markup.antiquote\<close> / \<^ML>\<open>Markup.cartouche\<close>) instead of discarding them as
-    opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer has no notion of
-    an annotation command language, only of where one \<^emph>\<open>could\<close> be hooked in later.
-    Since a cartouche can nest, recognizing it needs more than one regular-expression
-    rule; see the \<open>ANTIQ\<close> lexer state below for how a small amount of \<^verbatim>\<open>lex_user_declarations\<close>
-    state (a depth counter) turns this into a well-defined \<^emph>\<open>non-expert-mode\<close>
-    ml-lex specification - no \<open>[expert]\<close> switch turned out to be necessary after all.
-    Comments and antiquotations are, beyond that markup, now also genuinely
+    recognizes the shape \<open>@tag(level) \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag, an optional
+    parenthesized integer \<open>level\<close> (\<open>0\<close> when omitted, e.g. plain \<open>@tag \<open>...\<close>\<close>),
+    optionally followed by whitespace, and a body - either a properly-nested Isabelle
+    cartouche \<open>\<open>\<dots>\<close>\<close> or, as an equivalent alternative notation, a double-quoted
+    string \<open>"\<dots>"\<close> - reporting both as PIDE markup (\<^ML>\<open>Markup.antiquote\<close> /
+    \<^ML>\<open>Markup.cartouche\<close> for the cartouche spelling, \<^ML>\<open>Markup.antiquote\<close> alone
+    for the tag+string spelling since it is matched as a single token) instead of
+    discarding them as opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer
+    has no notion of an annotation command language, only of where one \<^emph>\<open>could\<close> be
+    hooked in later. Since a cartouche can nest, recognizing it needs more than one
+    regular-expression rule and a small amount of \<^verbatim>\<open>lex_user_declarations\<close> state (a
+    depth counter); see the \<open>ANTIQ\<close> lexer state below for how that turns into a
+    well-defined \<^emph>\<open>non-expert-mode\<close> ml-lex specification - no \<open>[expert]\<close> switch
+    turned out to be necessary after all. A double-quoted body, by contrast, cannot
+    nest, so \<open>@tag(level) "..."\<close> is matched by a single, longer regular-expression
+    alternative competing with the plain \<open>@tag(level)\<close> one for the same input -
+    ml-lex's usual longest-match rule then picks the string-body alternative whenever
+    a quote genuinely follows the tag (with only horizontal whitespace in between,
+    never across other text or a newline), and falls back to the plain, bodyless tag
+    match otherwise; this is what keeps an unrelated \<open>"\<close> elsewhere in a comment (an
+    apostrophe-free quotation, say) from ever being mistaken for an antiquotation
+    body - unlike the cartouche form, which (see below) is recognized whenever it
+    occurs in a comment, tag or no tag. Comments and antiquotations are, beyond that
+    markup, now also genuinely
     \<^emph>\<open>registered\<close>: \<^verbatim>\<open>C11_Comments\<close> (defined just above the lexer/parser definition,
     \<^verbatim>\<open>SML_import\<close>ed into the lex/yacc sandbox the same way \<^verbatim>\<open>YaccLib.thy\<close> already
     does for \<^verbatim>\<open>Position\<close>/\<open>Markup\<close>) accumulates raw text and antiquotation fragments as
@@ -284,9 +296,15 @@ fun require_kind check kind_name cmd_name root =
               "; this input parses instead as a " ^ classify root ^ ".")
 
 (* Shared by every accepting command: parse, gate on the expected shape,
-   store under a fresh CAst_Store key, and report both. *)
+   store under a fresh CAst_Store key, and report both. "C11_Comments.reset"
+   clears any comments left pending/attached from a previous parse - "claim"
+   is now non-destructive (see its own comment in C11_Parser.thy), and
+   nothing else ever drains "attached", so without this it would simply grow
+   for the rest of the session; position uniqueness means stale entries can
+   never be *wrongly* matched by a later parse, only wastefully retained. *)
 fun run_c11_kind check kind_name cmd_name source thy =
     let
+      val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
       val res = C11.parse_source ctxt source
     in
@@ -346,6 +364,7 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    "c11", "c11_file" is reserved for a whole translation unit. *)
 fun run_c11_file get_file thy =
     let
+      val _ = C11_Comments.reset ()
       val file = get_file thy
       val source = Token.file_source file
       val ctxt = Proof_Context.init_global thy
@@ -391,6 +410,7 @@ fun quiet_error (s: string, _: Position.T, _: Position.T) = raise Rejected s
 
 fun parse_source_quiet ctxt source =
     let
+      val _ = C11_Comments.reset ()
       val _ = Isabelle_lex_yacc.set source ctxt
       val (input_text, _) = Input.source_content source
       fun invoke lexstream = C11.C11Parser.parse (0, lexstream, quiet_error, ())
@@ -514,8 +534,8 @@ text\<open>
 
 c11\<open>
 int test_arith(void) {
-  int a = 10, b = 3, c;
-  c = a + b - a * b / b % a;
+  int a = 10, b = 3, c; /* @ highlight \<open>hjgfhg\<close> */
+  c = a + b - a * b / b % a ;
   c = (a << 1) >> 1; /* bla */
   c = (a & b) | (a ^ b);
   c = ~a & !b;
@@ -528,6 +548,18 @@ int test_arith(void) {
 \<close>
 
 ML\<open>get_ast "C11#4" @{theory}\<close>
+
+c11\<open>
+int f(int x) {
+  int a = 10, b = 3, c; /* @highlight \<open>\<forall> hjgd@ \<alpha> fhg\<close> */
+  c = a + b - a * b / b % a ;
+  return c;
+}
+\<close>
+
+declare [[ML_print_depth=100]]
+ML\<open>get_ast "C11#5" @{theory}\<close>
+
 
 subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
 c11\<open>
@@ -728,9 +760,15 @@ int a = 0;
 
 text\<open>
   A Frama-C/ACSL-style annotation comment (Isabelle_C's other supported style):
-  bare keywords followed by plain strings, no \<open>@\<close>-tag or cartouche. The lexer
-  does not specially recognize \<open>requires\<close>/\<open>ensures\<close> here - it is simply
-  comment text - but must not choke on it either.
+  each line is introduced by ACSL's own \<open>@\<close> continuation marker, followed by
+  a bare keyword and a plain double-quoted string. Syntactically this is
+  exactly the \<open>@tag "..."\<close> shape from above, so - now that a quoted string is
+  a recognized alternative to a cartouche body - \<open>requires\<close>/\<open>ensures\<close> are
+  picked up as genuine (level-\<open>0\<close>) antiquotation nodes here, tag and body
+  text alike; nothing about \<open>requires\<close>/\<open>ensures\<close> is otherwise special to the
+  lexer - it has no notion of an ACSL command language, and nothing is
+  executed - it just happens that ACSL's own annotation syntax already fits
+  the general tag+string shape this fragment recognizes.
 \<close>
 c11\<open>
 /*@ requires "n >= 0"
@@ -740,6 +778,40 @@ int abs(int n) {
   if (n < 0) return -n;
   return n;
 }
+\<close>
+
+text\<open>
+  The tag may also carry an optional parenthesized integer \<open>level\<close>
+  (\<open>@tag(N) ...\<close>, \<open>0\<close> when omitted), and the body may be written either as
+  a cartouche, as above, or - an equivalent alternative notation - as a
+  double-quoted string \<open>@tag(N) "..."\<close>; both spellings are recorded
+  identically in the AST (same tag, level, and body text).
+\<close>
+c11\<open>
+int b;
+//@ setup(2) \<open>Include.append "tmp" [\<open>b\<close>]\<close>
+int a = b;
+\<close>
+
+c11\<open>
+/*@ setup(3) "a plain quoted body" */
+int a = 0;
+\<close>
+
+c11\<open>
+/*@ setup "a plain quoted body, default level" */
+int a = 0;
+\<close>
+
+text\<open>
+  A bare quote with no tag anywhere nearby is never mistaken for an
+  antiquotation body: the combined tag+string rule only fires when a quote
+  genuinely follows a tag (modulo horizontal whitespace), so unrelated
+  quoted text elsewhere in a comment keeps parsing as ordinary comment text.
+\<close>
+c11\<open>
+/* just a "quoted" word here, no tag in sight */
+int a = 0;
 \<close>
 
 section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>

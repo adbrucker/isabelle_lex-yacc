@@ -55,11 +55,10 @@ text\<open>
   suffix-binding precedence (the classic C "declarator inversion" problem, needing a
   genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
   \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
-  language-c - has no separate case for it; and preprocessor directives are recognized
-  syntactically but do not become real AST nodes (\<open>external_declaration\<close> is a
-  \<^verbatim>\<open>Position.T cExternalDeclaration option\<close>, \<open>NONE\<close> for a directive, filtered out when
-  a translation unit's declaration list is assembled) - c_ast.ML's \<open>cExternalDeclaration\<close>
-  has no slot for one, and adding one was out of scope for this pass. Constant-literal
+  language-c - has no separate case for it; and a small fragment of the C preprocessor is
+  recognized directly and kept as genuine AST nodes rather than being silently discarded -
+  see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
+  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
   below. Following the reference grammar's own note, identifiers are never lexed as
@@ -119,17 +118,30 @@ text\<open>
     comments carry Isar-level \<^emph>\<open>annotation commands\<close> (\<open>ensures\<close>, \<open>invariant\<close>, a
     user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax tree
     and executed as the file is processed. Here, the lexer instead \<^emph>\<open>lexically\<close>
-    recognizes the shape \<open>@tag \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag optionally followed
-    by whitespace, and, independently, a properly-nested Isabelle cartouche
-    \<open>\<open>\<dots>\<close>\<close> - anywhere inside a comment, reporting both as PIDE markup
-    (\<^ML>\<open>Markup.antiquote\<close> / \<^ML>\<open>Markup.cartouche\<close>) instead of discarding them as
-    opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer has no notion of
-    an annotation command language, only of where one \<^emph>\<open>could\<close> be hooked in later.
-    Since a cartouche can nest, recognizing it needs more than one regular-expression
-    rule; see the \<open>ANTIQ\<close> lexer state below for how a small amount of \<^verbatim>\<open>lex_user_declarations\<close>
-    state (a depth counter) turns this into a well-defined \<^emph>\<open>non-expert-mode\<close>
-    ml-lex specification - no \<open>[expert]\<close> switch turned out to be necessary after all.
-    Comments and antiquotations are, beyond that markup, now also genuinely
+    recognizes the shape \<open>@tag(level) \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag, an optional
+    parenthesized integer \<open>level\<close> (\<open>0\<close> when omitted, e.g. plain \<open>@tag \<open>...\<close>\<close>),
+    optionally followed by whitespace, and a body - either a properly-nested Isabelle
+    cartouche \<open>\<open>\<dots>\<close>\<close> or, as an equivalent alternative notation, a double-quoted
+    string \<open>"\<dots>"\<close> - reporting both as PIDE markup (\<^ML>\<open>Markup.antiquote\<close> /
+    \<^ML>\<open>Markup.cartouche\<close> for the cartouche spelling, \<^ML>\<open>Markup.antiquote\<close> alone
+    for the tag+string spelling since it is matched as a single token) instead of
+    discarding them as opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer
+    has no notion of an annotation command language, only of where one \<^emph>\<open>could\<close> be
+    hooked in later. Since a cartouche can nest, recognizing it needs more than one
+    regular-expression rule and a small amount of \<^verbatim>\<open>lex_user_declarations\<close> state (a
+    depth counter); see the \<open>ANTIQ\<close> lexer state below for how that turns into a
+    well-defined \<^emph>\<open>non-expert-mode\<close> ml-lex specification - no \<open>[expert]\<close> switch
+    turned out to be necessary after all. A double-quoted body, by contrast, cannot
+    nest, so \<open>@tag(level) "..."\<close> is matched by a single, longer regular-expression
+    alternative competing with the plain \<open>@tag(level)\<close> one for the same input -
+    ml-lex's usual longest-match rule then picks the string-body alternative whenever
+    a quote genuinely follows the tag (with only horizontal whitespace in between,
+    never across other text or a newline), and falls back to the plain, bodyless tag
+    match otherwise; this is what keeps an unrelated \<open>"\<close> elsewhere in a comment (an
+    apostrophe-free quotation, say) from ever being mistaken for an antiquotation
+    body - unlike the cartouche form, which (see below) is recognized whenever it
+    occurs in a comment, tag or no tag. Comments and antiquotations are, beyond that
+    markup, now also genuinely
     \<^emph>\<open>registered\<close>: \<^verbatim>\<open>C11_Comments\<close> (defined just above the lexer/parser definition,
     \<^verbatim>\<open>SML_import\<close>ed into the lex/yacc sandbox the same way \<^verbatim>\<open>YaccLib.thy\<close> already
     does for \<^verbatim>\<open>Position\<close>/\<open>Markup\<close>) accumulates raw text and antiquotation fragments as
@@ -195,33 +207,102 @@ text\<open>
 
 (* <Bu>: this prototypical, Claude-generated code is quite state-heavy and surely not re-entrant. *) 
 
+text\<open>
+  \<open>pending\<close>/\<open>attached\<close> live in one \<^verbatim>\<open>Synchronized.var\<close>, not plain
+  \<^verbatim>\<open>Unsynchronized.ref\<close>s. Two things were tried and ruled out empirically
+  before landing here, both worth recording since either looks reasonable on
+  paper: a plain \<^verbatim>\<open>Unsynchronized.ref\<close> is not atomic across concurrent
+  writers, so it is never really safe as *global* state. The seemingly obvious
+  fix, \<^verbatim>\<open>Thread_Data.var\<close> (what \<open>Isabelle_lex_yacc.global_state\<close> in
+  \<^verbatim>\<open>YaccLib.thy\<close> uses for its own per-command state), turned out to be
+  actively *wrong* here: a targeted test confirmed a push and an immediately
+  following read of \<open>pending\<close> agree with each other (so the sandbox is not
+  somehow talking to a different copy of this structure), yet the very next
+  token's \<open>attach_pending\<close> already sees it as empty - meaning the generated
+  lexer's own token production does not reliably stay on one OS thread between
+  one token and the next, so \<^verbatim>\<open>Thread_Data.var\<close>'s per-thread isolation
+  silently drops state that must survive from one token to the next \<^emph>\<open>within
+  a single parse\<close>. \<^verbatim>\<open>Synchronized.var\<close> is the mechanism that is actually
+  correct for that: one global cell, atomic reads and writes, visible
+  regardless of which thread happens to run a given token. It does not, on its
+  own, stop two genuinely concurrent \<open>c11\<close>-family commands from interleaving
+  their comments - a real, still-open limitation \<^emph>\<open>if\<close> \<open>isabelle build\<close> ever
+  schedules two such commands' lexing truly concurrently, rather than
+  serializing them via their shared, sequential \<open>thy_decl\<close> theory-state
+  dependency (see \<open>run_c11_kind\<close>, below, and its own note on why the four
+  accepting commands are \<open>thy_decl\<close> rather than \<open>diag\<close>) - but it is no longer
+  wrong even *within one single parse*, which is what mattered here.
+\<close>
 ML\<open>
 structure C11_Comments = struct
-  val pending : Position.T C_Ast.comment list Unsynchronized.ref = Unsynchronized.ref []
-  val attached : (Position.T * Position.T C_Ast.comment list) list Unsynchronized.ref = Unsynchronized.ref []
+  type state = {pending: Position.T C_Ast.comment list,
+                attached: (Position.T * Position.T C_Ast.comment list) list}
+  val state : state Synchronized.var =
+    Synchronized.var "C11_Comments.state" {pending = [], attached = []}
 
-  fun push c = pending := !pending @ [c]
+  fun push c =
+    Synchronized.change state (fn {pending, attached} =>
+      {pending = pending @ [c], attached = attached})
 
-  fun push_raw (text, pos) = push (C_Ast.Raw_txt [(text, pos)])
+  (* A fragment made up entirely of whitespace (a blank line between two
+     pieces of real text, indentation, ...) carries no information worth
+     keeping and is dropped rather than pushed - this also stops a comment
+     consisting of nothing but blank lines from producing a spurious
+     "attached" entry of all-whitespace Raw_txt. *)
+  fun push_raw (text, pos) =
+    if List.all Char.isSpace (String.explode text) then ()
+    else push (C_Ast.Raw_txt [(text, pos)])
 
-  fun push_antiquotation tag cartouche = push (C_Ast.Antiquotation (tag, cartouche))
+  fun push_antiquotation tag level cartouche = push (C_Ast.Antiquotation (tag, level, cartouche))
 
   (* Called once per real token, at its start position: claims whatever
      comments/antiquotations have accumulated since the previous token. *)
   fun attach_pending (p : Position.T) =
-    case !pending of
-      [] => ()
-    | cs => (pending := []; attached := (p, cs) :: !attached)
+    Synchronized.change state (fn {pending, attached} =>
+      case pending of
+        [] => {pending = pending, attached = attached}
+      | cs => {pending = [], attached = (p, cs) :: attached})
 
-  (* Called from the grammar to turn a token's (or a merged node's) bare
-     position into a nodeInfo, consuming that position's comments (if any)
-     from the side table - so the same position is never drained twice. *)
-  fun nodeInfo_of (p : Position.T) : Position.T C_Ast.nodeInfo =
-    case AList.lookup (op =) (!attached) p of
-      NONE => C_Ast.OnlyPos0 p
-    | SOME cs => (attached := AList.delete (op =) p (!attached); C_Ast.NodeInfo0 (cs, p))
+  (* Looks up whatever comments were attached at exactly this position -
+     "p" must be the *token's own* position, exactly as it was originally
+     passed to "attach_pending" (an un-merged, single-point position), never
+     a since-computed range: "Position.range_position (p, q)" builds a
+     genuinely different Position.T value from "p" alone (a different
+     end_offset), so looking *that* up would never find anything a real
+     token was ever attached under.
 
-  fun reset () = (pending := []; attached := [])
+     Deliberately non-destructive (no entry ever removed on a successful
+     lookup): more than one grammar action can legitimately want the exact
+     same leftmost position, and LALR's bottom-up reduction order fixes
+     which one runs first, not which one "should" own the comment. The
+     clearest case is "expression_statement: expression SEMI", whose own
+     nodeInfo and its wrapped expression's nodeInfo both start at the
+     expression's own leftmost token: with a destructive claim, the *inner*
+     expression reduces first and silently takes the comment, leaving the
+     *outer* statement's own nodeInfo - almost always the one actually
+     inspected - with none, even though the comment was captured correctly
+     somewhere. Every node genuinely starting at "p" now sees the same
+     comments; a caller wanting only one copy (e.g. after combining several
+     nodes into one, where duplication would otherwise compound) already has
+     "merge_nodeInfo" in c_ast.ML to de-duplicate explicitly. *)
+  fun claim (p : Position.T) : Position.T C_Ast.comment list =
+    case AList.lookup (op =) (#attached (Synchronized.value state)) p of
+      NONE => []
+    | SOME cs => cs
+
+  (* Builds the nodeInfo a grammar action actually reports for a node:
+     "claimed_at" is always the node's own leftmost token's un-merged
+     position (see "claim" above), while "report_pos" is the position/span
+     actually stored in the resulting nodeInfo - typically the same position
+     for a single-token node, but often a wider merged range for a
+     multi-token one. Keeping the two separate is exactly what makes claiming
+     correct regardless of how wide the node's own reported span is. *)
+  fun mk_nodeInfo (claimed_at : Position.T) (report_pos : Position.T) : Position.T C_Ast.nodeInfo =
+    case claim claimed_at of
+      [] => C_Ast.OnlyPos0 report_pos
+    | cs => C_Ast.NodeInfo0 (cs, report_pos)
+
+  fun reset () = Synchronized.change state (fn _ => {pending = [], attached = []})
 end
 \<close>
 SML_import \<open>structure C_Ast = struct open C_Ast end\<close>
@@ -279,20 +360,41 @@ fun c11_kw_tok markup (yypos, yytext, cons) =
 fun push_raw_fragment (yypos, yytext) =
     C11_Comments.push_raw (yytext, Position.range_position (get_pos yypos, get_pos (yypos + String.size yytext)))
 
-(* Antiquotation state: the tag most recently seen ("@tag"), and the text
+(* Antiquotation state: the tag most recently seen ("@tag", or "@tag(N)"
+   with an explicit level - see "parse_tag_and_level" below), and the text
    of the cartouche body currently being scanned (accumulated fragment by
    fragment across possibly-nested "\<open>...\<close>", the same way the surrounding
    comment text itself is never assembled into one string up front - see
-   the ANTIQ lexer rules below), together with that body's start position. *)
-val antiq_tag : (string * Position.T) ref = ref ("", Position.none)
+   the ANTIQ lexer rules below), together with that body's start position.
+   The quoted-string body alternative ("@tag(N) \"...\"") needs none of
+   this: since a quoted body cannot nest, it is matched, extracted, and
+   pushed in one shot by a single lex rule/handler - see
+   "antiq_tag_and_string_seen" below - without ever touching this state. *)
+val antiq_tag : (string * int * Position.T) ref = ref ("", 0, Position.none)
 val antiq_buf : string list ref = ref []
 val antiq_start : Position.T ref = ref Position.none
 
-fun antiq_tag_seen (yypos, yytext) =
+(* Splits the text matched after the leading "@" into the tag name and its
+   optional parenthesized level ("foo" -> ("foo", 0), "foo(3)"/"foo (3)" ->
+   ("foo", 3)) - shared by the cartouche-body path ("antiq_tag_seen") and
+   the quoted-string-body path ("antiq_tag_and_string_seen"), so both
+   notations parse "@tag(N)" identically. *)
+fun parse_tag_and_level text =
     let
-      val name =
-        Substring.string (Substring.dropl (fn c => c = #"@" orelse Char.isSpace c) (Substring.full yytext))
-    in antiq_tag := (name, get_pos yypos) end
+      val stripped =
+        Substring.string (Substring.dropl (fn c => c = #"@" orelse Char.isSpace c) (Substring.full text))
+    in
+      case String.fields (fn c => c = #"(") stripped of
+        [name] => (name, 0)
+      | [name, rest] =>
+          (Substring.string (Substring.dropr Char.isSpace (Substring.full name)),
+           valOf (Int.fromString (String.substring (rest, 0, String.size rest - 1))))
+      | _ => (stripped, 0)
+    end
+
+fun antiq_tag_seen (yypos, yytext) =
+    let val (name, level) = parse_tag_and_level yytext
+    in antiq_tag := (name, level, get_pos yypos) end
 
 fun antiq_body_start yypos = antiq_start := get_pos yypos
 
@@ -302,10 +404,37 @@ fun antiq_body_finish yypos =
     let
       val body_text = String.concat (rev (!antiq_buf))
       val body_pos = Position.range_position (!antiq_start, get_pos yypos)
-      val (tag_text, tag_pos) = !antiq_tag
+      val (tag_text, level, tag_pos) = !antiq_tag
     in
       antiq_buf := [];
-      C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} {cartouche = (body_text, body_pos)}
+      C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} {level = level} {cartouche = (body_text, body_pos)}
+    end
+
+(* The quoted-string alternative to a cartouche body: unlike "\<open>...\<close>",
+   a double-quoted string cannot nest, so the whole "@tag(N) \"...\""
+   (tag, optional level, and body) is recognized and matched by a single
+   lex rule (see the "ANTIQ" macro-free rule below reusing "ES", the
+   existing C-string escape-sequence class, purely so an escaped quote
+   "\"" inside the body does not end the match early) rather than needing
+   a dedicated lexer sub-state the way the cartouche body does. Since the
+   rule requires the quote to follow the tag/level with only horizontal
+   whitespace between (no other character, no newline), it only ever
+   matches a quote that is genuinely a body opener right after a tag -
+   an unrelated quote elsewhere in the comment is untouched, falling
+   through to ordinary raw-comment-text scanning as always. The body text
+   is kept exactly as written between the quotes (no escape decoding),
+   matching how the cartouche body is likewise stored raw. *)
+fun antiq_tag_and_string_seen (yypos, yytext) =
+    let
+      fun find_quote i = if String.sub (yytext, i) = #"\"" then i else find_quote (i + 1)
+      val qpos = find_quote 0
+      val (name, level) = parse_tag_and_level (String.substring (yytext, 0, qpos))
+      val body_len = String.size yytext - qpos - 2
+      val body_text = String.substring (yytext, qpos + 1, body_len)
+      val body_start = yypos + qpos + 1
+      val body_pos = Position.range_position (get_pos body_start, get_pos (body_start + body_len))
+    in
+      C11_Comments.push_antiquotation {tag = (name, get_pos yypos)} {level = level} {cartouche = (body_text, body_pos)}
     end
 \<close>
 lex_definitions\<open>
@@ -464,7 +593,11 @@ lex_rules\<open>
 <COMMENT>"*"+[^*/@\\\n]*                   => (push_raw_fragment (yypos, yytext); lex());
 <COMMENT>"*"+"/"                            => (YYBEGIN INITIAL; lex());
 
-<COMMENT>"@"{HWS}*{L}{A}*                  => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
+<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
+                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
+                                                antiq_tag_and_string_seen (yypos, yytext); lex());
+<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?
+                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
                                                 antiq_tag_seen (yypos, yytext); lex());
 <COMMENT>"@"                               => (push_raw_fragment (yypos, yytext); lex());
 <COMMENT>"\\"                              => (push_raw_fragment (yypos, yytext); lex());
@@ -473,7 +606,11 @@ lex_rules\<open>
                                                 antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
 
 <LCOMMENT>[^@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>"@"{HWS}*{L}{A}*                 => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
+<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
+                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
+                                                antiq_tag_and_string_seen (yypos, yytext); lex());
+<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?
+                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
                                                 antiq_tag_seen (yypos, yytext); lex());
 <LCOMMENT>"@"                              => (push_raw_fragment (yypos, yytext); lex());
 <LCOMMENT>"\\"                             => (push_raw_fragment (yypos, yytext); lex());
@@ -613,8 +750,8 @@ fun ident_of_declr (CDeclr0 (io, _, _, _, _)) = io
 
 exception Parse_gap of string
 
-fun ndi p = C11_Comments.nodeInfo_of p
-fun ndi2 (p1, p2) = C11_Comments.nodeInfo_of (Position.range_position (p1, p2))
+fun ndi p = C11_Comments.mk_nodeInfo p p
+fun ndi2 (p1, p2) = C11_Comments.mk_nodeInfo p1 (Position.range_position (p1, p2))
 \<close>
 yacc_definitions\<open>
 %eop EOF
@@ -695,7 +832,7 @@ yacc_definitions\<open>
         jump_statement of Position.T cStatement | translation_unit of Position.T cExternalDeclaration list |
         external_declaration of Position.T cExternalDeclaration option |
         function_definition of Position.T cFunctionDef |
-        declaration_list of Position.T cDeclaration list | preproc_directive of unit |
+        declaration_list of Position.T cDeclaration list | preproc_directive of Position.T cPreprocDirective |
         external_declaration_list of Position.T cExternalDeclaration list |
         start_rule of Position.T root option
 \<close>
@@ -1448,18 +1585,37 @@ external_declaration:
            (SOME (CFDefExt0 function_definition))
 |       declaration    
            (SOME (CDeclExt0 declaration))
-|       preproc_directive    
-           (NONE)
+|       preproc_directive
+           (SOME (CPPExt0 preproc_directive))
 
-preproc_directive: 
-        INCLUDE HEADER_NAME    ()
-|       DEFINE IDENTIFIER ASSIGN constant_expression    ()
-|       DEFINE IDENTIFIER LPAREN RPAREN ASSIGN constant_expression    ()
-|       DEFINE IDENTIFIER LPAREN identifier_list RPAREN ASSIGN constant_expression    ()
-|       IFDEF IDENTIFIER external_declaration_list ENDIF    ()
-|       IFDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF    ()
-|       IFNDEF IDENTIFIER external_declaration_list ENDIF    ()
-|       IFNDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF    ()
+preproc_directive:
+        INCLUDE HEADER_NAME
+           (let val system = String.isPrefix "<" HEADER_NAME
+                val name = String.substring (HEADER_NAME, 1, String.size HEADER_NAME - 2)
+            in CPPInclude0 (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright)) end)
+|       DEFINE IDENTIFIER ASSIGN constant_expression
+           (CPPDefine0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
+                        ndi2 (DEFINEleft, constant_expressionright)))
+|       DEFINE IDENTIFIER LPAREN RPAREN ASSIGN constant_expression
+           (CPPDefineFun0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), [], constant_expression,
+                           ndi2 (DEFINEleft, constant_expressionright)))
+|       DEFINE IDENTIFIER LPAREN identifier_list RPAREN ASSIGN constant_expression
+           (CPPDefineFun0 (Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), identifier_list, constant_expression,
+                           ndi2 (DEFINEleft, constant_expressionright)))
+|       IFDEF IDENTIFIER external_declaration_list ENDIF
+           (CPPIfdef0 (false, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
+                       ndi2 (IFDEFleft, ENDIFright)))
+|       IFDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
+           (CPPIfdef0 (false, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft),
+                       external_declaration_list1, external_declaration_list2,
+                       ndi2 (IFDEFleft, ENDIFright)))
+|       IFNDEF IDENTIFIER external_declaration_list ENDIF
+           (CPPIfdef0 (true, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
+                       ndi2 (IFNDEFleft, ENDIFright)))
+|       IFNDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
+           (CPPIfdef0 (true, Ident0 (IDENTIFIER, 0, ndi IDENTIFIERleft),
+                       external_declaration_list1, external_declaration_list2,
+                       ndi2 (IFNDEFleft, ENDIFright)))
 
 external_declaration_list:    ([])
 |       external_declaration_list external_declaration    
