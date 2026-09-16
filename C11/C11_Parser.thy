@@ -381,15 +381,16 @@ val antiq_start : Position.T ref = ref Position.none
    notations parse "@tag(N)" identically. *)
 fun parse_tag_and_level text =
     let
+      val trim = Substring.string o Substring.dropr Char.isSpace o Substring.full
       val stripped =
         Substring.string (Substring.dropl (fn c => c = #"@" orelse Char.isSpace c) (Substring.full text))
     in
       case String.fields (fn c => c = #"(") stripped of
-        [name] => (name, 0)
+        [name] => (trim name, 0)
       | [name, rest] =>
-          (Substring.string (Substring.dropr Char.isSpace (Substring.full name)),
+          (trim name,
            valOf (Int.fromString (String.substring (rest, 0, String.size rest - 1))))
-      | _ => (stripped, 0)
+      | _ => (trim stripped, 0)
     end
 
 fun antiq_tag_seen (yypos, yytext) =
