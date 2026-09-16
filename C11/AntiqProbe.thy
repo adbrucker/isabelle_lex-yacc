@@ -62,7 +62,7 @@ ML \<open>
 fun this_theory_units n =
   let
     val thy_name = Context.theory_name {long = false} @{theory}
-    val store = CAst_Store.get (Context.Theory @{theory})
+    val store = CEnv.Ast_Store.get (Context.Theory @{theory})
     val prefix = thy_name ^ "#"
     fun suffix_num k =
       Int.fromString (String.extract (k, String.size prefix, NONE))
