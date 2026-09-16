@@ -27,7 +27,7 @@
  ***********************************************************************************)
 
 theory C11
-  imports "AnaEval"
+  imports "AnaEval" "C11_Parser"
   keywords "c11" "c11_ident" "c11_expr" "c11_statement" :: thy_decl
   and "c11_file" :: thy_load
   and "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
@@ -806,8 +806,5 @@ i\
 nt a = 1;
 \<close>
 
-ML\<open>
-open Position
-\<close>
 
 end

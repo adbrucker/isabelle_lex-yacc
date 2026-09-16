@@ -27,7 +27,7 @@
  ***********************************************************************************)
 
 theory C11_Parser
-  imports "../LexYacc"
+  imports "../LexYacc" "C_Ast"
 begin
 
 text\<open>
@@ -178,8 +178,6 @@ text\<open>
 \<close>
 
 section\<open>The Lex/Yacc Definition\<close>
-
-ML_file\<open>c_ast.ML\<close>
 
 text\<open>
   Comment/antiquotation bookkeeping, kept outside \<open>lex_user_declarations\<close>/

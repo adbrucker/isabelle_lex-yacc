@@ -27,7 +27,7 @@
  ***********************************************************************************)
 
 theory CEnv
-  imports "C11_Parser"
+  imports "C_Ast"
 begin
 
 section\<open>The CEnv Environment: storing Ast's and Environments\<close>
