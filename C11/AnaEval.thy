@@ -98,7 +98,10 @@ text\<open>
   alongside the synthetic declaration. \<open>#define\<close> only ever occurs directly in
   a \<open>cExternalDeclaration list\<close> (the grammar has no block-item form for it), so
   \<open>#ifdef\<close>/\<open>#ifndef\<close> branches are walked the same way a translation unit's own
-  external-declaration list is.
+  external-declaration list is - and the tested name itself (the \<open>MAX_SIZE\<close> in
+  \<open>#ifdef MAX_SIZE\<close>) is a genuine \<^emph>\<open>use\<close> of it too, checked against \<open>cenv\<close> via
+  \<open>report_use\<close> exactly like any other reference, not merely a branch condition
+  to recurse past.
 
   Left for a later pass, deliberately: \<open>Enum\<close> is not populated (enum constants
   live in the ordinary namespace in real C, but nothing here tracks them yet);
@@ -651,8 +654,18 @@ and walk_pp_directive cenv (d : pos C_Ast.cPreprocDirective) : cenv * (int * (th
             register "C11 preprocessor macro" (fn decl => Cpp_macro (params, decl)) cenv_restored
               (name, pos, synth)
         in (cenv2, here @ acts1) end
-    | C_Ast.CPPIfdef (_, _, thn, els, _) =>
+    | C_Ast.CPPIfdef (_, C_Ast.Ident (name, _, ident_ni), thn, els, _) =>
         let
+          (* "#ifdef name"/"#ifndef name" itself tests whether "name" is
+             defined - genuinely a *use* of it (a constant or function-like
+             macro, checked against "cenv" as it stands on entry, exactly
+             like an ordinary expression use), not just a branch condition
+             to skip over. Previously unreported entirely: the tested name
+             was pattern-matched away with "_" here, so "#ifdef MAX_SIZE"
+             never hyperlinked "MAX_SIZE" back to its own "#define", nor
+             flagged a name undefined anywhere in this parse with
+             \<^ML>\<open>Markup.bad ()\<close> the way every other use does. *)
+          val _ = report_use cenv name (C_Ast.pos_of_NodeInfo ident_ni)
           val (cenv1, acts1) = walk_ext_decls cenv thn
           val (cenv2, acts2) = walk_ext_decls cenv1 els
         in (cenv2, here @ acts1 @ acts2) end

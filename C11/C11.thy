@@ -1,6 +1,8 @@
 (***********************************************************************************
  * Copyright (c) University of Paris-Saclay
  *
+ * Author : Burkhart Wolff
+ *
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -99,7 +101,7 @@ text\<open>
 section\<open>Relation to Isabelle/C (AFP)\<close>
 
 text\<open>
-  This theory is a small-scale, from-scratch counterpart to the
+  This theory is a small-scale, from-scratch re-design to the
   \<^emph>\<open>Isabelle_C\<close> AFP entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
   which provides a full C11/C18 front-end for Isabelle built around its \<^emph>\<open>own\<close>
   hand-written, PIDE-integrated incremental lexer/parser (\<^verbatim>\<open>C_Lex\<close>, \<^verbatim>\<open>C_Parser\<close>,
@@ -570,6 +572,67 @@ int caller(void) {
 int helper(int x) {
   return x * 2;
 }
+\<close>
+
+subsection\<open>Declaration/Use Highlighting for Preprocessor Constants and Macros\<close>
+text\<open>
+  \<open>#define\<close> constants and function-like macros register into \<open>cenv\<close> exactly
+  like an ordinary declaration (see \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> in
+  \<^verbatim>\<open>CEnv.thy\<close>, and the note above \<open>walk_pp_directive\<close> in \<^verbatim>\<open>AnaEval.thy\<close>),
+  so a later \<open>CVar\<close>/\<open>CCall\<close> reference to the macro's name hyperlinks to its
+  \<open>#define\<close> the same way a reference to an ordinary global does - this
+  fragment never expands macros, so such a reference is, syntactically, just
+  another use of that name. \<open>#ifdef name\<close>/\<open>#ifndef name\<close> is \<^emph>\<open>also\<close> a use of
+  \<open>name\<close> (testing whether it is defined), not merely a branch condition to
+  recurse past - previously the tested name was not walked/reported at all
+  (fixed in \<open>walk_pp_directive\<close>'s \<open>CPPIfdef\<close> case, above). None of this had
+  a dedicated test before: the "comprehensive program" test further below
+  happens to use \<open>MAX_SIZE\<close> once, but never calls its own function-like
+  macro \<open>SQUARE\<close> anywhere, and no test exercised \<open>#ifdef\<close>/\<open>#ifndef\<close> at all
+  as a use site - including the case of testing a name that is genuinely
+  undeclared anywhere in the same parse, which (exactly like an ordinary
+  undeclared variable, see above) should still succeed, just with
+  \<^ML>\<open>Markup.bad ()\<close> instead of a hyperlink.
+\<close>
+c11\<open>
+#define ANSWER = 42
+#define DOUBLE(x) = x * 2
+
+int use_constant(void) {
+  return ANSWER + 1;
+}
+
+int use_macro(void) {
+  return DOUBLE(ANSWER);
+}
+
+#ifdef ANSWER
+int defined_branch = ANSWER;
+#endif
+
+#ifndef NOT_DEFINED_ANYWHERE
+int else_branch = 0;
+#endif
+\<close>
+
+text\<open>Hard, batch-checkable confirmation that the block above actually
+  registered \<open>ANSWER\<close>/\<open>DOUBLE\<close> as \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> in \<open>CEnv\<close>, rather
+  than merely parsing without error - a parse also succeeds when a name
+  resolves nowhere (that is exactly what \<^ML>\<open>Markup.bad ()\<close> is for), so
+  successful parsing alone would not witness that registration/resolution
+  actually happened.\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup idents "ANSWER" of
+    SOME (CEnv.Cpp_const _) => writeln "PASS: ANSWER registered as Cpp_const"
+  | other => error ("FAIL: ANSWER not registered as Cpp_const: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+val _ =
+  case Symtab.lookup idents "DOUBLE" of
+    SOME (CEnv.Cpp_macro _) => writeln "PASS: DOUBLE registered as Cpp_macro"
+  | other => error ("FAIL: DOUBLE not registered as Cpp_macro: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
 \<close>
 
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
