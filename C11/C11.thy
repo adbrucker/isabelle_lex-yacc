@@ -27,10 +27,10 @@
  ***********************************************************************************)
 
 theory C11
-  imports "AnaEval" "C11_Parser"
+  imports  "C11_Parser" "AnaEval" 
   keywords "c11" "c11_ident" "c11_expr" "c11_statement" :: thy_decl
-  and "c11_file" :: thy_load
-  and "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
+  and      "c11_file" :: thy_load
+  and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
 begin
 
 text\<open>
@@ -192,7 +192,15 @@ text\<open>
   \<^verbatim>\<open>CEnv\<close>'s AST store (\<^verbatim>\<open>CEnv.Ast_Store\<close>, in its own \<^verbatim>\<open>CEnv.thy\<close>, imported
   here transitively via \<^verbatim>\<open>AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close>
   key - \<^verbatim>\<open>open CEnv\<close> below makes \<open>store_root\<close>/\<open>get_ast\<close>/\<open>\<dots>\<close> usable unqualified
-  throughout the rest of this theory. Each accepting command has a \<open>_reject\<close>
+  throughout the rest of this theory. \<open>AnaEval.analyse_and_eval\<close> also runs on
+  every successful parse, \<open>c11\<close> included, but only \<open>c11\<close>'s own antiquotation
+  actions are actually chained onto the stored theory (\<open>run_c11_kind\<close>'s
+  \<open>full_eval\<close> flag): \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> are syntax-checks
+  on a single fragment, not a compilation unit, so \<open>analyse_and_eval\<close> is run
+  there purely for its \<^emph>\<open>side effect\<close> - the declaration/use hyperlinking
+  reported via \<^ML>\<open>Position.report\<close> during the walk - and its returned theory
+  and antiquotation actions are deliberately discarded rather than persisted.
+  Each accepting command has a \<open>_reject\<close>
   counterpart (\<open>c11_reject\<close> - pre-existing, kept general-purpose across
   all four shapes - and the three new \<open>c11_ident_reject\<close>/\<open>c11_expr_reject\<close>/
   \<open>c11_statement_reject\<close>) that documents a fragment as correctly \<^emph>\<open>not\<close> that
@@ -202,7 +210,7 @@ text\<open>
   somehow". Reject variants never touch the AST store.
 \<close>
 ML\<open>
-open CEnv
+local open CEnv in
 
 (* A shallow, top-level-only summary of the parsed result - not a full AST
    pretty-printer - just enough to confirm, from "c11" and friends, that a
@@ -238,8 +246,19 @@ fun require_kind check kind_name cmd_name root =
    is now non-destructive (see its own comment in C11_Parser.thy), and
    nothing else ever drains "attached", so without this it would simply grow
    for the rest of the session; position uniqueness means stale entries can
-   never be *wrongly* matched by a later parse, only wastefully retained. *)
-fun run_c11_kind check kind_name cmd_name source thy =
+   never be *wrongly* matched by a later parse, only wastefully retained.
+
+   "full_eval" distinguishes "c11" (a whole translation unit, i.e. genuinely a
+   compilation unit) from "c11_ident"/"c11_expr"/"c11_statement" (a syntax
+   check on a single fragment): "analyse_and_eval" always runs - it is what
+   produces the declaration/use hyperlinking reported via "Position.report"
+   during the walk, wanted for all four - but only under "full_eval" are its
+   returned antiquotation actions actually sorted by "level", chained, and
+   used as the theory the parsed AST is stored under; otherwise that returned
+   theory (and the antiquotation actions) are simply discarded and the
+   original "thy" is used for storing instead, exactly as if
+   "analyse_and_eval" had not been called at all except for its side effect. *)
+fun run_c11_kind check kind_name cmd_name full_eval source thy =
     let
       val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
@@ -250,30 +269,43 @@ fun run_c11_kind check kind_name cmd_name source thy =
       | SOME root =>
           let
             val root = require_kind check kind_name cmd_name root
-            val (key, thy') = store_root root thy
+            val thy_for_store =
+              if full_eval then
+                let
+                  val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
+                  (* Run the collected antiquotation actions in ascending "level" order,
+                     each against the theory the previous one produced - "level" is the
+                     author's own explicit ordering knob (see "@tag(level) ..." in
+                     C11_Parser.thy), so equal levels keep their relative (left-to-right,
+                     i.e. textual) order, which "sort" already guarantees being stable. *)
+                  val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
+                in fold (fn (_, f) => f) sorted_evals thy' end
+              else
+                let val _ = AnaEval.analyse_and_eval root thy in thy end
+            val (key, thy'') = store_root root thy_for_store
             val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-          in thy' end
+          in thy'' end
     end
 
-fun run_c11 source = run_c11_kind is_units "translation unit" "c11" source
+fun run_c11 source = run_c11_kind is_units "translation unit" "c11" true source
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
         "Syntax check a C11 translation unit and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
 
-fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" source
+fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" false source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_ident"}
         "Syntax check a bare C11 identifier and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident source)))
 
-fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" source
+fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" false source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_expr"}
         "Syntax check a C11 expression and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr source)))
 
-fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" source
+fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" false source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
         "Syntax check a C11 statement and store its AST"
@@ -383,8 +415,8 @@ fun run_c11_kind_reject check kind_name source thy =
       val _ =
         if rejected
         then writeln ("OK: malformed input was correctly rejected as a " ^ kind_name ^ ".")
-        else error ("Malformed-input test FAILED: the parser unexpectedly accepted this as a " ^
-                     kind_name ^ ".")
+        else error   ("Malformed-input test FAILED: the parser unexpectedly accepted this as a " ^
+                       kind_name ^ ".")
     in thy end
 
 fun run_c11_reject source = run_c11_kind_reject is_units "translation unit" source
@@ -410,6 +442,8 @@ fun run_c11_statement_reject source = run_c11_kind_reject is_stmt "statement" so
 val _ = Outer_Syntax.command @{command_keyword "c11_statement_reject"}
         "Check that a fragment is correctly rejected as a C11 statement"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement_reject source)))
+
+end (* local open *)
 \<close>
 
 section\<open>Testing the generated C11 Parser with Syntax Highlighting\<close>
@@ -446,6 +480,37 @@ int main(void) {
 }
 \<close>
 
+
+subsection\<open>Declaration/Use Highlighting, Including Undeclared Names\<close>
+text\<open>
+  \<open>AnaEval.report_use\<close> hyperlinks a name's use back to its declaration when
+  one is found in scope; a name found \<^emph>\<open>nowhere\<close> in scope is reported with
+  \<^ML>\<open>Markup.bad ()\<close> instead - a highlight/underline in the IDE, not a
+  hyperlink, and deliberately \<^emph>\<open>not\<close> an \<open>error\<close>: this fragment has no
+  cross-file symbol table, so "undeclared in what this parse saw" routinely
+  just means "declared in a header this recognizer does not itself follow"
+  (\<open>#include\<close> is purely syntactic here - see the preprocessor fragment above),
+  not necessarily a real defect. The tests below exercise this directly: each
+  references a name that is never declared anywhere in the same fragment, and
+  each is expected to succeed exactly like its declared-name counterparts
+  elsewhere in this theory - only the markup differs, not the outcome.
+\<close>
+c11\<open>
+int g;
+
+int f(void) {
+  return g + totally_undeclared;
+}
+\<close>
+
+text\<open>The same, for a standalone \<open>c11_expr\<close>/\<open>c11_statement\<close> fragment - these
+  run \<open>analyse_and_eval\<close> purely for its hyperlinking side effect (see
+  \<open>run_c11_kind\<close>'s \<open>full_eval\<close> flag above), which includes this "bad" markup
+  just the same.\<close>
+c11_expr\<open>also_undeclared + 1\<close>
+
+c11_statement\<open>{ int local_var = 0; local_var = yet_another_undeclared; }\<close>
+
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
@@ -471,7 +536,7 @@ text\<open>
 
 c11\<open>
 int test_arith(void) {
-  int a = 10, b = 3, c; /* @ highlight \<open>hjgfhg\<close> */
+  int a = 10, b = 3, c; /* @ probe_ast \<open>hjgfhg\<close> */
   c = a + b - a * b / b % a ;
   c = (a << 1) >> 1; /* bla */
   c = (a & b) | (a ^ b);
@@ -484,7 +549,9 @@ int test_arith(void) {
 }
 \<close>
 
-ML\<open>get_ast "C11#4" @{theory}\<close>
+ML\<open>\<close>
+
+ML\<open>CEnv.get_ast "C11#4" @{theory}\<close>
 
 c11\<open>
 int f(int x) {
@@ -495,7 +562,7 @@ int f(int x) {
 \<close>
 
 declare [[ML_print_depth=100]]
-ML\<open>get_ast "C11#5" @{theory}\<close>
+ML\<open>CEnv.get_ast "C11#5" @{theory}\<close>
 
 
 subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
@@ -679,9 +746,31 @@ int x;
 section\<open>Antiquotation-carrying Comments (cf. Isabelle_C's \<^verbatim>\<open>C1.thy\<close>)\<close>
 
 text\<open>
+  \<open>analyse_and_eval\<close> (wired into \<open>run_c11_kind\<close> above) errors on any
+  \<open>Antiquotation\<close> whose tag has no handler registered in \<open>CEnv\<close>, so the
+  \<open>@setup\<close>/\<open>@requires\<close>/\<open>@ensures\<close> tags the tests below carry each need one -
+  a dummy is enough here: none of these tests are about what the handler
+  \<^emph>\<open>does\<close>, only about the lexer/parser/\<open>analyse_and_eval\<close> machinery around
+  it, so each dummy simply reports it ran and returns the theory unchanged.
+\<close>
+ML\<open>
+fun dummy_antiq tag =
+  let
+    fun probe (_, _, level) body thy =
+      (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
+                quote body);
+       thy)
+  in CEnv.store_antiq (tag, probe) end
+\<close>
+setup\<open>dummy_antiq "setup"\<close>
+setup\<open>dummy_antiq "requires"\<close>
+setup\<open>dummy_antiq "ensures"\<close>
+
+text\<open>
   A line comment carrying a tag and a properly-nested cartouche, adapted from
   Isabelle_C's own \<open>#include\<close> example (\<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close>). The
-  lexer reports \<open>@setup\<close> and the cartouche as PIDE markup; nothing is executed.
+  lexer reports \<open>@setup\<close> and the cartouche as PIDE markup; \<open>analyse_and_eval\<close>
+  dispatches it to the dummy handler just above.
 \<close>
 c11\<open>
 int b;
@@ -703,8 +792,9 @@ text\<open>
   a recognized alternative to a cartouche body - \<open>requires\<close>/\<open>ensures\<close> are
   picked up as genuine (level-\<open>0\<close>) antiquotation nodes here, tag and body
   text alike; nothing about \<open>requires\<close>/\<open>ensures\<close> is otherwise special to the
-  lexer - it has no notion of an ACSL command language, and nothing is
-  executed - it just happens that ACSL's own annotation syntax already fits
+  lexer - it has no notion of an ACSL command language, and each dispatches
+  to the same dummy handler as \<open>@setup\<close> above (registered for exactly this
+  reason) - it just happens that ACSL's own annotation syntax already fits
   the general tag+string shape this fragment recognizes.
 \<close>
 c11\<open>
@@ -806,5 +896,5 @@ i\
 nt a = 1;
 \<close>
 
-
+ML\<open>open Library \<close>
 end

@@ -65,8 +65,8 @@ datatype ident_kind = Global of (pos C_Ast.cDeclaration)
                     | Local  of (pos C_Ast.cDeclaration)
                     | Enum
                     | Parameter of (pos C_Ast.cDeclaration) (* really  ? *)
-                    | Cpp_const
-                    | Cpp_macro
+                    | Cpp_const of (pos C_Ast.cDeclaration)
+                    | Cpp_macro of (pos C_Ast.ident list * pos C_Ast.cDeclaration)
 
 datatype type_ident = NOT_YET_DEFINED
 
@@ -77,12 +77,14 @@ datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        c_antiq : (cenv type_antiq_fun) Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
 
-structure Env = Generic_Data
-  (type T = cenv
-   val empty = mk{idents  = Symtab.empty,
+val empty_cenv = mk{idents  = Symtab.empty,
                   types   = Symtab.empty ,
                   c_antiq = Symtab.empty,
                   units = 0}
+
+structure Env = Generic_Data
+  (type T = cenv
+   val empty = empty_cenv
    val merge = K empty) (* or something with merge ? Necessary if non-single-threaded use wanted*)
 
 structure Ast_Store = Generic_Data
@@ -136,5 +138,6 @@ fun get_antiq name thy =
 
 end
 \<close>
+
 
 end

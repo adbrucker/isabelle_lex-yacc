@@ -88,7 +88,7 @@ fun comments_of (C_Ast.CDeclExt d) = comments_of_ni (C_Ast.nodeInfo_of_CDecl d)
 
 fun dump_unit key =
   let
-    val SOME (C_Ast.Units [C_Ast.CTranslUnit (eds, _)]) = get_ast key @{theory}
+    val SOME (C_Ast.Units [C_Ast.CTranslUnit (eds, _)]) = CEnv.get_ast key @{theory}
     val all = List.concat (map comments_of eds)
   in String.concatWith "\n" (map pp_comment all) end
 

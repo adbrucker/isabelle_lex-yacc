@@ -766,25 +766,29 @@ fun nodeInfo_of_CFunDef (CFunDef (_, _, _, _, ndI)) = ndI;
 fun pos_of_CFunDef x = (pos_of_NodeInfo o nodeInfo_of_CFunDef) x;
 
 fun nodeInfo_of_CStat x =
-  (fn a => (case a of CLabel (_, _, _, ndI) => ndI 
-             | CCase (_, _, ndI) => ndI 
-             | CDefault (_, ndI) => ndI 
-             | CExpr (_, ndI) => ndI 
-             | CCompound (_, _, ndI) => ndI 
-             | CIf (_, _, _, ndI) => ndI 
+  (fn a => (case a of CLabel (_, _, _, ndI) => ndI
+             | CCase (_, _, ndI) => ndI
+             | CCases (_, _, _, ndI) => ndI
+             | CDefault (_, ndI) => ndI
+             | CExpr (_, ndI) => ndI
+             | CCompound (_, _, ndI) => ndI
+             | CIf (_, _, _, ndI) => ndI
              | CSwitch (_, _, ndI) => ndI
-             | CWhile (_, _, _, ndI) => ndI 
-             | CFor (_, _, _, _, ndI) => ndI 
-             | CGoto (_, ndI) => ndI 
-             | CCont ndI => ndI 
-             | CBreak ndI => ndI 
-             | CReturn (_, ndI) => ndI 
+             | CWhile (_, _, _, ndI) => ndI
+             | CFor (_, _, _, _, ndI) => ndI
+             | CGoto (_, ndI) => ndI
+             | CGotoPtr (_, ndI) => ndI
+             | CCont ndI => ndI
+             | CBreak ndI => ndI
+             | CReturn (_, ndI) => ndI
              | CAsm (_, ndI) => ndI))
     x;
 
 fun pos_of_CStat x = (pos_of_NodeInfo o nodeInfo_of_CStat) x;
 
-fun nodeInfo_of_CDecl x = (fn CDecl (_, _, ndI) => ndI) x;
+fun nodeInfo_of_CDecl x =
+  (fn CDecl (_, _, ndI) => ndI
+    | CStaticAssert (_, _, ndI) => ndI) x;
 
 fun pos_of_CDecl x = (pos_of_NodeInfo o nodeInfo_of_CDecl) x;
 
@@ -853,7 +857,7 @@ fun stmt_out_of_expr p e =
 
 fun stmt_out_of_expra p x = app_rev (stmt_out_of_expr p x ()) snd;
 
-fun fresh_ident x = x; (* check for Isabelle id generator *)
+fun fresh_ident x = "V_"^serial_string ();
 
 fun identa (Ident (s, _, _)) = pref_ident (if s = "const" 
                                             then String_concatWith ("", ["__", s, "__"]) 
@@ -877,8 +881,9 @@ fun statement_of_expression_CAssign_fun e =
     | CStatExpr (_, _) => false          | CLabAddrExpr (_, _) => false 
     | CBuiltinExpr _ => false);
 
-fun nodeInfo_of_CBuiltin x = (fn a => (case a of CBuiltinVaArg (_, _, ndI) => ndI 
-                                               | CBuiltinOffsetOf (_, _, ndI) => ndI)) x;
+fun nodeInfo_of_CBuiltin x = (fn a => (case a of CBuiltinVaArg (_, _, ndI) => ndI
+                                               | CBuiltinOffsetOf (_, _, ndI) => ndI
+                                               | CBuiltinTypesCompatible (_, _, ndI) => ndI)) x;
 
 fun pos_of_CBuiltin x = (pos_of_NodeInfo o nodeInfo_of_CBuiltin) x;
 
@@ -896,15 +901,20 @@ fun nodeInfo_of_CExpr (CComma (_, ndI)) = ndI
   | nodeInfo_of_CExpr (CCast (_, _, ndI)) =  ndI 
   | nodeInfo_of_CExpr (CUnary (_, _, ndI)) =  ndI 
   | nodeInfo_of_CExpr (CSizeofExpr (_, ndI)) =  ndI
-  | nodeInfo_of_CExpr (CSizeofType (_, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CAlignofType (_, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CIndex (_, _, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CCall (_, _, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CMember (_, _, _, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CVar (_, ndI)) =  ndI 
+  | nodeInfo_of_CExpr (CSizeofType (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CAlignofExpr (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CAlignofType (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CComplexReal (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CComplexImag (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CIndex (_, _, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CCall (_, _, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CMember (_, _, _, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CVar (_, ndI)) =  ndI
   | nodeInfo_of_CExpr (CConst aa) =  nodeInfo_of_CConst aa
-  | nodeInfo_of_CExpr (CCompoundLit (_, _, ndI)) =  ndI 
-  | nodeInfo_of_CExpr (CStatExpr (_, ndI)) =  ndI 
+  | nodeInfo_of_CExpr (CCompoundLit (_, _, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CGenericSelection (_, _, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CStatExpr (_, ndI)) =  ndI
+  | nodeInfo_of_CExpr (CLabAddrExpr (_, ndI)) =  ndI
   | nodeInfo_of_CExpr (CBuiltinExpr aa) =  nodeInfo_of_CBuiltin aa
 
 fun pos_of_CExpr x = (pos_of_NodeInfo o nodeInfo_of_CExpr) x;

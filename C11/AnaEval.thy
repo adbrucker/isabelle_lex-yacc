@@ -47,46 +47,92 @@ text\<open>
   A node's own antiquotations are always checked using the \<open>cenv\<close> \<^emph>\<open>inherited on
   entry\<close> to that node, i.e. before that node's own declaration (if it introduces
   one) is registered - matching a comment textually preceding what it is attached
-  to. Only \<open>ident\<close>/\<open>cExpression\<close>/\<open>cStatement\<close> nodes, plus a whole
-  \<open>cTranslationUnit\<close> (as \<open>Units\<close>), can be turned into a \<open>root\<close> and hit one of the
-  four cases; the wrapped \<open>ident\<close> case is dispatched only for the top-level
-  \<open>c11_ident\<close> entry point (an \<open>ident\<close> embedded inside e.g. \<open>CVar\<close>/\<open>CGoto\<close> is not
-  independently checked - it shares its leftmost position with the enclosing
-  expression/statement, which already claims and checks any attached comment, so
-  checking both would dispatch the same antiquotation twice). Every other node kind
-  that carries a \<open>nodeInfo\<close> (declarations, function definitions, declarators,
-  initializers, file-scope \<open>asm\<close>, preprocessor directives) is still walked for
-  registration/hyperlinking, but an \<open>Antiquotation\<close> found on \<^emph>\<open>its\<close> \<open>nodeInfo\<close>
-  raises \<open>error\<close> - not \<^emph>\<open>ident\<close>, \<^emph>\<open>expr\<close>, \<^emph>\<open>statement\<close>, or \<^emph>\<open>unit\<close>. A thunked
-  \<open>root\<close> builder means that \<open>error\<close> only actually fires when such a comment is
-  really present, never merely because a node of that kind exists.
+  to. \<open>ident\<close>/\<open>cExpression\<close>/\<open>cStatement\<close> nodes, a whole \<open>cTranslationUnit\<close> (as
+  \<open>Units\<close>), and - also wrapped as a one-element \<open>Units\<close>, back into the
+  \<open>cExternalDeclaration list\<close> each came from - a \<^emph>\<open>top-level\<close> declaration,
+  function definition, file-scope \<open>asm\<close> block, or preprocessor directive, can
+  all be turned into a \<open>root\<close> and dispatched: this is what lets the tests in
+  \<^verbatim>\<open>C11.thy\<close>'s "Antiquotation-carrying Comments" section attach \<open>@tag \<open>...\<close>\<close> to
+  an ordinary file-scope declaration. The wrapped \<open>ident\<close> case is dispatched
+  only for the top-level \<open>c11_ident\<close> entry point (an \<open>ident\<close> embedded inside
+  e.g. \<open>CVar\<close>/\<open>CGoto\<close> is not independently checked - it shares its leftmost
+  position with the enclosing expression/statement, which already claims and
+  checks any attached comment, so checking both would dispatch the same
+  antiquotation twice); likewise a declaration/function definition is only
+  dispatchable where it is genuinely top-level - a \<^emph>\<open>nested\<close> one (a block-local
+  declaration, a \<open>for\<close>-loop's own clause, a function's parameter, an abstract
+  type-name used by a cast/\<open>sizeof\<close>/\<open>_Generic\<close>/\<dots>, a "CNestedFunDef" GNU nested
+  function) still raises \<open>error\<close> on its own \<open>nodeInfo\<close>, since none of those is
+  itself a complete top-level declaration - "\<open>as_root\<close>" is threaded as an
+  explicit parameter through \<open>walk_decl\<close>/\<open>walk_fun_def\<close> for exactly this: each
+  caller supplies the thunk appropriate to \<^emph>\<open>its\<close> context, top-level or not.
+  Declarators/initializers still carry no dispatchable shape of their own
+  either way. A thunked \<open>root\<close> builder throughout means \<open>error\<close> only actually
+  fires when such a comment is really present, never merely because a node of
+  that kind exists.
 
   Every identifier \<^emph>\<open>use\<close> (currently: a variable/function name in \<open>CVar\<close>, plus the
   bare \<open>Id\<close> root itself) is hyperlinked to its declaration via
   \<^ML>\<open>Position.entity_markup\<close> (Isabelle/Pure's standard def/ref markup - the
   declaration's own position is baked directly into the markup, so no
   serial-number correlation table is needed) and \<^ML>\<open>Position.report\<close>, reported
-  once at the declaration site (self-referential) and once at every use.
+  once at the declaration site (self-referential) and once at every use. A use
+  whose name resolves nowhere in \<open>cenv\<close> is reported with \<^ML>\<open>Markup.bad ()\<close>
+  instead (a highlight/underline, not a hyperlink) - deliberately not an
+  \<open>error\<close>, since this fragment has no cross-file symbol table and "undeclared
+  here" routinely just means "declared somewhere this parse never saw".
 
-  Left for a later pass, deliberately: \<open>Enum\<close>/\<open>Cpp_const\<close>/\<open>Cpp_macro\<close> are not
-  populated (no position payload exists yet to hyperlink them by); struct/union
-  member names and enum constants are not registered into \<open>cenv\<close> (they live in a
-  per-type namespace, and \<open>type_ident\<close> is still \<open>NOT_YET_DEFINED\<close>) - nested
+  The two preprocessor-macro forms this fragment recognizes (\<open>#define name =
+  expr\<close> and \<open>#define name(a, \<dots>) = expr\<close>, see \<open>cPreprocDirective\<close> in
+  \<^verbatim>\<open>c_ast.ML\<close>) register into \<open>cenv\<close> exactly like an ordinary declaration -
+  \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> wrap a \<^emph>\<open>synthetic\<close> \<open>cDeclaration\<close> (the macro's own
+  name as its declarator, its replacement expression as a pseudo-initializer),
+  purely so \<open>find_decl_pos\<close>/\<open>report_use\<close> need no macro-specific case: a later
+  \<open>CVar\<close>/\<open>CCall\<close> reference to the macro's name hyperlinks to its \<open>#define\<close> the
+  same way a reference to an ordinary global does - this fragment never expands
+  macros, so such a reference is, syntactically, just another use of that name
+  in the same flat namespace. A function-like macro's parameter list is its own
+  shadow-and-restored scope, exactly like a function's, so a parameter's own
+  name inside the replacement expression resolves to the parameter, not to an
+  enclosing global of the same name; \<open>Cpp_macro\<close> keeps that parameter list
+  alongside the synthetic declaration. \<open>#define\<close> only ever occurs directly in
+  a \<open>cExternalDeclaration list\<close> (the grammar has no block-item form for it), so
+  \<open>#ifdef\<close>/\<open>#ifndef\<close> branches are walked the same way a translation unit's own
+  external-declaration list is.
+
+  Left for a later pass, deliberately: \<open>Enum\<close> is not populated (enum constants
+  live in the ordinary namespace in real C, but nothing here tracks them yet);
+  struct/union member names are not registered into \<open>cenv\<close> either (they live in
+  a per-type namespace, and \<open>type_ident\<close> is still \<open>NOT_YET_DEFINED\<close>) - nested
   \<open>cTypeSpecifier\<close>/\<open>cStructureUnion\<close>/\<open>cEnumeration\<close> content (a struct's member
   list, an enum's values) is consequently not walked; a K&R old-style parameter
-  list registers each name as \<open>Parameter\<close> straight from the bare identifier,
+  list registers each name as \<open>Local\<close> straight from the bare identifier,
   without cross-referencing the trailing old-style declaration list for its real
   type. \<open>analyse_and_eval\<close> itself is not yet wired into \<open>run_c11_kind\<close>/\<open>c11\<close>.
 \<close>
 ML\<open>
 structure AnaEval = struct
-open CEnv
 
+open CEnv
 
 fun idents_of (mk {idents, ...} : cenv) = idents
 
 fun set_idents idents' (mk {idents = _, types, c_antiq, units}) =
   mk {idents = idents', types = types, c_antiq = c_antiq, units = units}
+
+(* The position a "root" itself spans - the same position a "type_antiq_fun"
+   sees as its own "current term" (see "check_antiq" below), so a handler
+   wanting to report/highlight "where this term is" can get at it without
+   re-deriving the "Id"/"Expr"/"Stmt"/"Units" case split itself. A "Units" of
+   more than one "cTranslationUnit" (never produced by this grammar - see
+   "start_rule" in C11_Parser.thy, which always wraps a whole parse into
+   exactly one) or of none at all has no single span to report, so falls back
+   to "Position.none" rather than guessing at one of several/none. *)
+fun pos_of_root (C_Ast.Id (C_Ast.Ident (_, _, ni))) = C_Ast.pos_of_NodeInfo ni
+  | pos_of_root (C_Ast.Expr e) = C_Ast.pos_of_CExpr e
+  | pos_of_root (C_Ast.Stmt s) = C_Ast.pos_of_CStat s
+  | pos_of_root (C_Ast.Units [C_Ast.CTranslUnit (_, ni)]) = C_Ast.pos_of_NodeInfo ni
+  | pos_of_root (C_Ast.Units _) = Position.none
 
 (* A declarator's own declared name and position, "NONE" for an abstract
    (unnamed) declarator - e.g. inside a "type_name" used by a cast/sizeof. *)
@@ -138,24 +184,36 @@ fun report_decl kind name decl_pos =
   Position.report decl_pos (Position.entity_markup kind (name, decl_pos))
 
 (* Looks "name" up in "cenv"'s "idents" and, if found (and of a kind that
-   currently carries a declaration position - see the "Enum"/"Cpp_const"/
-   "Cpp_macro" note above), hyperlinks "use_pos" back to its declaration. *)
+   currently carries a declaration position - see the "Enum" note above),
+   hyperlinks "use_pos" back to its declaration. A macro/constant name is
+   looked up exactly like an ordinary identifier: this fragment does not
+   expand macros, so a later "CVar"/"CCall" reference to one is still just
+   an ordinary use of that name in the same flat namespace.
+
+   A name found nowhere in "idents" - genuinely undeclared, or merely
+   declared somewhere this fragment never saw (an external library symbol,
+   a header this recognizer does not itself follow) - is reported with
+   \<^ML>\<open>Markup.bad ()\<close> instead: a highlight/underline in the IDE, not a
+   hyperlink (there is no declaration to jump to) and, deliberately, not an
+   \<open>error\<close> - this recognizer has no symbol table spanning multiple files, so
+   "undeclared here" is routine, not necessarily a real defect; it should be
+   visible, not fatal. *)
 fun report_use cenv name use_pos =
   let val mk {idents, ...} = cenv in
     case Symtab.lookup idents name of
-      NONE => ()
+      NONE => Position.report use_pos (Markup.bad ())
     | SOME ik =>
         (case (case ik of
                  Global decl => SOME ("C11 global variable", decl)
                | Local decl => SOME ("C11 local variable", decl)
                | Parameter decl => SOME ("C11 parameter", decl)
-               | Enum => NONE
-               | Cpp_const => NONE
-               | Cpp_macro => NONE) of
+               | Cpp_const decl => SOME ("C11 preprocessor constant", decl)
+               | Cpp_macro (_, decl) => SOME ("C11 preprocessor macro", decl)
+               | Enum => NONE) of
            NONE => ()
          | SOME (kind, decl) =>
              (case find_decl_pos decl name of
-                NONE => ()
+                NONE => Position.report use_pos (Markup.bad ())
               | SOME decl_pos => Position.report use_pos (Position.entity_markup kind (name, decl_pos))))
   end
 
@@ -199,11 +257,15 @@ and walk_expr cenv (e : pos C_Ast.cExpression) : cenv * (int * (theory -> theory
         walk_exprs cenv [e1] here
     | C_Ast.CVar (C_Ast.Ident (name, _, ident_ni), _) =>
         (report_use cenv name (C_Ast.pos_of_NodeInfo ident_ni); (cenv, here))
-    | C_Ast.CConst c =>
-        let val acts = check_antiq cenv
-              (fn () => error "analyse_and_eval: antiquotations are not supported on constants")
-              (C_Ast.nodeInfo_of_CConst c)
-        in (cenv, here @ acts) end
+    | C_Ast.CConst _ =>
+        (* "nodeInfo_of_CExpr (CConst aa) = nodeInfo_of_CConst aa" - "here",
+           above, already checked exactly this "nodeInfo" as "Expr e"-
+           dispatchable (a constant genuinely is an ordinary expression); a
+           second, separately-erroring check on the same "nodeInfo" here
+           would not just be redundant but wrong, dispatching the very same
+           "Antiquotation" a second time only to then unconditionally error
+           on it. *)
+        (cenv, here)
     | C_Ast.CCompoundLit (d, inits, _) =>
         let
           val (cenv1, acts1) = walk_type_decl cenv d
@@ -231,10 +293,29 @@ and walk_expr cenv (e : pos C_Ast.cExpression) : cenv * (int * (theory -> theory
         let val (cenv1, acts1) = walk_stat cenv s in (cenv1, here @ acts1) end
     | C_Ast.CLabAddrExpr (_, _) => (cenv, here)
     | C_Ast.CBuiltinExpr b =>
-        let val acts = check_antiq cenv
-              (fn () => error "analyse_and_eval: antiquotations are not supported on builtins")
-              (C_Ast.nodeInfo_of_CBuiltin b)
-        in (cenv, here @ acts) end
+        (* "nodeInfo_of_CExpr (CBuiltinExpr aa) = nodeInfo_of_CBuiltin aa" -
+           "here" already checked this "nodeInfo" as "Expr e"-dispatchable,
+           for the same reason as "CConst" above; only the builtin's own
+           nested expressions/type-names/designators still need walking. *)
+        let
+          val (cenv1, acts1) =
+            case b of
+              C_Ast.CBuiltinVaArg (e1, d, _) =>
+                let
+                  val (cenv_a, acts_a) = walk_expr cenv e1
+                  val (cenv_b, acts_b) = walk_type_decl cenv_a d
+                in (cenv_b, acts_a @ acts_b) end
+            | C_Ast.CBuiltinOffsetOf (d, desigs, _) =>
+                let
+                  val (cenv_a, acts_a) = walk_type_decl cenv d
+                  val (cenv_b, acts_b) = walk_designators cenv_a desigs
+                in (cenv_b, acts_a @ acts_b) end
+            | C_Ast.CBuiltinTypesCompatible (d1, d2, _) =>
+                let
+                  val (cenv_a, acts_a) = walk_type_decl cenv d1
+                  val (cenv_b, acts_b) = walk_type_decl cenv_a d2
+                in (cenv_b, acts_a @ acts_b) end
+        in (cenv1, here @ acts1) end
   end
 
 and walk_designators cenv ds =
@@ -299,11 +380,17 @@ and walk_declarator cenv (C_Ast.CDeclr (_, derived, _, _, ni)) =
    parameter list ("Parameter") - each declared name is registered with
    "kind_str"/"mk_kind" as given by the caller, which is a no-op whenever
    "decl_name_pos" finds no name (an abstract type-name used by a cast/sizeof/
-   generic-selection/compound-literal/"_Alignas" - see "walk_type_decl"). *)
-and walk_decl kind_str mk_kind cenv (cdecl as C_Ast.CDecl (_, entries, ni)) =
+   generic-selection/compound-literal/"_Alignas" - see "walk_type_decl").
+   "as_root" is likewise caller-supplied: "walk_ext_decl" passes one that
+   wraps the whole declaration as "Units", since a top-level declaration
+   genuinely is a dispatchable antiquotation target (as the "Antiquotation-
+   carrying Comments" tests in C11.thy rely on); every other caller (a block-
+   local declaration, a "for"-loop's own clause, a parameter, an abstract
+   type-name) passes one that errors, since none of those are "ident"/
+   "expr"/"statement"/"unit"-shaped. *)
+and walk_decl kind_str mk_kind as_root cenv (cdecl as C_Ast.CDecl (_, entries, ni)) =
       let
-        val here = check_antiq cenv
-          (fn () => error "analyse_and_eval: antiquotations are not supported on declarations") ni
+        val here = check_antiq cenv as_root ni
         val (cenv1, acts1) =
           fold (fn ((declr_opt, init_opt), width_opt) => fn (cenv, acc) =>
                   let
@@ -323,18 +410,20 @@ and walk_decl kind_str mk_kind cenv (cdecl as C_Ast.CDecl (_, entries, ni)) =
                   in (cenv_d, acc @ acts_a @ acts_b @ acts_c) end)
             entries (cenv, here)
       in (cenv1, acts1) end
-  | walk_decl _ _ cenv (C_Ast.CStaticAssert (e, _, ni)) =
+  | walk_decl _ _ as_root cenv (C_Ast.CStaticAssert (e, _, ni)) =
       let
-        val here = check_antiq cenv
-          (fn () => error "analyse_and_eval: antiquotations are not supported on declarations") ni
+        val here = check_antiq cenv as_root ni
         val (cenv1, acts1) = walk_expr cenv e
       in (cenv1, here @ acts1) end
 
 (* An abstract type-name (cast/sizeof/alignof/generic-selection/compound-literal
    target type): walked the same way as an ordinary declaration for
    antiquotation-checking and nested-expression purposes, but its declarator (if
-   any) is always unnamed, so "walk_decl" registers nothing. *)
-and walk_type_decl cenv d = walk_decl "C11 type" Local cenv d
+   any) is always unnamed, so "walk_decl" registers nothing; never itself a
+   dispatchable "root" (it is not a complete declaration). *)
+and walk_type_decl cenv d =
+  walk_decl "C11 type" Local
+    (fn () => error "analyse_and_eval: antiquotations are not supported on type names") cenv d
 
 and walk_stat cenv (s : pos C_Ast.cStatement) : cenv * (int * (theory -> theory)) list =
   let
@@ -387,7 +476,10 @@ and walk_stat cenv (s : pos C_Ast.cStatement) : cenv * (int * (theory -> theory)
             case init of
               C_Ast.Left NONE => (cenv, [])
             | C_Ast.Left (SOME e) => walk_expr cenv e
-            | C_Ast.Right d => walk_decl "C11 local variable" Local cenv d
+            | C_Ast.Right d =>
+                walk_decl "C11 local variable" Local
+                  (fn () => error "analyse_and_eval: antiquotations are not supported on declarations")
+                  cenv d
           val (cenv2, acts2) = case cond_opt of NONE => (cenv1, []) | SOME e => walk_expr cenv1 e
           val (cenv3, acts3) = case step_opt of NONE => (cenv2, []) | SOME e => walk_expr cenv2 e
           val (cenv4, acts4) = walk_stat cenv3 body
@@ -409,8 +501,15 @@ and walk_block_items cenv items =
             val (cenv', acts) =
               case item of
                 C_Ast.CBlockStmt s => walk_stat cenv s
-              | C_Ast.CBlockDecl d => walk_decl "C11 local variable" Local cenv d
-              | C_Ast.CNestedFunDef f => walk_fun_def "C11 local function" Local cenv f
+              | C_Ast.CBlockDecl d =>
+                  walk_decl "C11 local variable" Local
+                    (fn () => error "analyse_and_eval: antiquotations are not supported on declarations")
+                    cenv d
+              | C_Ast.CNestedFunDef f =>
+                  walk_fun_def "C11 local function" Local
+                    (fn () =>
+                       error "analyse_and_eval: antiquotations are not supported on function definitions")
+                    cenv f
           in (cenv', acc @ acts) end)
     items (cenv, [])
 
@@ -434,15 +533,23 @@ and open_param_scope cenv declr =
         idents (cenv, [])
   | SOME (C_Ast.CFunDeclr (C_Ast.Right (params, _), _, _)) =>
       fold (fn p => fn (cenv, acc) =>
-              let val (cenv', acts) = walk_decl "C11 parameter" Local cenv p
+              let
+                val (cenv', acts) =
+                  walk_decl "C11 parameter" Local
+                    (fn () => error "analyse_and_eval: antiquotations are not supported on declarations")
+                    cenv p
               in (cenv', acc @ acts) end)
         params (cenv, [])
   | SOME _ => (cenv, []) (* unreachable: "params_of_declarator" only ever finds a "CFunDeclr" *)
 
-and walk_fun_def kind_str mk_kind cenv (C_Ast.CFunDef (specs, declr, _, body, ni)) =
+(* "as_root" is caller-supplied exactly like in "walk_decl" (see its own note)
+   and for the same reason: "walk_ext_decl" passes one wrapping the whole
+   function definition as "Units" (a top-level function definition is a
+   dispatchable antiquotation target), a nested ("CNestedFunDef") one passes
+   an erroring thunk instead. *)
+and walk_fun_def kind_str mk_kind as_root cenv (C_Ast.CFunDef (specs, declr, _, body, ni)) =
       let
-        val here = check_antiq cenv
-          (fn () => error "analyse_and_eval: antiquotations are not supported on function definitions") ni
+        val here = check_antiq cenv as_root ni
         val synthetic_decl = C_Ast.CDecl (specs, [((SOME declr, NONE), NONE)], ni)
         val cenv1 =
           case decl_name_pos declr of
@@ -453,28 +560,106 @@ and walk_fun_def kind_str mk_kind cenv (C_Ast.CFunDef (specs, declr, _, body, ni
         val (cenv_body, body_acts) = walk_stat cenv_params body
       in (set_idents outer cenv_body, here @ param_acts @ body_acts) end
 
+(* Every branch here runs in a top-level (translation-unit) context, so
+   "as_root" wraps the whole external declaration back into the one-element
+   list it came from ("Units [CTranslUnit ([ed], ...)]") rather than
+   erroring - unlike a nested declaration/function definition (block-local,
+   a parameter, a "for"-clause, a type-name), a complete top-level one
+   genuinely is a dispatchable antiquotation target, as the "Antiquotation-
+   carrying Comments" tests in C11.thy rely on (an "@tag ..." attached to a
+   file-scope declaration). *)
 and walk_ext_decl cenv (ed : pos C_Ast.cExternalDeclaration) : cenv * (int * (theory -> theory)) list =
   case ed of
-    C_Ast.CDeclExt d => walk_decl "C11 global variable" Global cenv d
-  | C_Ast.CFDefExt f => walk_fun_def "C11 global function" Global cenv f
+    C_Ast.CDeclExt d =>
+      walk_decl "C11 global variable" Global
+        (fn () => C_Ast.Units [C_Ast.CTranslUnit ([ed], C_Ast.nodeInfo_of_CDecl d)]) cenv d
+  | C_Ast.CFDefExt f =>
+      walk_fun_def "C11 global function" Global
+        (fn () => C_Ast.Units [C_Ast.CTranslUnit ([ed], C_Ast.nodeInfo_of_CFunDef f)]) cenv f
   | C_Ast.CAsmExt (_, ni) =>
-      let val here = check_antiq cenv
-            (fn () => error "analyse_and_eval: antiquotations are not supported on file-scope asm blocks") ni
+      let val here = check_antiq cenv (fn () => C_Ast.Units [C_Ast.CTranslUnit ([ed], ni)]) ni
       in (cenv, here) end
-  | C_Ast.CPPExt d =>
-      let val here = check_antiq cenv
-            (fn () => error "analyse_and_eval: antiquotations are not supported on preprocessor directives")
-            (C_Ast.nodeInfo_of_CPPDirective d)
-      in (cenv, here) end
+  | C_Ast.CPPExt d => walk_pp_directive cenv d
 
-and walk_translation_unit cenv (tu as C_Ast.CTranslUnit (eds, ni)) =
+(* Wraps an ident (a macro's own name, or one of a function-like macro's
+   parameters) as a one-name, otherwise-empty "cDeclaration" - purely so
+   "find_decl_pos"/"register" have the same shape to work with as every
+   other "ident_kind" payload, without needing a macro-specific case. *)
+and synth_decl_of_ident (id as C_Ast.Ident (_, _, ni)) init_opt =
+  let val declr = C_Ast.CDeclr (SOME id, [], NONE, [], ni)
+  in C_Ast.CDecl ([], [((SOME declr, init_opt), NONE)], ni) end
+
+(* A preprocessor directive only ever occurs directly in a
+   "cExternalDeclaration list" (see "walk_ext_decl"/"walk_pp_directive"'s own
+   caller) - i.e. this function always runs in a top-level context - so its
+   own "here" is, like "CDeclExt"/"CFDefExt" in "walk_ext_decl", dispatchable
+   as "Units", wrapping the whole directive back into the one-element
+   external-declaration list it came from; computed once and reused for all
+   four forms below, since they share the one "nodeInfo". *)
+and walk_pp_directive cenv (d : pos C_Ast.cPreprocDirective) : cenv * (int * (theory -> theory)) list =
   let
-    val here = check_antiq cenv (fn () => C_Ast.Units [tu]) ni
-    val (cenv1, acts1) =
-      fold (fn ed => fn (cenv, acc) =>
-              let val (cenv', acts) = walk_ext_decl cenv ed in (cenv', acc @ acts) end)
-        eds (cenv, [])
-  in (cenv1, here @ acts1) end
+    val ni = C_Ast.nodeInfo_of_CPPDirective d
+    val here = check_antiq cenv (fn () => C_Ast.Units [C_Ast.CTranslUnit ([C_Ast.CPPExt d], ni)]) ni
+  in
+    case d of
+      C_Ast.CPPInclude _ => (cenv, here)
+    | C_Ast.CPPDefine (id as C_Ast.Ident (name, _, ident_ni), e, _) =>
+        let
+          val pos = C_Ast.pos_of_NodeInfo ident_ni
+          val (cenv1, acts1) = walk_expr cenv e
+          val synth = synth_decl_of_ident id (SOME (C_Ast.CInitExpr (e, C_Ast.nodeInfo_of_CExpr e)))
+          val cenv2 = register "C11 preprocessor constant" Cpp_const cenv1 (name, pos, synth)
+        in (cenv2, here @ acts1) end
+    | C_Ast.CPPDefineFun (id as C_Ast.Ident (name, _, ident_ni), params, e, _) =>
+        let
+          val pos = C_Ast.pos_of_NodeInfo ident_ni
+          (* A function-like macro's parameters are a textual-substitution
+             namespace of their own, scoped only to the replacement
+             expression - shadow/restore "idents" exactly like a function's
+             own parameter scope (see "open_param_scope"), so a use of "a"/
+             "b" inside the body resolves to the parameter, not to some
+             enclosing global of the same name. *)
+          val outer = idents_of cenv
+          val cenv_params =
+            fold (fn pid as C_Ast.Ident (pname, _, pni) => fn cenv =>
+                    register "C11 macro parameter" Local cenv
+                      (pname, C_Ast.pos_of_NodeInfo pni, synth_decl_of_ident pid NONE))
+              params cenv
+          val (cenv_body, acts1) = walk_expr cenv_params e
+          val cenv_restored = set_idents outer cenv_body
+          val synth = synth_decl_of_ident id (SOME (C_Ast.CInitExpr (e, C_Ast.nodeInfo_of_CExpr e)))
+          val cenv2 =
+            register "C11 preprocessor macro" (fn decl => Cpp_macro (params, decl)) cenv_restored
+              (name, pos, synth)
+        in (cenv2, here @ acts1) end
+    | C_Ast.CPPIfdef (_, _, thn, els, _) =>
+        let
+          val (cenv1, acts1) = walk_ext_decls cenv thn
+          val (cenv2, acts2) = walk_ext_decls cenv1 els
+        in (cenv2, here @ acts1 @ acts2) end
+  end
+
+and walk_ext_decls cenv eds =
+  fold (fn ed => fn (cenv, acc) =>
+          let val (cenv', acts) = walk_ext_decl cenv ed in (cenv', acc @ acts) end)
+    eds (cenv, [])
+
+(* Deliberately does NOT also "check_antiq" the whole unit's own "ni" here:
+   by construction ("start_rule"'s "ndi2 (translation_unitleft,
+   translation_unitright)" in C11_Parser.thy), a "CTranslUnit"'s own leftmost
+   position always *is* its first external declaration's leftmost position -
+   the same "two nodes genuinely share a leftmost token" situation
+   "C11_Comments.claim"'s own non-destructiveness exists for (see its comment
+   in C11_Parser.thy), except here both nodes are reachable from the *same*
+   walk, so checking both would not just let two different call sites each
+   see a shared comment (which is the intended, harmless case that
+   non-destructive "claim" was built for) but would dispatch the very same
+   "Antiquotation" twice from a single "analyse_and_eval" call. The first
+   external declaration's own check (in "walk_ext_decl", via "walk_ext_decls"
+   below) already covers every comment reachable this way - a translation
+   unit with no declarations at all has no leftmost token to attach a
+   comment to regardless, so nothing is lost by not checking here too. *)
+and walk_translation_unit cenv (C_Ast.CTranslUnit (eds, _)) = walk_ext_decls cenv eds
 
 fun analyse_and_eval (root : pos C_Ast.root) thy =
   let
@@ -498,5 +683,32 @@ fun analyse_and_eval (root : pos C_Ast.root) thy =
 
 end
 \<close>
+
+subsection\<open>Some Basic Antiquotation Settings\<close>
+
+ML\<open>
+val CENV = Unsynchronized.ref(CEnv.empty_cenv);
+val probe_cenv = let fun probe (cenv, _ , _) _ thy = (CENV := cenv; thy) 
+                 in  CEnv.store_antiq ("probe_cenv",  probe) end
+
+
+val AST = Unsynchronized.ref((C_Ast.Units []): (Position.T C_Ast.root) )
+val probe_ast = let fun probe (_, c_ast , l) _ thy = 
+                              (writeln("Level: "^ Int.toString l); 
+                               writeln("Read : " ^ C_Ast.pp_root c_ast);
+                               AST := c_ast; thy) 
+                in  CEnv.store_antiq ("probe_ast",  probe) end
+
+
+val highlight = let fun probe (_, c_ast , _) _ thy =
+                              (Position.report (AnaEval.pos_of_root c_ast) Markup.intensify;
+                               thy)
+                in  CEnv.store_antiq ("highlight",  probe) end
+
+\<close>
+
+setup\<open>probe_cenv\<close>
+setup\<open>probe_ast\<close>
+setup\<open>highlight\<close>
 
 end
