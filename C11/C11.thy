@@ -36,7 +36,7 @@ theory C11
 begin
 
 text\<open>
-  This theory formalizes the ANSI C11 grammar as a ml-lex/ml-yacc lexer/parser pair,
+  This theory implements the ANSI C11 grammar as a ml-lex/ml-yacc lexer/parser pair,
   ported from the reference grammar published at
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
