@@ -82,15 +82,38 @@ val empty_cenv = mk{idents  = Symtab.empty,
                   c_antiq = Symtab.empty,
                   units = 0}
 
+(* "merge = K empty" (discard both sides, reset to empty) is exactly wrong
+   for live, incremental PIDE use: Isabelle forks/merges theory state
+   routinely while a buffer is being edited (parallel/incremental checking,
+   not just at the very end of a batch build), so every such merge would
+   silently wipe every "c11"-family command's own registrations back to
+   empty. A batch "isabelle build" essentially never exercises this path,
+   which is why it was invisible to every build-based regression test in
+   this session - still a real, separate bug worth fixing here even though
+   it turned out not to be the cause of the point-vs-range hyperlinking bug
+   diagnosed in "AnaEval.thy" ("report_use"/"report_decl"/"name_range").
+   "Symtab.merge (K true)" takes the left side's entry on a key collision
+   (both sides originate from the same walk of the same source text in
+   practice, so a genuine conflict would mean a real bug elsewhere, not a
+   case this needs to resolve cleverly); "units" takes the larger of the two
+   counters, so a merge can only grow it, never shrink it back into a range
+   that could collide with already-issued "Ast_Store" keys. *)
+fun merge_cenv (mk {idents = i1, types = t1, c_antiq = a1, units = u1},
+                mk {idents = i2, types = t2, c_antiq = a2, units = u2}) =
+  mk {idents = Symtab.merge (K true) (i1, i2),
+      types = Symtab.merge (K true) (t1, t2),
+      c_antiq = Symtab.merge (K true) (a1, a2),
+      units = Int.max (u1, u2)}
+
 structure Env = Generic_Data
   (type T = cenv
    val empty = empty_cenv
-   val merge = K empty) (* or something with merge ? Necessary if non-single-threaded use wanted*)
+   val merge = merge_cenv)
 
 structure Ast_Store = Generic_Data
   (type T = (Position.T C_Ast.root) Symtab.table
    val  empty = Symtab.empty
-   val  merge = K empty)
+   val  merge = Symtab.merge (K true))
 
 (* Deliberately not re-exporting "Env.map" under the bare name "map": every
    caller of this structure via "open CEnv" would then have the ubiquitous

@@ -180,8 +180,22 @@ fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo
           | C_Ast.Raw_txt _ => NONE)
         cs
 
+(* The full-token range a name spans, starting at "pos" - "pos" alone (a bare
+   point, as every identifier's own "nodeInfo" carries: see "ndi" in
+   C11_Parser.thy, which uses the same position for both its "claimed_at" and
+   its "report_pos") makes an entity-markup report only "claim" a single
+   character's worth of clickable/linked region - indistinguishable from the
+   whole token for a one-character name, but visibly wrong for any longer
+   one (only the token's first character then links/underlines/jumps).
+   "Position.symbol_explode" advances "pos" through "name"'s own symbols to
+   its end; "Position.range"/"range_position" combine start and end into the
+   one merged position value "Position.report"/"Position.entity_markup" need. *)
+fun name_range (name, pos) =
+  Position.range_position (Position.range (pos, Position.symbol_explode name pos))
+
 fun report_decl kind name decl_pos =
-  Position.report decl_pos (Position.entity_markup kind (name, decl_pos))
+  let val range_pos = name_range (name, decl_pos)
+  in Position.report range_pos (Position.entity_markup kind (name, range_pos)) end
 
 (* Looks "name" up in "cenv"'s "idents" and, if found (and of a kind that
    currently carries a declaration position - see the "Enum" note above),
@@ -199,9 +213,12 @@ fun report_decl kind name decl_pos =
    "undeclared here" is routine, not necessarily a real defect; it should be
    visible, not fatal. *)
 fun report_use cenv name use_pos =
-  let val mk {idents, ...} = cenv in
+  let
+    val mk {idents, ...} = cenv
+    val use_range = name_range (name, use_pos)
+  in
     case Symtab.lookup idents name of
-      NONE => Position.report use_pos (Markup.bad ())
+      NONE => Position.report use_range (Markup.bad ())
     | SOME ik =>
         (case (case ik of
                  Global decl => SOME ("C11 global variable", decl)
@@ -213,8 +230,10 @@ fun report_use cenv name use_pos =
            NONE => ()
          | SOME (kind, decl) =>
              (case find_decl_pos decl name of
-                NONE => Position.report use_pos (Markup.bad ())
-              | SOME decl_pos => Position.report use_pos (Position.entity_markup kind (name, decl_pos))))
+                NONE => Position.report use_range (Markup.bad ())
+              | SOME decl_pos =>
+                  Position.report use_range
+                    (Position.entity_markup kind (name, name_range (name, decl_pos)))))
   end
 
 (* Registers one declared name into "cenv"'s "idents", reporting its own
