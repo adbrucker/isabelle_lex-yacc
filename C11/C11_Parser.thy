@@ -391,9 +391,34 @@ fun parse_tag_and_level text =
       | _ => (trim stripped, 0)
     end
 
+(* "@tag(level)" with no cartouche/string body at all is a valid, complete
+   antiquotation in its own right - the body defaults to the empty string,
+   exactly like an omitted argument elsewhere. Since a body, when present,
+   can be separated from its tag by other comment text (see "antiq_tag_seen"
+   below and the ANTIQ rules further down - a body is claimed by whichever
+   cartouche/string is next found, not necessarily an immediately adjacent
+   one), the lexer cannot know at the point of matching a bare tag whether a
+   body is still coming; "antiq_tag" instead stays "pending" until either a
+   body is found (see "antiq_body_finish", which then clears it) or it is
+   flushed here as empty-bodied - on seeing the *next* tag (so two
+   consecutive bodyless tags each still produce their own antiquotation
+   rather than the second one silently swallowing the first), and at every
+   point a comment naturally ends (the "COMMENT"/"LCOMMENT" close rules
+   below, and "eof" at the very end of this block) so a bodyless tag at the
+   tail of a comment is not simply discarded the way it silently was
+   before. The empty-string body's own "cartouche" position is the tag's
+   own position - there is no text of its own to span. *)
+fun antiq_flush_pending_tag () =
+    let val (name, level, pos) = !antiq_tag in
+      if name = "" then ()
+      else
+        (antiq_tag := ("", 0, Position.none);
+         C11_Comments.push_antiquotation {tag = (name, pos)} {level = level} {cartouche = ("", pos)})
+    end
+
 fun antiq_tag_seen (yypos, yytext) =
     let val (name, level) = parse_tag_and_level yytext
-    in antiq_tag := (name, level, get_pos yypos) end
+    in antiq_flush_pending_tag (); antiq_tag := (name, level, get_pos yypos) end
 
 fun antiq_body_start yypos = antiq_start := get_pos yypos
 
@@ -406,6 +431,11 @@ fun antiq_body_finish yypos =
       val (tag_text, level, tag_pos) = !antiq_tag
     in
       antiq_buf := [];
+      (* Clear the pending-tag marker now that its body has been found -
+         otherwise a later "antiq_flush_pending_tag" (on the next tag, or at
+         the comment's end) would wrongly re-push this same tag a second
+         time, now with an empty body. *)
+      antiq_tag := ("", 0, Position.none);
       C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} {level = level} {cartouche = (body_text, body_pos)}
     end
 
@@ -435,6 +465,37 @@ fun antiq_tag_and_string_seen (yypos, yytext) =
     in
       C11_Comments.push_antiquotation {tag = (name, get_pos yypos)} {level = level} {cartouche = (body_text, body_pos)}
     end
+
+(* Overrides the default "fun eof () = Tokens.EOF(Position.none, Position.none)"
+   that "Isabelle_lex_yacc.header ()" already places ahead of this block (see
+   "lex_syms" in LexYacc.thy) - a later binding of the same name simply
+   shadows the earlier one, standard ML, no conflict. Reaching end of input
+   while "antiq_depth" is still nonzero means an antiquotation cartouche
+   opened (see the "ANTIQ" state below) but never found its matching
+   close-cartouche delimiter anywhere in the rest of the source: previously
+   this was silently swallowed - the whole remainder of the file was consumed as antiquotation
+   body text with no diagnostic at all - which is exactly the "unbounded"
+   failure mode the framework's other lexical constructs avoid. "print_error"
+   (already "open"ed via "header ()", exactly like "get_pos"/"report_token"
+   used bare throughout this file) reports it precisely at the cartouche's
+   own start ("antiq_start") rather than at some unrelated, much later
+   position. Deliberately narrow: a plain, well-formed cartouche body may
+   itself legitimately contain "*/" or any other text that would be special
+   outside a cartouche - only genuine end-of-input, not any particular
+   character sequence seen while still inside one, is treated as a sign of a
+   malformed antiquotation. When no cartouche is left open, this also
+   flushes any still-pending bodyless tag (see "antiq_flush_pending_tag") -
+   the same flush the COMMENT/LCOMMENT close rules below perform, needed
+   here too for a "//"-comment's trailing bodyless tag when the source ends
+   without a final newline. *)
+fun eof () =
+    let
+      val _ =
+        if !antiq_depth > 0
+        then print_error ("Unterminated antiquotation body: no matching closing cartouche before the end of input",
+                           !antiq_start, !antiq_start)
+        else antiq_flush_pending_tag ()
+    in Tokens.EOF (Position.none, Position.none) end
 \<close>
 lex_definitions\<open>
 O=[0-7];
@@ -590,7 +651,7 @@ lex_rules\<open>
 <COMMENT>[^*@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
 <COMMENT>\n+                                => (push_raw_fragment (yypos, yytext); lex());
 <COMMENT>"*"+[^*/@\\\n]*                   => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>"*"+"/"                            => (YYBEGIN INITIAL; lex());
+<COMMENT>"*"+"/"                            => (antiq_flush_pending_tag (); YYBEGIN INITIAL; lex());
 
 <COMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
                                             => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
@@ -616,7 +677,7 @@ lex_rules\<open>
 <LCOMMENT>{OPENCART}                       => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
                                                 antiq_depth := 1; antiq_from_block := false;
                                                 antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
-<LCOMMENT>\n                               => (YYBEGIN INITIAL; lex());
+<LCOMMENT>\n                               => (antiq_flush_pending_tag (); YYBEGIN INITIAL; lex());
 
 <ANTIQ>[^\\\n]+                            => (antiq_body_push yytext; lex());
 <ANTIQ>\n+                                  => (antiq_body_push yytext; lex());

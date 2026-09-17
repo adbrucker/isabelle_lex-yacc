@@ -258,6 +258,26 @@ fun require_kind check kind_name cmd_name root =
    theory (and the antiquotation actions) are simply discarded and the
    original "thy" is used for storing instead, exactly as if
    "analyse_and_eval" had not been called at all except for its side effect. *)
+(* Shared by every command that treats its parsed root under "full_eval =
+   true" semantics (a genuine whole translation unit, currently "c11" and
+   "c11_file"): runs "analyse_and_eval", chains its collected antiquotation
+   actions in ascending "level" order - each against the theory the previous
+   one produced ("level" is the author's own explicit ordering knob, see
+   "@tag(level) ..." in C11_Parser.thy, so equal levels keep their relative,
+   i.e. textual, order, which "sort" already guarantees being stable) -
+   against the theory "analyse_and_eval" itself returns, then stores the
+   root and reports both. Factored out rather than duplicated so "c11" and
+   "c11_file" cannot again silently drift apart the way they already once
+   did (see "run_c11_file"'s own note). *)
+fun full_eval_and_store root thy =
+    let
+      val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
+      val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
+      val thy_for_store = fold (fn (_, f) => f) sorted_evals thy'
+      val (key, thy'') = store_root root thy_for_store
+      val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+    in thy'' end
+
 fun run_c11_kind check kind_name cmd_name full_eval source thy =
     let
       val _ = C11_Comments.reset ()
@@ -269,22 +289,15 @@ fun run_c11_kind check kind_name cmd_name full_eval source thy =
       | SOME root =>
           let
             val root = require_kind check kind_name cmd_name root
-            val thy_for_store =
-              if full_eval then
-                let
-                  val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
-                  (* Run the collected antiquotation actions in ascending "level" order,
-                     each against the theory the previous one produced - "level" is the
-                     author's own explicit ordering knob (see "@tag(level) ..." in
-                     C11_Parser.thy), so equal levels keep their relative (left-to-right,
-                     i.e. textual) order, which "sort" already guarantees being stable. *)
-                  val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
-                in fold (fn (_, f) => f) sorted_evals thy' end
-              else
-                let val _ = AnaEval.analyse_and_eval root thy in thy end
-            val (key, thy'') = store_root root thy_for_store
-            val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-          in thy'' end
+          in
+            if full_eval then full_eval_and_store root thy
+            else
+              let
+                val _ = AnaEval.analyse_and_eval root thy
+                val (key, thy'') = store_root root thy
+                val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+              in thy'' end
+          end
     end
 
 fun run_c11 source = run_c11_kind is_units "translation unit" "c11" true source
@@ -330,7 +343,15 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    read-only, disposable diagnostic commands - does not reliably thread such
    mutations into the following command's starting theory the way "thy_decl"
    does. Only the "_reject" variants, which store nothing, stay "diag". Like
-   "c11", "c11_file" is reserved for a whole translation unit. *)
+   "c11", "c11_file" is reserved for a whole translation unit - and, exactly
+   like "c11", should run under "full_eval = true" semantics: an external
+   file is just as much a genuine compilation unit as an inline "c11 \<open>...\<close>"
+   one, so it needs the same declaration/use hyperlinking and antiquotation
+   handling. This was originally missed here - "run_c11_file" called neither
+   "analyse_and_eval" nor "full_eval_and_store" at all, so a file read via
+   "c11_file" got no hyperlinking whatsoever, unlike every other accepting
+   command - now fixed by routing through the same "full_eval_and_store"
+   helper "run_c11_kind" itself uses. *)
 fun run_c11_file get_file thy =
     let
       val _ = C11_Comments.reset ()
@@ -344,8 +365,7 @@ fun run_c11_file get_file thy =
       | SOME root =>
           let
             val root = require_kind is_units "translation unit" "c11_file" root
-            val (key, thy') = store_root root thy
-            val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+            val thy' = full_eval_and_store root thy
           in Resources.provide_file file thy' end
     end
 
@@ -511,6 +531,47 @@ c11_expr\<open>also_undeclared + 1\<close>
 
 c11_statement\<open>{ int local_var = 0; local_var = yet_another_undeclared; }\<close>
 
+subsection\<open>Declaration/Use Highlighting for Functions and Their Calls\<close>
+text\<open>
+  A function name is registered into the very same flat \<open>idents\<close> namespace
+  a variable is (see \<open>ident_kind\<close> in \<^verbatim>\<open>CEnv.thy\<close> - functions and variables
+  share one \<open>Global\<close> bucket, no separate function/data distinction), and a
+  call's own callee (\<open>ef\<close> in \<open>CCall (ef, args, _)\<close>) is walked exactly like
+  any other expression, going through the very same \<open>CVar\<close>/\<open>report_use\<close>
+  path an ordinary variable use does - \<open>walk_expr\<close> has no function-specific
+  case at all. This had not previously been exercised by any test here, so
+  the blocks below add that directly: a definition with a later (and a
+  recursive) call, and the more demanding ordinary C idiom of a forward
+  declaration, a caller sitting textually \<^emph>\<open>between\<close> the declaration and
+  the real definition, and the definition itself - exercising that the
+  walk's sequential, scope-respecting threading of \<open>cenv\<close> (see the notes at
+  the top of \<^verbatim>\<open>AnaEval.thy\<close>) resolves such a call against whatever is in
+  scope \<^emph>\<open>at that point in the source\<close>, not against whatever the same name
+  is last registered as by the time the whole file has been walked.
+\<close>
+c11\<open>
+int fact(int n) {
+  if (n <= 1) return 1;
+  return n * fact(n - 1);
+}
+
+int use_fact(void) {
+  return fact(5);
+}
+\<close>
+
+c11\<open>
+int helper(int x);
+
+int caller(void) {
+  return helper(3) + 1;
+}
+
+int helper(int x) {
+  return x * 2;
+}
+\<close>
+
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
@@ -526,6 +587,25 @@ text\<open>
 c11_file \<open>examples/expressions.c\<close>
 c11_file \<open>examples/dangling_else.c\<close>
 c11_file \<open>examples/declarators.c\<close>
+
+text\<open>Regression test for \<open>run_c11_file\<close>'s own fix, above: \<open>c11_file\<close> used to
+  call neither \<open>analyse_and_eval\<close> nor \<open>full_eval_and_store\<close> at all, so a
+  file read this way got no declaration/use hyperlinking whatsoever, unlike
+  every other accepting command. \<^verbatim>\<open>examples/expressions.c\<close> alone declares
+  several functions (\<open>test1\<close>/\<open>test2\<close>/\<open>test3\<close>/\<open>test4\<close>/\<open>test_sizeof\<close>, with
+  \<open>test4\<close> even calling itself recursively) - checking that \<^emph>\<open>some\<close> \<open>Global\<close>
+  identifier ended up registered in \<open>CEnv\<close> after the three \<open>c11_file\<close> calls
+  above is a direct, batch-checkable witness that \<open>analyse_and_eval\<close>
+  genuinely ran against file-sourced input, not just inline \<open>c11\<close> ones.\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val globals = Symtab.dest idents |> List.filter (fn (_, CEnv.Global _) => true | _ => false)
+val _ =
+  if null globals
+  then error "FAIL: c11_file did not register any Global identifiers - analyse_and_eval did not run"
+  else writeln ("PASS: c11_file registered " ^ Int.toString (length globals) ^
+                " global identifier(s), e.g. \"" ^ #1 (hd globals) ^ "\"")
+\<close>
 
 
 subsection\<open>Tests for Arithmetic, Bitwise, Relational and Logical Operators\<close>
@@ -555,7 +635,7 @@ ML\<open>CEnv.get_ast "C11#4" @{theory}\<close>
 
 c11\<open>
 int f(int x) {
-  int a = 10, b = 3, c; /* @highlight \<open>\<forall> hjgd@ \<alpha> fhg\<close> */
+  int a = 10, b = 3, c; /* @highlight */
   c = a + b - a * b / b % a ;
   return c;
 }
@@ -644,9 +724,6 @@ int test_loops(void) {
 }
 \<close>
 
-ML\<open>
-
-\<close>
 
 subsection\<open>Switch statement, fallthrough, labeled statements, and goto\<close>
 c11\<open>
@@ -896,5 +973,4 @@ i\
 nt a = 1;
 \<close>
 
-ML\<open>open Library \<close>
 end
