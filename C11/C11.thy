@@ -37,7 +37,7 @@ begin
 
 text\<open>
   This theory implements the ANSI C11 grammar as a ml-lex/ml-yacc lexer/parser pair,
-  ported from the reference grammar published at
+  ported from the reference grammar published at 
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
   standard. Semantic actions build a real abstract syntax tree, defined in
