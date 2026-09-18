@@ -70,7 +70,18 @@ datatype ident_kind = Global of (pos C_Ast.cDeclaration)
 
 datatype type_ident = NOT_YET_DEFINED
 
-type 'a type_antiq_fun = 'a * pos C_Ast.root * int -> string ->  theory -> theory
+(* The cartouche/string body handed to a handler now carries its own source
+   position alongside its text ("pos", the antiquotation's "cartouche"
+   payload's own position - see C11_Parser.thy's "antiq_body_finish"/
+   "antiq_tag_and_string_seen" and the "comment" datatype in c_ast.ML) -
+   previously only the bare "string" reached the handler, discarding this
+   position entirely (it existed in the AST, just never threaded past
+   "check_antiq"). A handler that only cares about the text can still ignore
+   it; "term" (AnaEval.thy) needs it to build a genuinely position-carrying
+   "Input.source" for Isabelle's own term parser, so hovering over a symbol
+   *inside* the parsed term links back to *that* symbol's own place in the
+   C source, not to some unrelated fallback position. *)
+type 'a type_antiq_fun = 'a * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
 
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,

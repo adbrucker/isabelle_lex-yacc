@@ -229,14 +229,16 @@ end
    whichever node the walk reaches *first* (which, since every "walk_*"
    checks its own antiquotations before recursing into its children, is
    always the outermost of any nodes genuinely tied at one position) is the
-   one that wins. *)
+   one that wins. The handler receives "(body, body_pos)", not just "body" -
+   see "type_antiq_fun" in CEnv.thy for why the cartouche's own position now
+   travels all the way to the handler instead of being discarded here. *)
 fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo)
     : (int * (theory -> theory)) list =
   case ni of
     C_Ast.OnlyPos _ => []
   | C_Ast.NodeInfo (cs, _) =>
       List.mapPartial
-        (fn c as C_Ast.Antiquotation ({tag = (tag, _)}, {level}, {cartouche = (body, _)}) =>
+        (fn c as C_Ast.Antiquotation ({tag = (tag, _)}, {level}, {cartouche = (body, body_pos)}) =>
               if Dispatched_Antiqs.already_dispatched c then NONE
               else
                 let val mk {c_antiq, ...} = cenv in
@@ -246,7 +248,7 @@ fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo
                              quote tag)
                   | SOME antiq_fun =>
                       (Dispatched_Antiqs.mark c;
-                       SOME (level, antiq_fun (cenv, as_root (), level) body))
+                       SOME (level, antiq_fun (cenv, as_root (), level) (body, body_pos)))
                 end
           | C_Ast.Raw_txt _ => NONE)
         cs
@@ -804,19 +806,19 @@ declare [[ML_catch_all = true]]
 
 ML\<open>
 val CENV = Unsynchronized.ref(CEnv.empty_cenv);
-val probe_cenv = let fun probe (cenv, _ , _) _ thy = (CENV := cenv; thy) 
+val probe_cenv = let fun probe (cenv, _ , _) (_ : string * Position.T) thy = (CENV := cenv; thy)
                  in  CEnv.store_antiq ("probe_cenv",  probe) end
 
 
 val AST = Unsynchronized.ref((C_Ast.Units []): (Position.T C_Ast.root) )
-val probe_ast = let fun probe (_, c_ast , l) _ thy = 
-                              (writeln("Level: "^ Int.toString l); 
+val probe_ast = let fun probe (_, c_ast , l) (_ : string * Position.T) thy =
+                              (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ C_Ast.pp_root c_ast);
-                               AST := c_ast; thy) 
+                               AST := c_ast; thy)
                 in  CEnv.store_antiq ("probe_ast",  probe) end
 
 
-val highlight = let fun probe (_, c_ast , _) _ thy =
+val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
                               (Position.report (AnaEval.pos_of_root c_ast) Markup.intensify;
                                thy)
                 in  CEnv.store_antiq ("highlight",  probe) end
@@ -829,15 +831,31 @@ val highlight = let fun probe (_, c_ast , _) _ thy =
    genuine, checked HOL proposition, not just stored text. A demo/dummy
    registration exactly like the three above (stashes into a ref for
    inspection, returns "thy" unchanged) - not a real verification-condition-
-   generation system. "Syntax.read_term"'s own failure is re-raised with the
-   antiquotation's resolved closest-context position appended
-   (\<^ML>\<open>AnaEval.pos_of_root\<close>, i.e. §B's "ctx"-derived root, not a position
-   inside the term itself - the cartouche body is plain text, see the note
-   on "cartouche" in C11_Parser.thy/c_ast.ML: it already carries its own
-   whole-body position, separate from the tag's, which is enough to point at
-   *this* antiquotation, just not at a specific symbol within a multi-token
-   term). Caught as a bare \<^ML>\<open>exn\<close>, not \<^ML>\<open>ERROR\<close>: a genuine syntax/type
-   failure from \<^ML>\<open>Syntax.read_term\<close> comes back wrapped as
+   generation system.
+
+   Reads via an "Input.source", not a bare string, exactly the way Isabelle's
+   own \<^verbatim>\<open>Args.term\<close> reads a term from the *outer* token stream
+   (\<^verbatim>\<open>Token.inner_syntax_of\<close>/\<^verbatim>\<open>Syntax.implode_input\<close>): a bare string handed
+   to \<^ML>\<open>Syntax.read_term\<close> carries no position of its own, so Isabelle falls
+   back to whatever ambient position happens to be active - here, that turned
+   out to be the antiquotation's own *resolved C_Ast context* position (§B's
+   "ctx"-derived root), not any position inside the term text itself. In
+   practice this meant hovering over a symbol *inside* the parsed term (e.g.
+   the "0" or the "@" of a list-append) flickered between unrelated C-source
+   locations, since every symbol in the term ended up sharing that one
+   ambient position rather than each having its own. \<open>body_pos\<close> - now
+   threaded all the way from \<open>check_antiq\<close> (see \<open>type_antiq_fun\<close> in
+   \<^verbatim>\<open>CEnv.thy\<close>, previously discarded there) - is the cartouche's own real
+   source range, so \<^ML>\<open>Syntax.implode_input\<close> can encode it as YXML position
+   markup that \<^ML>\<open>Syntax.read_term\<close> decodes back into a genuine per-symbol
+   position for every token of the term, exactly as if the term had been
+   written directly in an outer-syntax \<open>@{term \<open>...\<close>}\<close> antiquotation.
+
+   \<^ML>\<open>Syntax.read_term\<close>'s own failure is re-raised with the antiquotation's
+   resolved closest-context position appended (\<^ML>\<open>AnaEval.pos_of_root\<close>) for
+   cases where the failure itself has no better position to offer (e.g. an
+   entirely empty body). Caught as a bare \<^ML>\<open>exn\<close>, not \<^ML>\<open>ERROR\<close>: a genuine
+   syntax/type failure from \<^ML>\<open>Syntax.read_term\<close> comes back wrapped as
    \<^ML>\<open>Par_Exn\<close> (Isabelle's parallel-checking exception bundle), not a bare
    \<^ML>\<open>ERROR\<close>, so \<open>handle ERROR msg => ...\<close> alone would never actually
    catch it - confirmed empirically, not merely inferred. \<^ML>\<open>Runtime.exn_message\<close>
@@ -849,10 +867,21 @@ val highlight = let fun probe (_, c_ast , _) _ thy =
 val TERM_PROBE = Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
 val term_antiq =
   let
-    fun probe (_, c_ast, _) body thy =
+    fun probe (_, c_ast, _) (body, body_pos) thy =
       let
         val ctxt = Proof_Context.init_global thy
-        val t = Syntax.read_term ctxt body
+        (* "body_pos" is already a single merged range position (built via
+           "Position.range_position (start, end)" in C11_Parser.thy), not the
+           "Position.range" (a genuine start/end pair) "Input.source" needs -
+           reconstruct that pair the same way "name_range" (above) rebuilds
+           an end position from a start plus known text: "no_range_position"
+           recovers the start (same offset, same props, end_offset zeroed),
+           then "symbol_explode" re-advances through "body"'s own text to
+           recover the end. *)
+        val start_pos = Position.no_range_position body_pos
+        val end_pos = Position.symbol_explode body start_pos
+        val encoded = Syntax.implode_input (Input.source true body (start_pos, end_pos))
+        val t = Syntax.read_term ctxt encoded
           handle exn =>
             if Exn.is_interrupt exn then Exn.reraise exn
             else error ("term antiquotation: " ^ Runtime.exn_message exn ^

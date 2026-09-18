@@ -896,7 +896,7 @@ text\<open>
 ML\<open>
 fun dummy_antiq tag =
   let
-    fun probe (_, _, level) body thy =
+    fun probe (_, _, level) (body, _ : Position.T) thy =
       (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
                 quote body);
        thy)
@@ -1094,8 +1094,8 @@ text\<open>The \<open>term\<close> antiquotation: parses its cartouche body as a
   ACSL-style \<open>requires\<close>/\<open>ensures\<close> clause written this way is now a real,
   checked HOL proposition, not just stored text.\<close>
 c11\<open>
-//@ term \<open>1 + (1::nat) = 2\<close>
-int test_term_anchor;
+//@ term \<open>\<lambda>x. [1 + (0::nat)] @ [] = [2+x]\<close>
+int test_term_anchor;              
 \<close>
 ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
    else error "TERM_PROBE ref was never updated"\<close>
