@@ -9,7 +9,8 @@ void test1() {
 }
 
 int test2(int a, int b) {
-  return a ? (void)a,b : a;
+  /* @ highlight
+     @ probe_ast */ return a ? (void)a,b : a;
 }
 
 int test3(int a, int b, int c) {
@@ -18,7 +19,7 @@ int test3(int a, int b, int c) {
 
 int test4() {
   test4();
-  return 0;
+  /* @ highlight */ return 0;
 }
 
 struct X0 { struct { struct { int c[10][9]; } b; } a; };

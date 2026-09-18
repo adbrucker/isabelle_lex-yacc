@@ -270,19 +270,30 @@ structure C11_Comments = struct
      token was ever attached under.
 
      Deliberately non-destructive (no entry ever removed on a successful
-     lookup): more than one grammar action can legitimately want the exact
-     same leftmost position, and LALR's bottom-up reduction order fixes
-     which one runs first, not which one "should" own the comment. The
-     clearest case is "expression_statement: expression SEMI", whose own
-     nodeInfo and its wrapped expression's nodeInfo both start at the
-     expression's own leftmost token: with a destructive claim, the *inner*
-     expression reduces first and silently takes the comment, leaving the
-     *outer* statement's own nodeInfo - almost always the one actually
-     inspected - with none, even though the comment was captured correctly
-     somewhere. Every node genuinely starting at "p" now sees the same
-     comments; a caller wanting only one copy (e.g. after combining several
-     nodes into one, where duplication would otherwise compound) already has
-     "merge_nodeInfo" in c_ast.ML to de-duplicate explicitly. *)
+     lookup) - and, importantly, for a *different* reason than it might seem:
+     it is tempting to make this destructive to get "each comment dispatched
+     exactly once" for free, on the reasoning that LALR reduces bottom-up, so
+     the most deeply nested grammar rule sharing a leftmost position always
+     claims first. That was tried and reverted: this grammar's leaf-level
+     rules build their *own* nodeInfo too, for constructors the walk in
+     AnaEval.thy never inspects for antiquotations at all - e.g. "INT (CIntType
+     (ndi INTleft))" in the "type_specifier" rule, which reduces (and so
+     "claim"s) before the enclosing "declaration" rule's own "ndi2" call for
+     the very same "CDecl" a "@tag ..." comment on a plain "int x;" is
+     actually attached to. A destructive claim there means "CIntType" (never
+     walked) silently steals and loses the comment, before the "CDecl" node
+     that the whole antiquotation-evaluation redesign (see AnaEval.thy) relies
+     on ever sees it - not a rare case, but every ordinary declaration. More
+     than one grammar action can legitimately want the exact same leftmost
+     position, and LALR's bottom-up reduction order fixes which one runs
+     first, not which one actually gets *walked* later - keeping this
+     non-destructive means every node genuinely starting at "p" still sees
+     the comment, whether or not the walk ever inspects it. "Exactly once
+     dispatched" is instead enforced downstream, in AnaEval.thy's
+     "check_antiq", which tracks already-dispatched antiquotation values by
+     equality (comments are built from strings/positions, both "eqtype"s) and
+     skips a repeat - safe regardless of how many *walked* nodes end up
+     seeing the same physical comment this way. *)
   fun claim (p : Position.T) : Position.T C_Ast.comment list =
     case AList.lookup (op =) (#attached (Synchronized.value state)) p of
       NONE => []

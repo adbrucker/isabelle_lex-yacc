@@ -648,6 +648,8 @@ text\<open>
   \<open>\<dots>\<close>), not code written for this theory.
 \<close>
 c11_file \<open>examples/expressions.c\<close>
+ML\<open>Position.file_of (AnaEval.pos_of_root (!AST))\<close>
+
 c11_file \<open>examples/dangling_else.c\<close>
 c11_file \<open>examples/declarators.c\<close>
 
@@ -681,7 +683,7 @@ c11\<open>
 int test_arith(void) {
   int a = 10, b = 3, c; /* @ probe_ast \<open>hjgfhg\<close> */
   c = a + b - a * b / b % a ;
-  c = (a << 1) >> 1; /* bla */
+  c = (a << 1) >> 1; /* blabla @ highlight */
   c = (a & b) | (a ^ b);
   c = ~a & !b;
   c = a < b || a > b;
@@ -691,8 +693,6 @@ int test_arith(void) {
   return c;
 }
 \<close>
-
-ML\<open>\<close>
 
 ML\<open>CEnv.get_ast "C11#4" @{theory}\<close>
 
@@ -940,6 +940,7 @@ text\<open>
 c11\<open>
 /*@ requires "n >= 0"
   @ ensures "result >= 0"
+  @ highlight
  */
 int abs(int n) {
   if (n < 0) return -n;
@@ -980,6 +981,124 @@ c11\<open>
 /* just a "quoted" word here, no tag in sight */
 int a = 0;
 \<close>
+
+subsection\<open>Exactly-Once Dispatch, an Always-Defined Context, and \<open>term\<close>\<close>
+text\<open>
+  \<open>analyse_and_eval\<close> threads a second, downward-only \<open>ctx\<close> parameter through
+  every walk function (see the design note at the top of \<^verbatim>\<open>AnaEval.thy\<close>):
+  \<open>walk_expr\<close>/\<open>walk_stat\<close> always push their own node, at every level of
+  nesting, so a comment resolves to the \<^emph>\<open>closest\<close> enclosing expression/
+  statement/unit rather than only to a whole top-level declaration or
+  statement; a node kind that used to \<open>error "...not supported..."\<close> (a
+  block-local declaration, a \<open>for\<close>-loop's own clause, a function parameter, a
+  cast's abstract type-name) now simply falls back to its closest enclosing
+  context instead. Separately, \<open>check_antiq\<close> tracks already-dispatched
+  antiquotation \<^emph>\<open>values\<close> (\<^verbatim>\<open>Dispatched_Antiqs\<close>) so a single physical comment
+  is never evaluated twice, however many AST nodes reachable from the walk
+  happen to share its leftmost source position.
+\<close>
+ML\<open>
+val COUNT = Unsynchronized.ref 0
+val counting_antiq = 
+       let fun probe _ _ thy = (COUNT := !COUNT + 1; thy) 
+       in CEnv.store_antiq ("counter", probe) end
+\<close>
+setup\<open>counting_antiq\<close>
+
+text\<open>Exactly-once dispatch: the comment sits right before the leftmost token
+  of both the wrapped expression's own \<open>nodeInfo\<close> and the enclosing
+  expression-statement's own \<open>nodeInfo\<close> - the classic shared-position case
+  that used to double-dispatch.\<close>
+c11\<open>
+int test_dispatch_once(void) {
+  /*@ counter */ 1 + 1;
+  return 0;
+}
+\<close>
+ML\<open>if !COUNT = 1 then ()
+   else error ("Antiquotation dispatched " 
+               ^ Int.toString (!COUNT) 
+               ^ " times, expected exactly 1")\<close>
+
+text\<open>Always-defined context, at four different granularities that used to
+  either \<open>error\<close> outright or only ever resolve to one whole top-level
+  declaration: a block-local declaration resolves to the enclosing compound
+  statement; a \<open>for\<close>-loop's own declaration clause resolves to the enclosing
+  \<open>for\<close> statement; a function parameter resolves to the shared top-level
+  unit (a function header never pushes its own frame); and - the finest
+  granularity, needed specifically for cast-level annotations - a
+  sub-expression nested three levels deep (inside a multiplication, inside a
+  cast, inside an addition) resolves to exactly that sub-expression, not the
+  cast, not the addition, not the enclosing statement.\<close>
+c11\<open>
+int test_ctx_block_local(void) {
+  /*@ probe_ast
+    @ highlight */ 
+  int x = 5;
+  return x;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CCompound _) => ()
+   | other => error ("Expected Stmt (CCompound _), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_for_clause(void) {
+  int s = 0;
+  for (/*@ probe_ast */ int i = 0; i < 3; i = i + 1) { s = s + i; }
+  return s;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CFor _) => ()
+   | other => error ("Expected Stmt (CFor _), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_param(/*@ probe_ast */ int p) {
+  return p;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Units [C_Ast.CTranslUnit _] => ()
+   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_finest(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Expr (C_Ast.CBinary (_,
+                   C_Ast.CVar (C_Ast.Ident ("b", _, _), _),
+                   C_Ast.CVar (C_Ast.Ident ("c", _, _), _), _)) => ()
+   | other => error ("Expected Expr (CBinary (_, b, c, _)), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>Top-level sharing: a comment on one global declaration among several now
+  resolves to the whole original translation unit, not just the one
+  declaration it sits on.\<close>
+c11\<open>
+int test_ctx_g1;
+int test_ctx_g2;
+/*@ probe_ast */
+int test_ctx_g3;
+\<close>
+ML\<open>case !AST of
+     C_Ast.Units [C_Ast.CTranslUnit (eds, _)] =>
+       if length eds = 3 then ()
+       else error ("Shared root holds " ^ Int.toString (length eds) ^ " declarations, expected 3")
+   | other => error ("Expected Units [CTranslUnit (_, _)], got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>The \<open>term\<close> antiquotation: parses its cartouche body as a genuine HOL
+  term against the theory's current context via \<^ML>\<open>Syntax.read_term\<close> - an
+  ACSL-style \<open>requires\<close>/\<open>ensures\<close> clause written this way is now a real,
+  checked HOL proposition, not just stored text.\<close>
+c11\<open>
+//@ term \<open>1 + (1::nat) = 2\<close>
+int test_term_anchor;
+\<close>
+ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
+   else error "TERM_PROBE ref was never updated"\<close>
 
 section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
 
