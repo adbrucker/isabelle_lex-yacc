@@ -3,11 +3,11 @@
    cartouche body. Dumps the actual parsed C_Ast.comment values (tag, level,
    body text) for a handful of representative comments, so the effect of the
    lexer rules in C11_Parser.thy can be inspected directly rather than taken
-   on faith. Not part of the regression suite (C11.thy already carries the
-   permanent versions of these test cases) - this is a standalone,
+   on faith. Not part of the regression suite (C11_Tests.thy already carries
+   the permanent versions of these test cases) - this is a standalone,
    re-runnable probe kept for manual inspection. *)
 theory AntiqProbe
-  imports "C11"
+  imports "C11_Tests"
 begin
 
 text\<open>A cartouche body with an explicit level.\<close>
@@ -33,7 +33,7 @@ text\<open>
   ACSL-style "@ requires \"...\"" / "@ ensures \"...\"": the leading "@" is
   ACSL's own line-continuation marker, which already matches the tag shape,
   so with the quoted-string body extension these become genuine (level-0)
-  antiquotation nodes - see the matching note in C11.thy.
+  antiquotation nodes - see the matching note in C11_Tests.thy.
 \<close>
 c11\<open>
 /*@ requires "n >= 0"

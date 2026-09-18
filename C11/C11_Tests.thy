@@ -1,0 +1,731 @@
+(***********************************************************************************
+ * Copyright (c) University of Paris-Saclay
+ *
+ * Author : Burkhart Wolff
+ *
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * * Redistributions of source code must retain the above copyright notice, this
+ *
+ * * Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ ***********************************************************************************)
+
+theory C11_Tests
+  imports "C11"
+begin
+
+text\<open>
+  The test suite for the C11 grammar/parser/\<open>analyse_and_eval\<close> machinery defined in
+  \<^verbatim>\<open>C11.thy\<close> - split out into its own theory so that \<^verbatim>\<open>C11.thy\<close> itself stays a light
+  import for other theories that only want the \<open>c11\<close>/\<open>c11_ident\<close>/\<open>c11_expr\<close>/
+  \<open>c11_statement\<close>/\<open>c11_file\<close> commands, without pulling in this whole test suite.
+  \<^verbatim>\<open>C11.thy\<close> is the project root to import going forward; this theory is built only
+  as part of a full/global session build.
+\<close>
+
+section\<open>Testing the generated C11 Parser with Syntax Highlighting\<close>
+
+subsection\<open>A more Comprehensive Program Text\<close>
+
+c11\<open>
+#include <stdio.h>
+#include "local_header.h"
+
+#define MAX_SIZE = 100
+#define SQUARE(x) = x * x
+
+#ifdef MAX_SIZE
+int buffer[MAX_SIZE];
+#else
+int buffer[10];
+#endif
+
+#ifndef NDEBUG
+int debug_flag = 1;
+#endif
+
+int max(int a, int b) {
+  if (a > b)
+    return a;
+  else
+    return b;
+}
+
+int main(void) {
+  int x = max(3, 42);
+  return x;
+}
+\<close>
+
+
+subsection\<open>Declaration/Use Highlighting, Including Undeclared Names\<close>
+text\<open>
+  \<open>AnaEval.report_use\<close> hyperlinks a name's use back to its declaration when
+  one is found in scope; a name found \<^emph>\<open>nowhere\<close> in scope is reported with
+  \<^ML>\<open>Markup.bad ()\<close> instead - a highlight/underline in the IDE, not a
+  hyperlink, and deliberately \<^emph>\<open>not\<close> an \<open>error\<close>: this fragment has no
+  cross-file symbol table, so "undeclared in what this parse saw" routinely
+  just means "declared in a header this recognizer does not itself follow"
+  (\<open>#include\<close> is purely syntactic here - see the preprocessor fragment above),
+  not necessarily a real defect. The tests below exercise this directly: each
+  references a name that is never declared anywhere in the same fragment, and
+  each is expected to succeed exactly like its declared-name counterparts
+  elsewhere in this theory - only the markup differs, not the outcome.
+\<close>
+c11\<open>
+int g;
+
+int f(void) {
+  return g + totally_undeclared;
+}
+\<close>
+
+text\<open>The same, for a standalone \<open>c11_expr\<close>/\<open>c11_statement\<close> fragment - these
+  run \<open>analyse_and_eval\<close> purely for its hyperlinking side effect (see
+  \<open>run_c11_kind\<close>'s \<open>full_eval\<close> flag above), which includes this "bad" markup
+  just the same.\<close>
+c11_expr\<open>also_undeclared + 1\<close>
+
+c11_statement\<open>{ int local_var = 0; local_var = yet_another_undeclared; }\<close>
+
+subsection\<open>Declaration/Use Highlighting for Functions and Their Calls\<close>
+text\<open>
+  A function name is registered into the very same flat \<open>idents\<close> namespace
+  a variable is (see \<open>ident_kind\<close> in \<^verbatim>\<open>CEnv.thy\<close> - functions and variables
+  share one \<open>Global\<close> bucket, no separate function/data distinction), and a
+  call's own callee (\<open>ef\<close> in \<open>CCall (ef, args, _)\<close>) is walked exactly like
+  any other expression, going through the very same \<open>CVar\<close>/\<open>report_use\<close>
+  path an ordinary variable use does - \<open>walk_expr\<close> has no function-specific
+  case at all. This had not previously been exercised by any test here, so
+  the blocks below add that directly: a definition with a later (and a
+  recursive) call, and the more demanding ordinary C idiom of a forward
+  declaration, a caller sitting textually \<^emph>\<open>between\<close> the declaration and
+  the real definition, and the definition itself - exercising that the
+  walk's sequential, scope-respecting threading of \<open>cenv\<close> (see the notes at
+  the top of \<^verbatim>\<open>AnaEval.thy\<close>) resolves such a call against whatever is in
+  scope \<^emph>\<open>at that point in the source\<close>, not against whatever the same name
+  is last registered as by the time the whole file has been walked.
+\<close>
+c11\<open>
+int fact(int n) {
+  if (n <= 1) return 1;
+  return n * fact(n - 1);
+}
+
+int use_fact(void) {
+  return fact(5);
+}
+\<close>
+
+c11\<open>
+int helper(int x);
+
+int caller(void) {
+  return helper(3) + 1;
+}
+
+int helper(int x) {
+  return x * 2;
+}
+\<close>
+
+subsection\<open>Declaration/Use Highlighting for Preprocessor Constants and Macros\<close>
+text\<open>
+  \<open>#define\<close> constants and function-like macros register into \<open>cenv\<close> exactly
+  like an ordinary declaration (see \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> in
+  \<^verbatim>\<open>CEnv.thy\<close>, and the note above \<open>walk_pp_directive\<close> in \<^verbatim>\<open>AnaEval.thy\<close>),
+  so a later \<open>CVar\<close>/\<open>CCall\<close> reference to the macro's name hyperlinks to its
+  \<open>#define\<close> the same way a reference to an ordinary global does - this
+  fragment never expands macros, so such a reference is, syntactically, just
+  another use of that name. \<open>#ifdef name\<close>/\<open>#ifndef name\<close> is \<^emph>\<open>also\<close> a use of
+  \<open>name\<close> (testing whether it is defined), not merely a branch condition to
+  recurse past - previously the tested name was not walked/reported at all
+  (fixed in \<open>walk_pp_directive\<close>'s \<open>CPPIfdef\<close> case, above). None of this had
+  a dedicated test before: the "comprehensive program" test further below
+  happens to use \<open>MAX_SIZE\<close> once, but never calls its own function-like
+  macro \<open>SQUARE\<close> anywhere, and no test exercised \<open>#ifdef\<close>/\<open>#ifndef\<close> at all
+  as a use site - including the case of testing a name that is genuinely
+  undeclared anywhere in the same parse, which (exactly like an ordinary
+  undeclared variable, see above) should still succeed, just with
+  \<^ML>\<open>Markup.bad ()\<close> instead of a hyperlink.
+\<close>
+c11\<open>
+#define ANSWER = 42
+#define DOUBLE(x) = x * 2
+
+int use_constant(void) {
+  return ANSWER + 1;
+}
+
+int use_macro(void) {
+  return DOUBLE(ANSWER);
+}
+
+#ifdef ANSWER
+int defined_branch = ANSWER;
+#endif
+
+#ifndef NOT_DEFINED_ANYWHERE
+int else_branch = 0;
+#endif
+\<close>
+
+text\<open>Hard, batch-checkable confirmation that the block above actually
+  registered \<open>ANSWER\<close>/\<open>DOUBLE\<close> as \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> in \<open>CEnv\<close>, rather
+  than merely parsing without error - a parse also succeeds when a name
+  resolves nowhere (that is exactly what \<^ML>\<open>Markup.bad ()\<close> is for), so
+  successful parsing alone would not witness that registration/resolution
+  actually happened.\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup idents "ANSWER" of
+    SOME (CEnv.Cpp_const _) => writeln "PASS: ANSWER registered as Cpp_const"
+  | other => error ("FAIL: ANSWER not registered as Cpp_const: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+val _ =
+  case Symtab.lookup idents "DOUBLE" of
+    SOME (CEnv.Cpp_macro _) => writeln "PASS: DOUBLE registered as Cpp_macro"
+  | other => error ("FAIL: DOUBLE not registered as Cpp_macro: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+\<close>
+
+subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
+text\<open>
+  \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
+  C11 conformance test suite (via its copy in the Isabelle_C AFP entry, see
+  \<^verbatim>\<open>examples/README.md\<close> for provenance and license), the same files
+  Isabelle_C's own \<open>C0.thy\<close> exercises its lexer/parser against. None of them
+  use this fragment's unsupported constructs (real \<open>#define\<close>, \<open>#if\<close>/\<open>#elif\<close>,
+  backslash-newline), so all three are expected to succeed here too - genuine,
+  non-trivial C11 (compound literals, deeply nested declarators, anonymous
+  struct/union members, \<open>[*]\<close> parameter arrays, the dangling-\<open>else\<close> case,
+  \<open>\<dots>\<close>), not code written for this theory.
+\<close>
+c11_file \<open>examples/expressions.c\<close>
+ML\<open>Position.file_of (AnaEval.pos_of_root (!AST))\<close>
+
+c11_file \<open>examples/dangling_else.c\<close>
+c11_file \<open>examples/declarators.c\<close>
+
+text\<open>Regression test for \<open>run_c11_file\<close>'s own fix, above: \<open>c11_file\<close> used to
+  call neither \<open>analyse_and_eval\<close> nor \<open>full_eval_and_store\<close> at all, so a
+  file read this way got no declaration/use hyperlinking whatsoever, unlike
+  every other accepting command. \<^verbatim>\<open>examples/expressions.c\<close> alone declares
+  several functions (\<open>test1\<close>/\<open>test2\<close>/\<open>test3\<close>/\<open>test4\<close>/\<open>test_sizeof\<close>, with
+  \<open>test4\<close> even calling itself recursively) - checking that \<^emph>\<open>some\<close> \<open>Global\<close>
+  identifier ended up registered in \<open>CEnv\<close> after the three \<open>c11_file\<close> calls
+  above is a direct, batch-checkable witness that \<open>analyse_and_eval\<close>
+  genuinely ran against file-sourced input, not just inline \<open>c11\<close> ones.\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val globals = Symtab.dest idents |> List.filter (fn (_, CEnv.Global _) => true | _ => false)
+val _ =
+  if null globals
+  then error "FAIL: c11_file did not register any Global identifiers - analyse_and_eval did not run"
+  else writeln ("PASS: c11_file registered " ^ Int.toString (length globals) ^
+                " global identifier(s), e.g. \"" ^ #1 (hd globals) ^ "\"")
+\<close>
+
+
+subsection\<open>Tests for Arithmetic, Bitwise, Relational and Logical Operators\<close>
+text\<open>
+  The following blocks exercise the expression language (\<open>expression\<close> down to
+  \<open>primary_expression\<close>) more broadly, roughly one grammar layer at a time.
+\<close>
+
+c11\<open>
+int test_arith(void) {
+  int a = 10, b = 3, c; /* @ probe_ast \<open>hjgfhg\<close> */
+  c = a + b - a * b / b % a ;
+  c = (a << 1) >> 1; /* blabla @ highlight */
+  c = (a & b) | (a ^ b);
+  c = ~a & !b;
+  c = a < b || a > b;
+  c = a <= b && a >= b;
+  c = a == b;
+  c = a != b;
+  return c;
+}
+\<close>
+
+ML\<open>CEnv.get_ast "C11#4" @{theory}\<close>
+
+c11\<open>
+int f(int x) {
+  int a = 10, b = 3, c; /* @highlight */
+  c = a + b - a * b / b % a ;
+  return c;
+}
+\<close>
+
+declare [[ML_print_depth=100]]
+ML\<open>CEnv.get_ast "C11#5" @{theory}\<close>
+
+
+subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
+c11\<open>
+int test_assign(void) {
+  int a = 1, b = 2, r;
+  a += 1; a -= 1; a *= 2; a /= 2; a %= 3;
+  a <<= 1; a >>= 1; a &= 1; a |= 2; a ^= 1;
+  r = a++;
+  r = ++a;
+  r = b--;
+  r = --b;
+  r = (a = b);
+  r = a > b ? a : b;
+  r = (a += 1, b += 1, a + b);
+  return r;
+}
+\<close>
+
+subsection\<open>Pointers, arrays, structs, casts, sizeof/alignof, and generic selection\<close>
+c11\<open>
+struct point { int x; int y; };
+
+int test_misc(int n, ...) {
+  int arr[5] = {1, 2, 3, 4, 5};
+  int *p = &arr[0];
+  struct point pt = { .x = 1, .y = 2 };
+  struct point *pp = &pt;
+  int s1 = sizeof(int);
+  int s2 = sizeof arr;
+  int s3 = _Alignof(int);
+  int c1 = (int) 3.14;
+  double c2 = (double) n;
+  int g = _Generic(n, int: 1, default: 0);
+  int cl = (int[]){1, 2, 3}[0];
+  return *p + arr[n] + pt.x + pp->y + s1 + s2 + s3 + c1 + g + cl;
+}
+\<close>
+
+text\<open>
+  The following blocks exercise statement-level constructs (\<open>statement\<close> and its
+  alternatives): iteration, selection/switch, and jump statements including \<open>goto\<close>.
+\<close>
+
+subsection\<open>Iteration statements: while, do-while, and all four for-loop forms\<close>
+c11\<open>
+int test_loops(void) {
+  int i = 0;
+  int sum = 0;
+
+  while (i < 10) {
+    sum += i;
+    i++;
+  }
+
+  i = 0;
+  do {
+    sum += i;
+    i++;
+  } while (i < 5);
+
+  for (i = 0; i < 10; i++) {
+    if (i == 5)
+      continue;
+    sum += i;
+  }
+
+  for (i = 0; i < 10; )
+    i++;
+
+  for (int j = 0; j < 10; )
+    j++;
+
+  for (int j = 0, k = 10; j < k; j++, k--) {
+    sum += j - k;
+  }
+
+  return sum;
+}
+\<close>
+
+
+subsection\<open>Switch statement, fallthrough, labeled statements, and goto\<close>
+c11\<open>
+int test_switch_goto(int x) {
+  int result = 0;
+
+  switch (x) {
+    case 0:
+      result = 100;
+      break;
+    case 1:
+    case 2:
+      result = 200;
+      break;
+    default:
+      result = -1;
+      break;
+  }
+
+  int i = 0;
+  loop_start:
+  if (i < 5) {
+    result += i;
+    i++;
+    goto loop_start;
+  }
+
+  switch (x) {
+    case 3: {
+      int y = x * 2;
+      result += y;
+    }
+    default:
+      result += 1;
+  }
+
+  return result;
+}
+\<close>
+
+
+
+section\<open>Error-recovery / Malformed-input Tests\<close>
+
+text\<open>Each of the following fragments is syntactically invalid, and \<open>c11_reject\<close>
+  (defined above) fails the theory build if the parser unexpectedly \<^emph>\<open>accepts\<close>
+  one of them, rather than reporting the expected parse error.\<close>
+
+subsection\<open>Unbalanced braces and parentheses\<close>
+c11_reject\<open>
+int main(void) { return 0;
+\<close>
+c11_reject\<open>
+int max(int a, int b { return a; }
+\<close>
+c11_reject\<open>
+int main(void) { return 0; } }
+\<close>
+
+subsection\<open>Missing Separators and dangling Operators\<close>
+c11_reject\<open>
+int x = 5 int y = 6;
+\<close>
+c11_reject\<open>
+int x = 1 + ;
+\<close>
+c11_reject\<open>
+int y = ;
+\<close>
+
+subsection\<open>Keywords vs. Identifiers\<close>
+text\<open>Keywords cannot be used as identifiers.\<close>
+c11_reject\<open>
+int if = 5;
+\<close>
+
+subsection\<open>C11 - Specifics\<close>
+text\<open>Unlike pre-C99 Kernighan\<open>&\<close>Ritchie C, C11 has no implicit \<open>int\<close>:
+     a function definition needs declaration specifiers.\<close>
+c11_reject\<open>
+main(void) { return 0; }
+\<close>
+
+
+subsection\<open>The Preprocessor Fragment\<close>
+text\<open>The preprocessor fragment: a missing header name, and an unterminated \<open>#ifdef\<close>.\<close>
+c11_reject\<open>
+#include
+int x;
+\<close>
+
+c11_reject\<open>
+#ifdef DEBUG
+int x;
+\<close>
+
+section\<open>Antiquotation-carrying Comments (cf. Isabelle_C's \<^verbatim>\<open>C1.thy\<close>)\<close>
+
+text\<open>
+  \<open>analyse_and_eval\<close> (wired into \<open>run_c11_kind\<close> above) errors on any
+  \<open>Antiquotation\<close> whose tag has no handler registered in \<open>CEnv\<close>, so the
+  \<open>@setup\<close>/\<open>@requires\<close>/\<open>@ensures\<close> tags the tests below carry each need one -
+  a dummy is enough here: none of these tests are about what the handler
+  \<^emph>\<open>does\<close>, only about the lexer/parser/\<open>analyse_and_eval\<close> machinery around
+  it, so each dummy simply reports it ran and returns the theory unchanged.
+\<close>
+ML\<open>
+fun dummy_antiq tag =
+  let
+    fun probe (_, _, level) (body, _ : Position.T) thy =
+      (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
+                quote body);
+       thy)
+  in CEnv.store_antiq (tag, probe) end
+\<close>
+setup\<open>dummy_antiq "setup"\<close>
+setup\<open>dummy_antiq "requires"\<close>
+setup\<open>dummy_antiq "ensures"\<close>
+
+text\<open>
+  A line comment carrying a tag and a properly-nested cartouche, adapted from
+  Isabelle_C's own \<open>#include\<close> example (\<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close>). The
+  lexer reports \<open>@setup\<close> and the cartouche as PIDE markup; \<open>analyse_and_eval\<close>
+  dispatches it to the dummy handler just above.
+\<close>
+c11\<open>
+int b;
+//@ setup \<open>Include.append "tmp" [\<open>b\<close>]\<close>
+int a = b;
+\<close>
+
+text\<open>A block-comment variant, with a doubly-nested cartouche.\<close>
+c11\<open>
+/*@ setup \<open>Include.append "tmp" [\<open>b\<close>, \<open>c\<close>]\<close> */
+int a = 0;
+\<close>
+
+text\<open>
+  A Frama-C/ACSL-style annotation comment (Isabelle_C's other supported style):
+  each line is introduced by ACSL's own \<open>@\<close> continuation marker, followed by
+  a bare keyword and a plain double-quoted string. Syntactically this is
+  exactly the \<open>@tag "..."\<close> shape from above, so - now that a quoted string is
+  a recognized alternative to a cartouche body - \<open>requires\<close>/\<open>ensures\<close> are
+  picked up as genuine (level-\<open>0\<close>) antiquotation nodes here, tag and body
+  text alike; nothing about \<open>requires\<close>/\<open>ensures\<close> is otherwise special to the
+  lexer - it has no notion of an ACSL command language, and each dispatches
+  to the same dummy handler as \<open>@setup\<close> above (registered for exactly this
+  reason) - it just happens that ACSL's own annotation syntax already fits
+  the general tag+string shape this fragment recognizes.
+\<close>
+c11\<open>
+/*@ requires "n >= 0"
+  @ ensures "result >= 0"
+  @ highlight
+ */
+int abs(int n) {
+  if (n < 0) return -n;
+  return n;
+}
+\<close>
+
+text\<open>
+  The tag may also carry an optional parenthesized integer \<open>level\<close>
+  (\<open>@tag(N) ...\<close>, \<open>0\<close> when omitted), and the body may be written either as
+  a cartouche, as above, or - an equivalent alternative notation - as a
+  double-quoted string \<open>@tag(N) "..."\<close>; both spellings are recorded
+  identically in the AST (same tag, level, and body text).
+\<close>
+c11\<open>
+int b;
+//@ setup(2) \<open>Include.append "tmp" [\<open>b\<close>]\<close>
+int a = b;
+\<close>
+
+c11\<open>
+/*@ setup(3) "a plain quoted body" */
+int a = 0;
+\<close>
+
+c11\<open>
+/*@ setup "a plain quoted body, default level" */
+int a = 0;
+\<close>
+
+text\<open>
+  A bare quote with no tag anywhere nearby is never mistaken for an
+  antiquotation body: the combined tag+string rule only fires when a quote
+  genuinely follows a tag (modulo horizontal whitespace), so unrelated
+  quoted text elsewhere in a comment keeps parsing as ordinary comment text.
+\<close>
+c11\<open>
+/* just a "quoted" word here, no tag in sight */
+int a = 0;
+\<close>
+
+subsection\<open>Exactly-Once Dispatch, an Always-Defined Context, and \<open>term\<close>\<close>
+text\<open>
+  \<open>analyse_and_eval\<close> threads a second, downward-only \<open>ctx\<close> parameter through
+  every walk function (see the design note at the top of \<^verbatim>\<open>AnaEval.thy\<close>):
+  \<open>walk_expr\<close>/\<open>walk_stat\<close> always push their own node, at every level of
+  nesting, so a comment resolves to the \<^emph>\<open>closest\<close> enclosing expression/
+  statement/unit rather than only to a whole top-level declaration or
+  statement; a node kind that used to \<open>error "...not supported..."\<close> (a
+  block-local declaration, a \<open>for\<close>-loop's own clause, a function parameter, a
+  cast's abstract type-name) now simply falls back to its closest enclosing
+  context instead. Separately, \<open>check_antiq\<close> tracks already-dispatched
+  antiquotation \<^emph>\<open>values\<close> (\<^verbatim>\<open>Dispatched_Antiqs\<close>) so a single physical comment
+  is never evaluated twice, however many AST nodes reachable from the walk
+  happen to share its leftmost source position.
+\<close>
+ML\<open>
+val COUNT = Unsynchronized.ref 0
+val counting_antiq = 
+       let fun probe _ _ thy = (COUNT := !COUNT + 1; thy) 
+       in CEnv.store_antiq ("counter", probe) end
+\<close>
+setup\<open>counting_antiq\<close>
+
+text\<open>Exactly-once dispatch: the comment sits right before the leftmost token
+  of both the wrapped expression's own \<open>nodeInfo\<close> and the enclosing
+  expression-statement's own \<open>nodeInfo\<close> - the classic shared-position case
+  that used to double-dispatch.\<close>
+c11\<open>
+int test_dispatch_once(void) {
+  /*@ counter */ 1 + 1;
+  return 0;
+}
+\<close>
+ML\<open>if !COUNT = 1 then ()
+   else error ("Antiquotation dispatched " 
+               ^ Int.toString (!COUNT) 
+               ^ " times, expected exactly 1")\<close>
+
+text\<open>Always-defined context, at four different granularities that used to
+  either \<open>error\<close> outright or only ever resolve to one whole top-level
+  declaration: a block-local declaration resolves to the enclosing compound
+  statement; a \<open>for\<close>-loop's own declaration clause resolves to the enclosing
+  \<open>for\<close> statement; a function parameter resolves to the shared top-level
+  unit (a function header never pushes its own frame); and - the finest
+  granularity, needed specifically for cast-level annotations - a
+  sub-expression nested three levels deep (inside a multiplication, inside a
+  cast, inside an addition) resolves to exactly that sub-expression, not the
+  cast, not the addition, not the enclosing statement.\<close>
+c11\<open>
+int test_ctx_block_local(void) {
+  /*@ probe_ast
+    @ highlight */ 
+  int x = 5;
+  return x;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CCompound _) => ()
+   | other => error ("Expected Stmt (CCompound _), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_for_clause(void) {
+  int s = 0;
+  for (/*@ probe_ast */ int i = 0; i < 3; i = i + 1) { s = s + i; }
+  return s;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CFor _) => ()
+   | other => error ("Expected Stmt (CFor _), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_param(/*@ probe_ast */ int p) {
+  return p;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Units [C_Ast.CTranslUnit _] => ()
+   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_ctx_finest(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Expr (C_Ast.CBinary (_,
+                   C_Ast.CVar (C_Ast.Ident ("b", _, _), _),
+                   C_Ast.CVar (C_Ast.Ident ("c", _, _), _), _)) => ()
+   | other => error ("Expected Expr (CBinary (_, b, c, _)), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>Top-level sharing: a comment on one global declaration among several now
+  resolves to the whole original translation unit, not just the one
+  declaration it sits on.\<close>
+c11\<open>
+int test_ctx_g1;
+int test_ctx_g2;
+/*@ probe_ast */
+int test_ctx_g3;
+\<close>
+ML\<open>case !AST of
+     C_Ast.Units [C_Ast.CTranslUnit (eds, _)] =>
+       if length eds = 3 then ()
+       else error ("Shared root holds " ^ Int.toString (length eds) ^ " declarations, expected 3")
+   | other => error ("Expected Units [CTranslUnit (_, _)], got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>The \<open>term\<close> antiquotation: parses its cartouche body as a genuine HOL
+  term against the theory's current context via \<^ML>\<open>Syntax.read_term\<close> - an
+  ACSL-style \<open>requires\<close>/\<open>ensures\<close> clause written this way is now a real,
+  checked HOL proposition, not just stored text.\<close>
+c11\<open>
+//@ term \<open>\<lambda>x. [1 + (0::nat)] @ [] = [2+x]\<close>
+int test_term_anchor;              
+\<close>
+ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
+   else error "TERM_PROBE ref was never updated"\<close>
+
+section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+
+text\<open>
+  Adapted from Isabelle_C's own comment-nesting example, which follows
+  \<^url>\<open>https://gcc.gnu.org/onlinedocs/cpp/Initial-processing.html\<close>: a \<open>/* */\<close>
+  comment does \<^emph>\<open>not\<close> nest, so the first \<open>*/\<close> closes it - the code after is
+  live, not still-commented-out. \<open>c11\<close> succeeding on this is itself the test.
+\<close>
+c11\<open>
+/* inside /* inside */ int a = 1;
+// inside // inside until end of line
+int b = 2;
+/* inside
+  // inside
+inside
+*/ int c = 3;
+// inside /* inside until end of line
+int d = 4;
+\<close>
+
+section\<open>What Falls Outside This Fragment (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+
+text\<open>
+  Isabelle_C's directive/macro stress tests use the real C preprocessor's
+  \<open>#define\<close> (juxtaposed replacement-list, no \<open>=\<close>) and general \<open>#if\<close>/\<open>#elif\<close>,
+  neither of which this simplified fragment implements (this theory's own
+  \<open>#define name = expr\<close> and \<open>#ifdef\<close>/\<open>#ifndef\<close> only). \<open>c11_reject\<close> documents
+  the boundary instead of silently skipping it.
+\<close>
+c11_reject\<open>
+#define a zz
+\<close>
+c11_reject\<open>
+#ifdef a
+#elif
+#else
+#if
+#endif
+#endif
+\<close>
+
+text\<open>
+  Likewise, backslash-newline splicing (ISO C11 translation phase 2, which
+  would let a keyword be split across lines by ending each fragment with a
+  backslash, e.g. \<open>i\<close> then a line break then \<open>nt\<close> for \<open>int\<close>) is not
+  implemented: it would require preprocessing the source text before lexing,
+  with its own position-mapping machinery, which is out of scope here. Below,
+  the split keyword is lexed as the two identifiers \<open>i\<close> and \<open>nt\<close> rather
+  than as \<open>int\<close>, so the fragment is correctly rejected.
+\<close>
+c11_reject\<open>
+i\
+nt a = 1;
+\<close>
+
+end
