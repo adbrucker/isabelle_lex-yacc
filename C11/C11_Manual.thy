@@ -289,29 +289,31 @@ subsection\<open>Predefined Header Declarations\<close>
 text\<open>
   Real C code routinely uses names this fragment never itself declares -
   \<open>printf\<close>, \<open>malloc\<close>, \<open>errno\<close>, \<open>assert\<close> - because they come from a system
-  header, and \<open>#include\<close> here is purely syntactic (\<open>\<section>1.1\<close>): no header
-  search, no real preprocessing, nothing textually inserted. Left alone,
-  every such use would be reported exactly like a genuinely undeclared
-  name (\<open>Markup.bad ()\<close>, \<open>\<section>2.2\<close>) - technically correct (this fragment
-  really never saw a declaration for it), but noisy and unhelpful for
-  anything beyond a self-contained toy example.
+  header. Left with no way to tell this fragment about them, every such
+  use would be reported exactly like a genuinely undeclared name
+  (\<open>Markup.bad ()\<close>, \<open>\<section>2.2\<close>) - technically correct (this fragment really
+  never saw a declaration for it), but noisy and unhelpful for anything
+  beyond a self-contained toy example.
 
-  \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>3\<close>) closes this gap the simplest
-  way available: it lets a theory tell \<open>cenv\<close> directly what a header
-  \<^emph>\<open>would\<close> have declared - global variables, macro constants/macros, and
-  function prototypes - by parsing and walking \<open>decl_list\<close> through
-  exactly the same machinery an ordinary top-level declaration in a real
-  \<open>c11\<close> block goes through. Once registered this way, a predefined name is
+  \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>3\<close>) closes this gap by genuinely
+  connecting to \<open>#include\<close>, the one preprocessor form (\<open>\<section>2.1\<close>) that is no
+  longer purely syntactic: walking \<open>decl_list\<close> does \<^emph>\<open>not\<close> itself register
+  any name into \<open>cenv\<close> - it only captures the walk's own effect as a
+  reusable \<open>cenv -> cenv\<close> function and stores \<^emph>\<open>that\<close> under \<open>header\<close>
+  (\<^verbatim>\<open>CEnv.predefined_envs\<close>). A later \<open>#include <header>\<close>, anywhere this
+  \<open>cenv\<close> is in scope, is what actually applies it
+  (\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case) - matching real C, where
+  a header's declarations are only in scope once it is genuinely included,
+  not merely known about somewhere in the theory. \<open>#include <stdio.h>\<close>
+  applies exactly the effect registered under the label \<open>stdio.h\<close>; a
+  header never declared via \<open>c11_predef\<close> anywhere in scope leaves
+  \<open>#include\<close> the no-op it always was. Once applied, a predefined name is
   indistinguishable in \<open>cenv\<close> from one the theory declared itself: it
   hyperlinks, participates in scoping, and can be the target of a struct/
   union/enum tag or member lookup (\<open>\<section>2.2\<close>) exactly the same way.
 
-  Two things are deliberately \<^emph>\<open>not\<close> provided, matching the "basic
-  functionality" this command is scoped to. First, \<open>header\<close> is a label
-  only - \<open>c11_predef\<close> is entirely disconnected from \<open>#include\<close>: writing
-  \<open>#include <stdio.h>\<close> does not automatically bring \<open>printf\<close> into scope,
-  and declaring \<open>printf\<close> via \<open>c11_predef\<close> does not require ever having
-  written that \<open>#include\<close> anywhere. Second, \<open>decl_list\<close> may only declare
+  One thing is deliberately \<^emph>\<open>not\<close> provided, matching the "basic
+  functionality" this command is scoped to: \<open>decl_list\<close> may only declare
   an \<^emph>\<open>interface\<close>, never an implementation - a function \<^emph>\<open>definition\<close>
   (a real \<open>{ ... }\<close> body) is rejected outright, since the point is only to
   let the environment know a name exists and roughly what it looks like,
@@ -341,12 +343,14 @@ text\<open>
     above, document a fragment as correctly \<^emph>\<open>not\<close> that shape - rejected
     either by a genuine parse failure, or by parsing successfully as the
     \<^emph>\<open>wrong\<close> shape (an expression handed to \<open>c11_statement_reject\<close>, say).
-  \<^descr> \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>2.6\<close>) registers a fragment of
-    predefined global variables/macro-definitions/function prototypes into
-    \<open>cenv\<close> - the usual contents of a standard header such as \<open>stdio.h\<close> -
-    so that later uses of names like \<open>printf\<close> are no longer "genuinely
-    undeclared". \<open>header\<close> (e.g.\ \<open>stdio.h\<close>, parsed directly as a dotted
-    \<open>name\<close> token) is a label only, echoed in the confirmation message. A
+  \<^descr> \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>2.6\<close>) captures a fragment of
+    predefined global variables/macro-definitions/function prototypes -
+    the usual contents of a standard header such as \<open>stdio.h\<close> - as a
+    reusable effect on \<open>cenv\<close>, applied only once a later \<open>#include
+    <header>\<close> actually triggers it, so that names like \<open>printf\<close> are no
+    longer "genuinely undeclared" once (and only once) their header is
+    genuinely included. \<open>header\<close> (e.g.\ \<open>stdio.h\<close>, parsed directly as a
+    dotted \<open>name\<close> token) doubles as the key \<open>#include\<close> looks up. A
     function \<^emph>\<open>definition\<close> (a real \<open>{ ... }\<close> body) is rejected outright:
     this command is for declaring an interface, never an implementation.
 \<close>
@@ -375,12 +379,21 @@ c11_reject\<open>
 #define SQUARE(x) x * x
 \<close>
 
-text\<open>A predefined-header fragment, and a later, now-resolvable use of one of its names:\<close>
+text\<open>A predefined-header fragment, and its effect on a later use of one of
+  its names - once \<open>#include <stdio.h>\<close> actually applies it (a bare
+  \<open>#include\<close> is only meaningful as part of a translation unit, so this
+  needs a whole \<open>c11\<close> block, not a standalone \<open>c11_expr\<close>):\<close>
 c11_predef [stdio.h] \<open>
 int printf(const char *format, ...);
 \<close>
 
-c11_expr\<open>printf("hello, %d\n", 42)\<close>
+c11\<open>
+#include <stdio.h>
+
+int greet(void) {
+  return printf("hello, %d\n", 42);
+}
+\<close>
 
 subsection\<open>An Example Session\<close>
 

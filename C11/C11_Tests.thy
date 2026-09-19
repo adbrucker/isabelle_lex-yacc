@@ -343,18 +343,15 @@ int use_unresolved_members(void) {
 
 subsection\<open>\<open>c11_predef\<close>: a Basic Predefined-Header Mechanism\<close>
 text\<open>
-  \<open>c11_predef [header] \<open>decl_list\<close>\<close> registers a fragment of predefined
-  global variables/macro-definitions/function prototypes into \<open>cenv\<close>,
-  exactly the way an ordinary \<open>c11\<close> translation unit's own top-level
-  declarations do (it is parsed and walked the same way, via
-  \<open>full_eval_and_store\<close>) - so that later uses of e.g. \<open>printf\<close>/\<open>malloc\<close>/
-  \<open>errno\<close> are no longer "genuinely undeclared" but hyperlink like any
-  other predeclared name. \<open>header\<close> (a bracketed \<open>name\<close> token, so a dotted
-  form like \<open>stdio.h\<close> parses directly, no quoting needed) is a label only,
-  echoed in the confirmation message - it is deliberately \<^emph>\<open>not\<close> connected
-  to \<open>#include\<close> in any way (which stays purely syntactic, see above): a
-  later \<open>#include <stdio.h>\<close> is not required for these declarations to be
-  in scope, and does not itself trigger anything.
+  \<open>c11_predef [header] \<open>decl_list\<close>\<close> does \<^emph>\<open>not\<close> itself register any
+  declared name into \<open>cenv\<close>'s \<open>idents\<close>/\<open>types\<close> - it only captures walking
+  \<open>decl_list\<close> as a reusable \<open>cenv -> cenv\<close> effect and registers \<^emph>\<open>that\<close>
+  under \<open>header\<close> in \<open>cenv\<close>'s \<open>predefined_envs\<close> (\<^verbatim>\<open>CEnv.thy\<close>). A later
+  \<open>#include <header>\<close> - genuinely \<^emph>\<open>connected\<close> to \<open>c11_predef\<close> now, unlike
+  every other recognized preprocessor form, which stays purely syntactic -
+  is what actually applies it (\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close>
+  case), matching real C: a header's declarations are only in scope once it
+  is genuinely included, not merely known about somewhere in the theory.
 
   Four small, genuinely representative fragments below cover the common,
   non-\<open>FILE\<close>-taking parts of \<open>stdio.h\<close> (\<open>printf\<close>/\<open>putchar\<close>/\<open>getchar\<close>/
@@ -393,10 +390,28 @@ c11_predef [assert.h] \<open>
 #define assert(expr) = expr
 \<close>
 
-text\<open>Every one of the declared names above is now an ordinary, resolvable
-  use - not \<open>Markup.bad ()\<close> - exactly like a name the same theory declared
-  itself.\<close>
+text\<open>Hard, batch-checkable confirmation that \<open>c11_predef\<close> alone, with no
+  \<open>#include\<close> anywhere yet, really does leave \<open>idents\<close> untouched.\<close>
+ML\<open>
+val CEnv.mk {idents = idents_before_include, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  List.app (fn name =>
+              case Symtab.lookup idents_before_include name of
+                NONE => ()
+              | SOME _ => error ("FAIL: " ^ name ^ " already registered before any #include"))
+    ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc", "free",
+     "exit", "abort", "atoi", "atof", "errno", "EDOM", "ERANGE", "assert"]
+\<close>
+
+text\<open>Only once each header is actually \<open>#include\<close>d - here, in a single
+  translation unit together with the code using them, exactly as in real
+  C - do its names become ordinary, resolvable uses, not \<open>Markup.bad ()\<close>.\<close>
 c11\<open>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <assert.h>
+
 int use_predefined(int argc, char **argv) {
   int r = atoi(argv[0]);
   if (r == 0) {
@@ -410,16 +425,28 @@ int use_predefined(int argc, char **argv) {
 \<close>
 
 text\<open>Hard, batch-checkable confirmation that every name above actually
-  registered into \<open>idents\<close>, rather than merely parsing without error.\<close>
+  registered into \<open>idents\<close> once \<open>#include\<close>d, rather than merely parsing
+  without error.\<close>
 ML\<open>
 val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents name of
                 SOME _ => ()
-              | NONE => error ("FAIL: " ^ name ^ " not registered by c11_predef"))
+              | NONE => error ("FAIL: " ^ name ^ " not registered after #include"))
     ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc", "free",
      "exit", "abort", "atoi", "atof", "errno", "EDOM", "ERANGE", "assert"]
+\<close>
+
+text\<open>A header never \<open>#include\<close>d stays exactly as unresolved as an ordinary
+  undeclared name - \<open>ERANGE\<close> was declared under \<open>errno.h\<close> above, but
+  \<open>EOVERFLOW\<close> was not declared anywhere at all, and neither is in scope
+  without its own \<open>#include\<close>; both fall back to \<^ML>\<open>Markup.bad ()\<close> here,
+  not a hyperlink - only the markup differs, not the outcome.\<close>
+c11\<open>
+int use_without_include(void) {
+  return ERANGE + EOVERFLOW;
+}
 \<close>
 
 text\<open>\<open>c11_predef\<close> rejects a function \<^emph>\<open>definition\<close> (a real body) outright -

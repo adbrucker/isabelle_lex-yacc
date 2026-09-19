@@ -169,8 +169,9 @@ open CEnv
 
 fun idents_of (mk {idents, ...} : cenv) = idents
 
-fun set_idents idents' (mk {idents = _, types, c_antiq, units}) =
-  mk {idents = idents', types = types, c_antiq = c_antiq, units = units}
+fun set_idents idents' (mk {idents = _, types, c_antiq, predefined_envs, units}) =
+  mk {idents = idents', types = types, c_antiq = c_antiq,
+      predefined_envs = predefined_envs, units = units}
 
 (* The position a "root" itself spans - the same position a "type_antiq_fun"
    sees as its own "current term" (see "check_antiq" below), so a handler
@@ -536,9 +537,10 @@ fun report_use cenv name use_pos =
    declaration site (self-referential entity markup). *)
 fun register kind_str mk_kind cenv (name, decl_pos, decl) =
   let
-    val mk {idents, types, c_antiq, units} = cenv
+    val mk {idents, types, c_antiq, predefined_envs, units} = cenv
     val _ = report_decl kind_str name decl_pos
-  in mk {idents = Symtab.update (name, mk_kind decl) idents, types = types, c_antiq = c_antiq, units = units} end
+  in mk {idents = Symtab.update (name, mk_kind decl) idents, types = types, c_antiq = c_antiq,
+         predefined_envs = predefined_envs, units = units} end
 
 (* Registers a struct/union/enum tag's own defining occurrence into "cenv"'s
    "types" table, reporting its own declaration site - the "types" analogue
@@ -549,9 +551,10 @@ fun register kind_str mk_kind cenv (name, decl_pos, decl) =
    list, "Enum_tag" needs nothing beyond the position). *)
 fun register_type kind_str (ti : CEnv.type_ident) cenv (name, decl_pos) =
   let
-    val mk {idents, types, c_antiq, units} = cenv
+    val mk {idents, types, c_antiq, predefined_envs, units} = cenv
     val _ = report_decl kind_str name decl_pos
-  in mk {idents = idents, types = Symtab.update (name, ti) types, c_antiq = c_antiq, units = units} end
+  in mk {idents = idents, types = Symtab.update (name, ti) types, c_antiq = c_antiq,
+         predefined_envs = predefined_envs, units = units} end
 
 (* Looks "name" up in "cenv"'s "types" and hyperlinks "use_pos" back to its
    declaration - the "types" analogue of "report_use" above. A bare mention
@@ -1088,7 +1091,12 @@ and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int *
     val here = check_antiq cenv ctx ni
   in
     case d of
-      C_Ast.CPPInclude _ => (cenv, here)
+      C_Ast.CPPInclude (_, header, _) =>
+        let val mk {predefined_envs, ...} = cenv in
+          case Symtab.lookup predefined_envs header of
+            NONE => (cenv, here) (* no "c11_predef [header] ..." seen anywhere in scope: still purely syntactic *)
+          | SOME effect => (effect cenv, here)
+        end
     | C_Ast.CPPDefine (id as C_Ast.Ident (name, _, ident_ni), e, _) =>
         let
           val pos = C_Ast.pos_of_NodeInfo ident_ni

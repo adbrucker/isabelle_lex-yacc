@@ -37,9 +37,11 @@ text\<open>
   command and by \<^verbatim>\<open>AnaEval\<close> (the \<open>analyse_and_eval\<close> pass, in its own theory
   importing this one). It bundles two plain \<^verbatim>\<open>Generic_Data\<close> registries (the standard
   Isabelle/Pure idiom for per-theory, persistent-through-merge state) behind one
-  structure: \<^verbatim>\<open>Env\<close> holds the (still largely unused - \<open>types\<close>/\<open>c_antiq\<close> are
-  placeholders for a future symbol table and antiquotation-command registry) symbolic
-  environment, plus the running \<open>units\<close> counter that gives every AST this theory
+  structure: \<^verbatim>\<open>Env\<close> holds the symbolic environment - \<open>idents\<close> (declared names),
+  \<open>types\<close> (struct/union/enum tags), \<open>c_antiq\<close> (registered antiquotation handlers),
+  and \<open>predefined_envs\<close> (\<^verbatim>\<open>c11_predef\<close>'s own reusable header effects, applied by a
+  later \<open>#include\<close> - see the note on \<open>predefined_envs\<close> below) - plus the running
+  \<open>units\<close> counter that gives every AST this theory
   stores a fresh, per-theory sequence number; \<^verbatim>\<open>Ast_Store\<close> maps \<open>(theory_name,
   unit_number)\<close> - encoded as one \<^verbatim>\<open>Symtab\<close> key, since \<^verbatim>\<open>Symtab.table\<close> is
   string-keyed - to the \<^verbatim>\<open>Position.T root\<close> that one of the \<open>c11\<close>/\<open>c11_file\<close>/
@@ -109,13 +111,27 @@ type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) ->  theory
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
                        c_antiq : (cenv type_antiq_fun0) Symtab.table,
+                       predefined_envs : (cenv -> cenv) Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
 
 type type_antiq_fun = cenv type_antiq_fun0
 
+(* "predefined_envs" holds, per header name (\<^verbatim>\<open>c11_predef\<close>'s own bracketed
+   label, e.g. \<open>"stdio.h"\<close>), the reusable *effect* that header's own
+   declarations have on an arbitrary "cenv" - captured once, when
+   \<^verbatim>\<open>c11_predef\<close> itself is walked, as a plain function rather than applied
+   there and then discarded, precisely so a *later* \<open>#include <header>\<close>
+   (\<^verbatim>\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case) can re-apply the very
+   same effect to whatever "cenv" is current at that point - the mechanism
+   that actually connects \<open>#include\<close> to something, instead of it staying
+   purely syntactic. \<^verbatim>\<open>c11_predef\<close> itself does *not* also register the
+   declared names directly into "idents"/"types" - only "predefined_envs"
+   changes when it runs; a name it declares is not yet in scope anywhere
+   until some \<open>#include\<close> actually pulls it in, matching real C. *)
 val empty_cenv = mk{idents  = Symtab.empty,
                   types   = Symtab.empty ,
                   c_antiq = Symtab.empty,
+                  predefined_envs = Symtab.empty,
                   units = 0}
 
 (* "merge = K empty" (discard both sides, reset to empty) is exactly wrong
@@ -134,11 +150,12 @@ val empty_cenv = mk{idents  = Symtab.empty,
    case this needs to resolve cleverly); "units" takes the larger of the two
    counters, so a merge can only grow it, never shrink it back into a range
    that could collide with already-issued "Ast_Store" keys. *)
-fun merge_cenv (mk {idents = i1, types = t1, c_antiq = a1, units = u1},
-                mk {idents = i2, types = t2, c_antiq = a2, units = u2}) =
+fun merge_cenv (mk {idents = i1, types = t1, c_antiq = a1, predefined_envs = p1, units = u1},
+                mk {idents = i2, types = t2, c_antiq = a2, predefined_envs = p2, units = u2}) =
   mk {idents = Symtab.merge (K true) (i1, i2),
       types = Symtab.merge (K true) (t1, t2),
       c_antiq = Symtab.merge (K true) (a1, a2),
+      predefined_envs = Symtab.merge (K true) (p1, p2),
       units = Int.max (u1, u2)}
 
 structure Env = Generic_Data
@@ -170,9 +187,10 @@ fun ast_store_key thy unit_no =
    Returns the store key (for user-facing reporting) and the updated theory. *)
 fun store_root (root : Position.T C_Ast.root) thy =
     let
-      val mk {idents, types, c_antiq, units} = get (Context.Theory thy)
+      val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
       val key = ast_store_key thy units
-      val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq, units = units + 1}
+      val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq,
+                       predefined_envs = predefined_envs, units = units + 1}
       val thy' = thy
         |> Context.theory_map (put cenv')
         |> Context.theory_map (Ast_Store.map (Symtab.update (key, root)))
@@ -184,9 +202,10 @@ fun get_ast key thy =
 
 fun store_antiq (name, antiq_fun) thy =
     let
-       val mk {idents, types, c_antiq, units} = get (Context.Theory thy)
+       val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
        val c_antiq' = Symtab.update(name, antiq_fun) c_antiq
-       val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq', units = units}
+       val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq',
+                        predefined_envs = predefined_envs, units = units}
     in thy |> Context.theory_map (put cenv')
     end
 
@@ -194,6 +213,25 @@ fun get_antiq name thy =
     let
        val mk {c_antiq, ...} = get (Context.Theory thy)
     in Symtab.lookup c_antiq name end
+
+(* Registers "header"'s own reusable "cenv -> cenv" effect (see the note on
+   "predefined_envs" above) - the "predefined_envs" analogue of
+   "store_antiq"/"get_antiq". Deliberately does *not* touch "idents"/
+   "types"/"c_antiq" at all: registering a header's effect is not the same
+   as applying it - that only happens via a later "#include". *)
+fun store_predefined_env (header, f) thy =
+    let
+       val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
+       val predefined_envs' = Symtab.update (header, f) predefined_envs
+       val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq,
+                        predefined_envs = predefined_envs', units = units}
+    in thy |> Context.theory_map (put cenv')
+    end
+
+fun get_predefined_env header thy =
+    let
+       val mk {predefined_envs, ...} = get (Context.Theory thy)
+    in Symtab.lookup predefined_envs header end
 
 end
 \<close>

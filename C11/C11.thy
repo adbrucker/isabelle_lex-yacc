@@ -95,7 +95,11 @@ text\<open>
   This fragment is purely syntactic, not a real preprocessor: \<open>#define\<close> does not
   perform macro expansion, and \<open>#ifdef\<close>/\<open>#ifndef\<close> do not consult a macro-definition
   table to decide which branch is live: \<^emph>\<open>both\<close> branches must simply be
-  syntactically well-formed.
+  syntactically well-formed. \<open>#include\<close> is the one exception: since \<open>c11_predef\<close>
+  (below), it has the one further semantics of applying whichever header effect
+  was registered under that exact name (\<^verbatim>\<open>CEnv.predefined_envs\<close>) to \<open>cenv\<close> at
+  that point - still a no-op, as before, for any header \<open>c11_predef\<close> never
+  declared anywhere in scope.
 \<close>
 
 section\<open>Relation to Isabelle/C (AFP)\<close>
@@ -375,27 +379,30 @@ val _ = Outer_Syntax.command @{command_keyword "c11_file"}
         "Read and syntax-check an external C11 source file, and store its AST"
         (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
 
-(* "c11_predef [header] \<open>decl_list\<close>" gives a real, "#include"-independent
-   \<^emph>\<open>basic\<close> functionality (the user's own word - see the design discussion
-   this responds to): a way to tell this fragment about the usual global
-   variables/macro-definitions/function prototypes a real "#include <header>"
-   would bring into scope, so that later uses of e.g. "printf"/"malloc"/
-   "errno" are no longer "genuinely undeclared" (\<^ML>\<open>Markup.bad ()\<close>) but
-   resolve into "cenv" exactly like any other predeclared name. "header" is a
-   plain label (a "name" token, so a dotted form like "stdio.h" parses
-   directly as a "long_ident" - no quoting needed), echoed in the reported
-   confirmation message; it plays no functional role and is not connected to
-   "#include" in any way - "#include" stays purely syntactic (see above), and
-   declaring "stdio.h"'s contents this way does not require ever having
-   written "#include <stdio.h>", nor does it restrict which uses of the
-   declared names are accepted. "decl_list" is parsed and walked exactly like
-   an ordinary "c11" translation unit (reusing "full_eval_and_store", so
-   struct/union/enum tags and enum constants register too, and any
-   antiquotation present would be dispatched the same way) - with one added
-   restriction: a function \<^emph>\<open>definition\<close> (a real body, not just a prototype)
-   is rejected outright, since "c11_predef" is for declaring an interface,
-   never an implementation, matching "no implementations" in the design
-   discussion.
+(* "c11_predef [header] \<open>decl_list\<close>" gives a real \<^emph>\<open>basic\<close> functionality
+   (the user's own word - see the design discussion this responds to): a way
+   to tell this fragment about the usual global variables/macro-definitions/
+   function prototypes a real "#include <header>" would bring into scope.
+   Unlike an ordinary "c11" block, walking "decl_list" here does \<^emph>\<open>not\<close>
+   itself register any declared name into "cenv"'s "idents"/"types" - it
+   only captures the walk's own effect (a plain "cenv -> cenv" function) and
+   registers \<^emph>\<open>that\<close> under "header" in "cenv"'s "predefined_envs"
+   (\<^verbatim>\<open>CEnv.thy\<close>). A later \<open>#include <header>\<close>, anywhere this "cenv" is in
+   scope, is what actually applies it (\<open>AnaEval.walk_pp_directive\<close>'s
+   \<open>CPPInclude\<close> case) - matching real C, where a header's declarations are
+   only in scope once it is genuinely included, not merely known about
+   somewhere in the build. "header" is a plain label (a "name" token, so a
+   dotted form like "stdio.h" parses directly as a "long_ident" - no quoting
+   needed) doubling as the "predefined_envs" key; \<open>#include <stdio.h>\<close>
+   triggers exactly the effect registered under the label \<open>stdio.h\<close>, and a
+   header \<open>c11_predef\<close> never declared anywhere in scope leaves \<open>#include\<close>
+   a no-op, exactly as before. "decl_list" is parsed and walked exactly like
+   an ordinary "c11" translation unit's own declarations would be (so
+   struct/union/enum tags and enum constants register too, once actually
+   included) - with one added restriction: a function \<^emph>\<open>definition\<close> (a real
+   body, not just a prototype) is rejected outright, since "c11_predef" is
+   for declaring an interface, never an implementation, matching "no
+   implementations" in the design discussion.
 
    A real limitation, not yet addressed: this fragment's lexer never
    produces a "TYPEDEF_NAME" token (see the note on this in
@@ -433,11 +440,32 @@ fun run_c11_predef header source thy =
     in
       case res of
         NONE => error ("c11_predef " ^ quote header ^ ": no result")
-      | SOME root =>
+      | SOME root0 =>
           let
-            val root = require_kind is_units "translation unit" ("c11_predef " ^ quote header) root
+            val root = require_kind is_units "translation unit" ("c11_predef " ^ quote header) root0
             val _ = reject_predef_implementations header root
-          in full_eval_and_store root thy end
+            val us = case root of C_Ast.Units us => us
+                       | _ => error "c11_predef: unreachable, require_kind already checked is_units"
+            (* The reusable effect a later "#include <header>" applies (see the
+               note above): re-walks "us" fresh against whatever "cenv" is
+               passed in, exactly the way "analyse_and_eval"'s own "Units"
+               case does - antiquotation actions, if any, are discarded here
+               too (a predef fragment is not expected to carry executable
+               antiquotations; "decl_list" is declarations only). *)
+            fun effect cenv0 =
+              #1 (fold (fn tu => fn (cenv, acc) =>
+                          let val (cenv', acts) = AnaEval.walk_translation_unit cenv [root] tu
+                          in (cenv', acc @ acts) end)
+                    us (cenv0, []))
+            (* Run once now, purely so this block's own declarations get the
+               usual PIDE reporting (hyperlinking, hovering) - the resulting
+               "cenv" is discarded, matching that "c11_predef" itself never
+               changes "idents"/"types". *)
+            val _ = effect (CEnv.get (Context.Theory thy))
+            val (key, thy') = store_root root (CEnv.store_predefined_env (header, effect) thy)
+            val _ = writeln (string_of_root root ^ "  [predefined as " ^ quote header ^
+                              ", stored as " ^ key ^ "]")
+          in thy' end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
