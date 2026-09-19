@@ -952,4 +952,38 @@ i\
 nt a = 1;
 \<close>
 
+section\<open>A Pitfall: a Point Reported as a Range Looks Fine Until It Isn't\<close>
+
+text\<open>
+  This note documents a concrete case, found while hyperlinking declarations and uses of
+  identifiers in a language built on this framework, of the pitfall already flagged in
+  \secref{sec:positions}: ``A single point position is rarely what a caller wants to
+  highlight - a \<^emph>\<open>range\<close> is.'' It is included here as its own section, separate from the
+  main manual, so it can be pulled into \<^verbatim>\<open>Manual.thy\<close>'s ``Calculating Positions'' section
+  (or elsewhere) once its final placement is decided.
+
+  It is tempting, for a single token such as an identifier, to build its @{ML_type
+  \<open>Position.T\<close>} once at the token's start and then reuse that same point wherever the
+  framework asks for a range - as the value passed to @{ML \<open>Context_Position.report\<close>} or
+  wrapped in @{ML \<open>Position.entity_markup\<close>}, say. This compiles, and it even \<^emph>\<open>looks\<close>
+  correct under casual testing, because a bare point and a genuine one-symbol range render
+  identically: there is nothing for the IDE to show differently between ``this token is one
+  symbol wide and fully covered'' and ``only the first symbol of this token is covered''.
+  The mistake only becomes visible once a token \<^emph>\<open>longer\<close> than one symbol is reported the
+  same way - and then only its very first symbol ends up highlighted, hoverable, or
+  clickable, with the rest of the token showing no markup at all. Test cases built from
+  short, one-letter example names (\<open>x\<close>, \<open>i\<close>) will never expose this; the bug hides until
+  someone happens to click on the third letter of a longer name and finds nothing there.
+
+  The fix is to never pass a bare point where a range is wanted: given the point @{term
+  \<open>pos\<close>} at which a name of known text @{term \<open>name\<close>} starts, @{ML
+  \<open>fn (name, pos) => Position.symbol_explode name pos\<close>} advances @{term \<open>pos\<close>} across
+  exactly that text to the name's own end position (correctly, in symbols -
+  \secref{sec:positions}), and
+  @{ML \<open>fn (name, pos) => Position.range_position (Position.range (pos, Position.symbol_explode name pos))\<close>}
+  folds start and end back into the one @{ML_type \<open>Position.T\<close>} the reporting functions
+  expect. Build that combined position once and report \<^emph>\<open>it\<close>, not the bare start point, at
+  every use of that name - declaration, self-reference, and every later occurrence alike.
+\<close>
+
 end
