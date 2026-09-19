@@ -82,16 +82,17 @@ datatype type_ident = NOT_YET_DEFINED
    *inside* the parsed term links back to *that* symbol's own place in the
    C source, not to some unrelated fallback position.
 
-   A handler also receives the antiquotation's own "navi list" - the
-   "up"/"Up"/"right"/"down" steps written as an optional bracketed
-   "@tag[navi] ..." right after the tag (see "C_Ast.navi", and
-   "parse_tag_navi_level" in C11_Parser.thy for the syntax) - as its own
-   parameter, alongside "root" and "level". Deliberately not yet
-   interpreted anywhere in this pass: every handler this round simply
-   ignores it (matching that every test so far uses an empty navi list);
-   what the individual steps should actually do to root resolution is
-   separate, later design work. *)
-type 'a type_antiq_fun0 = 'a * C_Ast.navi list * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
+   The "root" a handler receives is already the antiquotation's *resolved*
+   context: "check_antiq" (AnaEval.thy) interprets the antiquotation's own
+   "navi list" - the "up"/"Up"/"right"/"down" steps written as an optional
+   bracketed "@tag[navi] ..." right after the tag (see "C_Ast.navi",
+   "parse_tag_navi_level" in C11_Parser.thy for the syntax, and
+   "AnaEval.select_ast" for the resolution algorithm) - against the closest-
+   surrounding-context stack *before* calling the handler, so a handler never
+   sees a navi list at all, only the single AST node it ends up denoting
+   (the closest context itself, when the navi list is empty, matching every
+   test that predates this round). *)
+type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
 
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,

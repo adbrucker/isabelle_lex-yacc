@@ -218,30 +218,235 @@ structure Dispatched_Antiqs = struct
   fun mark c = Synchronized.change state (fn cs => c :: cs)
 end
 
+(* A navigation step's coarse target category - "Id"/"Expr"/"Stmt"/"Units",
+   ignoring the specific constructor within each, purely so "select_ast"
+   below can tell whether consecutive "ctx" frames belong to one "run" for
+   "Up" to collapse (the user's own examples group frames this coarsely,
+   e.g. "[expr, expr, expr, stmt, ...]", never by the exact expression/
+   statement shape). *)
+fun category (C_Ast.Id _)    = 0
+  | category (C_Ast.Expr _)  = 1
+  | category (C_Ast.Stmt _)  = 2
+  | category (C_Ast.Units _) = 3
+
+(* The length of the maximal prefix of "ctx" (including its own head) sharing
+   the head's own category - "ctx" is never empty, so this is always >= 1. *)
+fun run_length (ctx as top :: _) =
+      let
+        val cat = category top
+        fun count (x :: xs) = if category x = cat then 1 + count xs else 0
+          | count [] = 0
+      in count ctx end
+
+(* Resolves the "(u|U)*" prefix of a navigation string against "ctx",
+   returning the unconsumed "(r|d)*" suffix together with the resulting
+   stack. Derived directly from the user's own worked examples (each
+   rule below cited by number):
+   \<^item> Rule 1: "[u]" (the *whole* string, nothing left after it) on
+     "[expr, ...]" is "that expr, unchanged" - a lone, final "u" is a no-op:
+     "select_u" returns "ctx" as-is once it sees "up" with an empty tail.
+   \<^item> Rule 2: "[u, R]" (a non-final "u") on "[expr, ...]" continues with
+     "R" on whatever "..." was - i.e. "u" pops exactly one frame, unless
+     "ctx" is already a singleton (nothing left to ascend past), in which
+     case it is a no-op instead of an error.
+   \<^item> Rule 3: "[U, R]" on a same-category run of length > 1 (e.g.
+     "[expr, expr, expr, stmt, ...]") collapses the run down to its single
+     outermost member and continues with "R" - it does *not* also pop that
+     surviving member (contrast with rule 4).
+   \<^item> Rule 4: "[U, R]" on a run of length 1 (e.g. "[expr, stmt, ...]") "is
+     just [u, R] on [stmt, ...]" - read literally: the sole run member is
+     already popped, and processing continues as an ordinary (not
+     necessarily final) "u" step against the smaller stack, i.e. "U" with a
+     trivial run always moves past it, whereas a written-out "u" alone would
+     not (rule 1) - "U" and "u" are deliberately not fully interchangeable. *)
+fun select_u ([], ctx) = ([], ctx)
+  | select_u (C_Ast.up :: rest_navi, ctx) =
+      if null rest_navi then ([], ctx)
+      else (case ctx of
+              [_] => select_u (rest_navi, ctx)
+            | _ :: rest_ctx => select_u (rest_navi, rest_ctx))
+  | select_u (C_Ast.Up :: rest_navi, ctx) =
+      let val n = run_length ctx in
+        if n > 1 then select_u (rest_navi, List.drop (ctx, n - 1))
+        else (case ctx of
+                [_] => select_u (C_Ast.up :: rest_navi, ctx)
+              | _ :: rest_ctx => select_u (C_Ast.up :: rest_navi, rest_ctx))
+      end
+  | select_u (navi, ctx) = (navi, ctx) (* first "r"/"d": the "(u|U)*" phase is over *)
+
+(* The ordered, per-node-kind list of children "r"/"d" may navigate into -
+   "CIf" (the design discussion's own worked example: "[Expr cond, Stmt then,
+   Stmt else?]") generalizes to every other "cStatement"/"cExpression"
+   constructor the same way: its own "'a cExpression"/"'a cStatement" sub-
+   fields, in declaration order, are its navigable children - an absent
+   "option" field contributes no child (matching "CIf"'s own optional
+   "else"), a "list" field contributes one child per element, and a field of
+   any other type ("'a ident", "'a cDeclaration", a designator, a bool, an
+   attribute list - none of which "root" has a variant for) contributes
+   none, silently dropped rather than counted as a gap in the index. A
+   constructor with no navigable field at all this way (an ordinary leaf
+   like "CVar"/"CConst"/"CBreak", but also e.g. "CSizeofType"/
+   "CAlignofType", whose only field *is* a type-name) gets the empty list,
+   which "select_count_r" turns into a "navigation index ... out of range"
+   error the same way an actual leaf does - per the user, "'d' on an element
+   that is already a leaf in the AST is also an error", and these are
+   observably the same case. "Id" and "Units" are not per-constructor at
+   all: the user confirmed both are simply not "r"/"d"-navigable - "the
+   toplevel father is Unit, not Unit list" (so there is no per-element
+   indexing to define for it in the first place), and an identifier is
+   always a leaf. *)
+fun children_of_stmt s =
+  case s of
+    C_Ast.CLabel (_, s1, _, _) => [C_Ast.Stmt s1]
+  | C_Ast.CCase (e, s1, _) => [C_Ast.Expr e, C_Ast.Stmt s1]
+  | C_Ast.CCases (e1, e2, s1, _) => [C_Ast.Expr e1, C_Ast.Expr e2, C_Ast.Stmt s1]
+  | C_Ast.CDefault (s1, _) => [C_Ast.Stmt s1]
+  | C_Ast.CExpr (eo, _) => (case eo of NONE => [] | SOME e => [C_Ast.Expr e])
+  | C_Ast.CCompound (_, items, _) =>
+      (* Only "CBlockStmt" entries are navigable statements; "CBlockDecl"/
+         "CNestedFunDef" entries are silently dropped (a declaration has no
+         "root" variant), so a compound block's children are its statements
+         alone, in order - a block-local declaration is simply not an "r"/
+         "d" target, the same way any other declaration is not. *)
+      List.mapPartial (fn C_Ast.CBlockStmt s1 => SOME (C_Ast.Stmt s1) | _ => NONE) items
+  | C_Ast.CIf (e, s1, s2_opt, _) =>
+      C_Ast.Expr e :: C_Ast.Stmt s1 :: (case s2_opt of NONE => [] | SOME s2 => [C_Ast.Stmt s2])
+  | C_Ast.CSwitch (e, s1, _) => [C_Ast.Expr e, C_Ast.Stmt s1]
+  | C_Ast.CWhile (e, s1, _, _) => [C_Ast.Expr e, C_Ast.Stmt s1]
+  | C_Ast.CFor (init, cond_opt, step_opt, body, _) =>
+      (case init of
+         C_Ast.Left NONE => []
+       | C_Ast.Left (SOME e) => [C_Ast.Expr e]
+       | C_Ast.Right _ => [] (* a declaration-form init has no "root" variant *)) @
+      (case cond_opt of NONE => [] | SOME e => [C_Ast.Expr e]) @
+      (case step_opt of NONE => [] | SOME e => [C_Ast.Expr e]) @
+      [C_Ast.Stmt body]
+  | C_Ast.CGoto (_, _) => []
+  | C_Ast.CGotoPtr (e, _) => [C_Ast.Expr e]
+  | C_Ast.CCont _ => []
+  | C_Ast.CBreak _ => []
+  | C_Ast.CReturn (eo, _) => (case eo of NONE => [] | SOME e => [C_Ast.Expr e])
+  | C_Ast.CAsm (_, _) => [] (* inline asm operands: out of scope, as elsewhere in this pass *)
+
+fun children_of_expr e =
+  case e of
+    C_Ast.CComma (es, _) => map C_Ast.Expr es
+  | C_Ast.CAssign (_, e1, e2, _) => [C_Ast.Expr e1, C_Ast.Expr e2]
+  | C_Ast.CCond (e1, e2_opt, e3, _) =>
+      C_Ast.Expr e1 :: (case e2_opt of NONE => [] | SOME e2 => [C_Ast.Expr e2]) @ [C_Ast.Expr e3]
+  | C_Ast.CBinary (_, e1, e2, _) => [C_Ast.Expr e1, C_Ast.Expr e2]
+  | C_Ast.CCast (_, e1, _) => [C_Ast.Expr e1] (* the type-name is dropped, no "root" variant *)
+  | C_Ast.CUnary (_, e1, _) => [C_Ast.Expr e1]
+  | C_Ast.CSizeofExpr (e1, _) => [C_Ast.Expr e1]
+  | C_Ast.CSizeofType (_, _) => [] (* the only field is a type-name *)
+  | C_Ast.CAlignofExpr (e1, _) => [C_Ast.Expr e1]
+  | C_Ast.CAlignofType (_, _) => []
+  | C_Ast.CComplexReal (e1, _) => [C_Ast.Expr e1]
+  | C_Ast.CComplexImag (e1, _) => [C_Ast.Expr e1]
+  | C_Ast.CIndex (e1, e2, _) => [C_Ast.Expr e1, C_Ast.Expr e2]
+  | C_Ast.CCall (ef, args, _) => C_Ast.Expr ef :: map C_Ast.Expr args
+  | C_Ast.CMember (e1, _, _, _) => [C_Ast.Expr e1]
+  | C_Ast.CVar (_, _) => []
+  | C_Ast.CConst _ => []
+  | C_Ast.CCompoundLit (_, _, _) =>
+      [] (* designators/initializers have no "root" variant *)
+  | C_Ast.CGenericSelection (e1, assocs, _) =>
+      C_Ast.Expr e1 :: map (fn (_, e2) => C_Ast.Expr e2) assocs
+  | C_Ast.CStatExpr (s, _) => [C_Ast.Stmt s]
+  | C_Ast.CLabAddrExpr (_, _) => []
+  | C_Ast.CBuiltinExpr b =>
+      (case b of
+         C_Ast.CBuiltinVaArg (e1, _, _) => [C_Ast.Expr e1]
+       | C_Ast.CBuiltinOffsetOf (_, _, _) => []
+       | C_Ast.CBuiltinTypesCompatible (_, _, _) => [])
+
+fun children_of _ (C_Ast.Stmt s) = children_of_stmt s
+  | children_of _ (C_Ast.Expr e) = children_of_expr e
+  | children_of antiq_pos (C_Ast.Id _) =
+      error ("select_ast: an identifier is a leaf, no \"r\"/\"d\" children" ^ Position.here antiq_pos)
+  | children_of antiq_pos (C_Ast.Units _) =
+      error ("select_ast: a translation unit is not \"r\"/\"d\"-navigable" ^ Position.here antiq_pos)
+
+(* Resolves the "(r|d)*" suffix against a single "node" (the result of
+   "select_u"'s ascent phase): "r" advances a 1-based cursor rightward among
+   "children_of node"; "d" descends into the child the cursor currently
+   points at (cursor 1, i.e. "d" alone, if no "r" preceded it) and continues
+   processing the remaining navigation string against *that* child. Per the
+   user: no wrapping/saturation - a cursor beyond the children list's length
+   is a hard "error", and a "d" with no children to descend into likewise.
+
+   Every "error" here reports "antiq_pos" - the antiquotation's own tag
+   position (threaded in from "check_antiq"/"select_ast" below), not the
+   position of whatever AST node "node" currently is: a "navi" step (see
+   "C_Ast.navi") carries no source position of its own, and "node" can by
+   now be arbitrarily far from where the user actually wrote the mistaken
+   "[navi]" bracket - "antiq_pos" is the closest thing available to "where
+   the string was written", and is what a user actually needs to jump to. *)
+fun select_rd (antiq_pos, [], node) = node
+  | select_rd (antiq_pos, navi as C_Ast.down :: _, node) = select_count_r (antiq_pos, 1, navi, node)
+  | select_rd (antiq_pos, C_Ast.right :: rest, node) = select_count_r (antiq_pos, 1, rest, node)
+  | select_rd (antiq_pos, C_Ast.up :: _, _) =
+      error ("select_ast: \"u\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
+  | select_rd (antiq_pos, C_Ast.Up :: _, _) =
+      error ("select_ast: \"U\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
+and select_count_r (antiq_pos, n, C_Ast.right :: rest, node) = select_count_r (antiq_pos, n + 1, rest, node)
+  | select_count_r (antiq_pos, n, C_Ast.down :: rest, node) =
+      let val cs = children_of antiq_pos node in
+        if n > length cs then
+          error ("select_ast: navigation index " ^ Int.toString n ^ " out of range (only " ^
+                 Int.toString (length cs) ^ " navigable children here)" ^ Position.here antiq_pos)
+        else select_rd (antiq_pos, rest, List.nth (cs, n - 1))
+      end
+  | select_count_r (antiq_pos, _, C_Ast.up :: _, _) =
+      error ("select_ast: \"u\" after \"r\"" ^ Position.here antiq_pos)
+  | select_count_r (antiq_pos, _, C_Ast.Up :: _, _) =
+      error ("select_ast: \"U\" after \"r\"" ^ Position.here antiq_pos)
+  | select_count_r (antiq_pos, _, [], _) =
+      error ("select_ast: navigation string ends with a dangling \"r\", expected a final \"d\"" ^
+             Position.here antiq_pos)
+
+(* Maps an antiquotation's own "navi list" (the "@tag[navi] ..." bracket -
+   see "C_Ast.navi") together with the closest-surrounding-context stack to
+   the single concrete AST node the antiquotation refers to: first resolves
+   the "(u|U)*" prefix against the whole stack ("select_u"), then the
+   "(r|d)*" suffix against whatever that leaves on top ("select_rd").
+   "antiq_pos" (the antiquotation's own tag position) is carried along
+   purely for error reporting - see the note on "select_rd". An empty navi
+   list is the identity (matches every antiquotation predating this
+   feature: "select_ast antiq_pos [] ctx = hd ctx"). *)
+fun select_ast antiq_pos navi ctx =
+  let val (rd, ctx') = select_u (navi, ctx)
+  in select_rd (antiq_pos, rd, hd ctx') end
+
 (* The shared antiquotation-dispatch helper: looks up every "Antiquotation" in
    "ni"'s comment list by tag in "cenv"'s "c_antiq", instantiates it with
-   (cenv, as_root (), level), and pairs the resulting "theory -> theory" with
-   its level - "as_root" is only forced (and so can only "error") when an
-   "Antiquotation" genuinely needs it, never for an ordinary "Raw_txt" or an
-   empty comment list. An "Antiquotation" already dispatched earlier in this
-   same walk (see "Dispatched_Antiqs" above) is silently skipped the second
-   (or third, ...) time some other node sharing its position reaches it -
-   whichever node the walk reaches *first* (which, since every "walk_*"
-   checks its own antiquotations before recursing into its children, is
-   always the outermost of any nodes genuinely tied at one position) is the
-   one that wins. The handler receives "(body, body_pos)", not just "body" -
-   see "type_antiq_fun" in CEnv.thy for why the cartouche's own position now
-   travels all the way to the handler instead of being discarded here - and,
-   separately, the antiquotation's own "navi list" (the "@tag[navi] ..."
-   bracket, see "C_Ast.navi"), passed through unchanged and not yet
-   interpreted anywhere in this pass. *)
-fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo)
+   (cenv, select_ast tag_pos navi ctx, level), and pairs the resulting
+   "theory -> theory" with its level - "select_ast" (and so "children_of",
+   which can "error") is only forced when an "Antiquotation" genuinely needs
+   it, never for an ordinary "Raw_txt" or an empty comment list. "tag_pos"
+   (the antiquotation's own tag position, previously discarded here) is
+   passed through purely so a "select_ast" navigation error can be reported
+   at "@tag[navi] ..." itself rather than at whatever AST node the failed
+   navigation happened to reach - see the note on "select_rd". An
+   "Antiquotation" already dispatched earlier in this same walk (see
+   "Dispatched_Antiqs" above) is silently skipped the second (or third, ...)
+   time some other node sharing its position reaches it - whichever node the
+   walk reaches *first* (which, since every "walk_*" checks its own
+   antiquotations before recursing into its children, is always the
+   outermost of any nodes genuinely tied at one position) is the one that
+   wins. The handler receives "(body, body_pos)", not just "body" - see
+   "type_antiq_fun" in CEnv.thy for why the cartouche's own position now
+   travels all the way to the handler instead of being discarded here - and
+   the *resolved* AST node ("select_ast tag_pos navi ctx"), not the raw navi
+   list: a handler is never itself responsible for interpreting "up"/"Up"/
+   "right"/"down". *)
+fun check_antiq cenv (ctx : pos C_Ast.root list) (ni : pos C_Ast.nodeInfo)
     : (int * (theory -> theory)) list =
   case ni of
     C_Ast.OnlyPos _ => []
   | C_Ast.NodeInfo (cs, _) =>
       List.mapPartial
-        (fn c as C_Ast.Antiquotation ({tag = (tag, _)}, navi, {level}, {cartouche = (body, body_pos)}) =>
+        (fn c as C_Ast.Antiquotation ({tag = (tag, tag_pos)}, navi, {level}, {cartouche = (body, body_pos)}) =>
               if Dispatched_Antiqs.already_dispatched c then NONE
               else
                 let val mk {c_antiq, ...} = cenv in
@@ -251,7 +456,7 @@ fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo
                              quote tag)
                   | SOME antiq_fun =>
                       (Dispatched_Antiqs.mark c;
-                       SOME (level, antiq_fun (cenv, navi, as_root (), level) (body, body_pos)))
+                       SOME (level, antiq_fun (cenv, select_ast tag_pos navi ctx, level) (body, body_pos)))
                 end
           | C_Ast.Raw_txt _ => NONE)
         cs
@@ -332,7 +537,7 @@ fun walk_exprs cenv ctx es acc =
 and walk_expr cenv ctx (e : pos C_Ast.cExpression) : cenv * (int * (theory -> theory)) list =
   let
     val ctx' = C_Ast.Expr e :: ctx
-    val here = check_antiq cenv (fn () => C_Ast.Expr e) (C_Ast.nodeInfo_of_CExpr e)
+    val here = check_antiq cenv ctx' (C_Ast.nodeInfo_of_CExpr e)
   in
     case e of
       C_Ast.CComma (es, _) => walk_exprs cenv ctx' es here
@@ -438,12 +643,12 @@ and walk_designators cenv ctx ds =
    back to "hd ctx", the closest enclosing expression/statement/unit. *)
 and walk_initializer cenv ctx (C_Ast.CInitExpr (e, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
         val (cenv1, acts1) = walk_expr cenv ctx e
       in (cenv1, here @ acts1) end
   | walk_initializer cenv ctx (C_Ast.CInitList (pairs, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
       in
         fold (fn (desigs, init) => fn (cenv, acc) =>
                 let
@@ -459,7 +664,7 @@ and walk_initializer cenv ctx (C_Ast.CInitExpr (e, ni)) =
    relevant to scoping/hyperlinking in this pass. *)
 and walk_declarator cenv ctx (C_Ast.CDeclr (_, derived, _, _, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
       in
         fold (fn d => fn (cenv, acc) =>
                 let
@@ -468,7 +673,7 @@ and walk_declarator cenv ctx (C_Ast.CDeclr (_, derived, _, _, ni)) =
                       C_Ast.CPtrDeclr (_, ni) => ni
                     | C_Ast.CArrDeclr (_, _, ni) => ni
                     | C_Ast.CFunDeclr (_, _, ni) => ni
-                  val dhere = check_antiq cenv (fn () => hd ctx) dni
+                  val dhere = check_antiq cenv ctx dni
                   val (cenv1, acts1) =
                     case d of
                       C_Ast.CArrDeclr (_, C_Ast.CArrSize (_, e), _) => walk_expr cenv ctx e
@@ -487,13 +692,13 @@ and walk_declarator cenv ctx (C_Ast.CDeclr (_, derived, _, _, ni)) =
    top-of-file note): every caller just passes its own inherited "ctx"
    unchanged, and "hd ctx" (whatever expression/statement/unit is currently
    on top) is used as this declaration's own antiquotation root - no more
-   caller-supplied "as_root" thunk, and no more "error" for a nested
+   "error" for a nested
    declaration (a block-local one, a "for"-loop's own clause, a parameter,
    an abstract type-name): every one of those now simply resolves to its
    closest enclosing context instead of failing outright. *)
 and walk_decl kind_str mk_kind cenv ctx (cdecl as C_Ast.CDecl (_, entries, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
         val (cenv1, acts1) =
           fold (fn ((declr_opt, init_opt), width_opt) => fn (cenv, acc) =>
                   let
@@ -515,7 +720,7 @@ and walk_decl kind_str mk_kind cenv ctx (cdecl as C_Ast.CDecl (_, entries, ni)) 
       in (cenv1, acts1) end
   | walk_decl _ _ cenv ctx (C_Ast.CStaticAssert (e, _, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
         val (cenv1, acts1) = walk_expr cenv ctx e
       in (cenv1, here @ acts1) end
 
@@ -532,7 +737,7 @@ and walk_type_decl cenv ctx d = walk_decl "C11 type" Local cenv ctx d
 and walk_stat cenv ctx (s : pos C_Ast.cStatement) : cenv * (int * (theory -> theory)) list =
   let
     val ctx' = C_Ast.Stmt s :: ctx
-    val here = check_antiq cenv (fn () => C_Ast.Stmt s) (C_Ast.nodeInfo_of_CStat s)
+    val here = check_antiq cenv ctx' (C_Ast.nodeInfo_of_CStat s)
   in
     case s of
       C_Ast.CLabel (_, s1, _, _) =>
@@ -643,7 +848,7 @@ and open_param_scope cenv ctx declr =
    expressions get progressively deeper frames as usual. *)
 and walk_fun_def kind_str mk_kind cenv ctx (C_Ast.CFunDef (specs, declr, _, body, ni)) =
       let
-        val here = check_antiq cenv (fn () => hd ctx) ni
+        val here = check_antiq cenv ctx ni
         val synthetic_decl = C_Ast.CDecl (specs, [((SOME declr, NONE), NONE)], ni)
         val cenv1 =
           case decl_name_pos declr of
@@ -667,7 +872,7 @@ and walk_ext_decl cenv ctx (ed : pos C_Ast.cExternalDeclaration) : cenv * (int *
     C_Ast.CDeclExt d => walk_decl "C11 global variable" Global cenv ctx d
   | C_Ast.CFDefExt f => walk_fun_def "C11 global function" Global cenv ctx f
   | C_Ast.CAsmExt (_, ni) =>
-      let val here = check_antiq cenv (fn () => hd ctx) ni
+      let val here = check_antiq cenv ctx ni
       in (cenv, here) end
   | C_Ast.CPPExt d => walk_pp_directive cenv ctx d
 
@@ -687,7 +892,7 @@ and synth_decl_of_ident (id as C_Ast.Ident (_, _, ni)) init_opt =
 and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int * (theory -> theory)) list =
   let
     val ni = C_Ast.nodeInfo_of_CPPDirective d
-    val here = check_antiq cenv (fn () => hd ctx) ni
+    val here = check_antiq cenv ctx ni
   in
     case d of
       C_Ast.CPPInclude _ => (cenv, here)
@@ -758,7 +963,7 @@ and walk_ext_decls cenv ctx eds =
    antiquotation in this unit does. *)
 and walk_translation_unit cenv ctx (C_Ast.CTranslUnit (eds, ni)) =
   let
-    val here = check_antiq cenv (fn () => hd ctx) ni
+    val here = check_antiq cenv ctx ni
     val (cenv1, acts1) = walk_ext_decls cenv ctx eds
   in (cenv1, here @ acts1) end
 
@@ -779,7 +984,7 @@ fun analyse_and_eval (root : pos C_Ast.root) thy =
     case root of
       C_Ast.Id (C_Ast.Ident (name, _, ni)) =>
         let
-          val here = check_antiq cenv0 (fn () => root) ni
+          val here = check_antiq cenv0 ctx0 ni
           val _ = report_use cenv0 name (C_Ast.pos_of_NodeInfo ni)
         in (thy, here) end
     | C_Ast.Expr e => finish (walk_expr cenv0 ctx0 e)
@@ -809,25 +1014,20 @@ declare [[ML_catch_all = true]]
 
 ML\<open>
 val CENV = Unsynchronized.ref(CEnv.empty_cenv);
-val probe_cenv = let fun probe (cenv, _ : C_Ast.navi list, _ , _) (_ : string * Position.T) thy =
+val probe_cenv = let fun probe (cenv, _ , _) (_ : string * Position.T) thy =
                               (CENV := cenv; thy)
                  in  CEnv.store_antiq ("probe_cenv",  probe) end
 
 
 val AST = Unsynchronized.ref((C_Ast.Units []): (Position.T C_Ast.root) )
-(* Stashed alongside "AST" by the same "probe_ast" handler, purely so a test
-   can confirm the "@tag[navi] ..." bracket (see "C_Ast.navi") was parsed
-   into exactly the expected "navi list" and reached the handler intact -
-   not otherwise used by "probe_ast" itself. *)
-val NAVI_PROBE = Unsynchronized.ref ([] : C_Ast.navi list)
-val probe_ast = let fun probe (_, navi, c_ast , l) (_ : string * Position.T) thy =
+val probe_ast = let fun probe (_, c_ast , l) (_ : string * Position.T) thy =
                               (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ C_Ast.pp_root c_ast);
-                               AST := c_ast; NAVI_PROBE := navi; thy)
+                               AST := c_ast; thy)
                 in  CEnv.store_antiq ("probe_ast",  probe) end
 
 
-val highlight = let fun probe (_, _ : C_Ast.navi list, c_ast , _) (_ : string * Position.T) thy =
+val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
                               (Position.report (AnaEval.pos_of_root c_ast) Markup.intensify;
                                thy)
                 in  CEnv.store_antiq ("highlight",  probe) end
@@ -876,7 +1076,7 @@ val highlight = let fun probe (_, _ : C_Ast.navi list, c_ast , _) (_ : string * 
 val TERM_PROBE = Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
 val term_antiq =
   let
-    fun probe (_, _ : C_Ast.navi list, c_ast, _) (body, body_pos) thy =
+    fun probe (_, c_ast, _) (body, body_pos) thy =
       let
         val ctxt = Proof_Context.init_global thy
         (* "body_pos" is already a single merged range position (built via

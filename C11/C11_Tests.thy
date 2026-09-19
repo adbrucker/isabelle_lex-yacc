@@ -43,6 +43,32 @@ text\<open>
 
 section\<open>Testing the generated C11 Parser with Syntax Highlighting\<close>
 
+subsection\<open>A Light-Import Smoke Test\<close>
+text\<open>
+  Regression test for the \<^verbatim>\<open>C11.thy\<close>/\<^verbatim>\<open>C11_Tests.thy\<close> split: exercises just the
+  \<open>c11\<close>-family commands \<^verbatim>\<open>C11.thy\<close> itself provides (\<open>c11\<close>, \<open>c11_ident\<close>,
+  \<open>c11_expr\<close>, \<open>c11_statement\<close>, \<open>c11_reject\<close> - \<open>c11_file\<close> is exercised at
+  length further below, in this very same theory, so is not duplicated
+  here), confirming that \<^verbatim>\<open>C11.thy\<close> alone - without anything from later in
+  this test suite (a registered antiquotation handler, a helper only
+  defined there, \<open>\<dots>\<close>) - is genuinely sufficient for a downstream theory
+  that just wants those commands.
+\<close>
+
+c11\<open>
+int standalone_test(int x) {
+  return x + 1;
+}
+\<close>
+
+c11_ident\<open>standalone_test\<close>
+
+c11_expr\<open>1 + 2\<close>
+
+c11_statement\<open>{ int y = 0; y = y + 1; }\<close>
+
+c11_reject\<open>int + ;\<close>
+
 subsection\<open>A more Comprehensive Program Text\<close>
 
 c11\<open>
@@ -256,7 +282,10 @@ c11\<open>
 int test_arith(void) {
   int a = 10, b = 3, c; /* @ probe_ast \<open>hjgfhg\<close> */
   c = a + b - a * b / b % a ;
-  c = (a << 1) >> 1; /* blabla @ highlight */
+  c = (a << 1) >> 1; /* just a text
+                        @ highlight
+                        that ends here.
+                      */
   c = (a & b) | (a ^ b);
   c = ~a & !b;
   c = a < b || a > b;
@@ -469,7 +498,7 @@ text\<open>
 ML\<open>
 fun dummy_antiq tag =
   let
-    fun probe (_, _ : C_Ast.navi list, _, level) (body, _ : Position.T) thy =
+    fun probe (_, _, level) (body, _ : Position.T) thy =
       (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
                 quote body);
        thy)
@@ -680,18 +709,20 @@ text\<open>
   empty), written as an optional bracketed \<open>[navi]\<close> right after the tag and
   before the optional \<open>(level)\<close> or the body: \<open>@tag[navi](level) \<open>...\<close>\<close>. It
   is mapped into \<open>C_Ast.navi list\<close> (\<open>u\<close>\<open>\<mapsto>\<close>\<open>up\<close>, \<open>U\<close>\<open>\<mapsto>\<close>\<open>Up\<close>, \<open>r\<close>\<open>\<mapsto>\<close>
-  \<open>right\<close>, \<open>d\<close>\<open>\<mapsto>\<close>\<open>down\<close>) and threaded all the way to the antiquotation
-  handler as a new second argument (\<open>type_antiq_fun\<close> in \<^verbatim>\<open>CEnv.thy\<close>) -
-  every handler this round simply ignores it, matching that every test here
-  uses an empty navi list; what the individual steps should actually do to
-  root resolution is separate, later design work.
+  \<open>right\<close>, \<open>d\<close>\<open>\<mapsto>\<close>\<open>down\<close>) and, unlike the round that first introduced the
+  syntax, is now genuinely *interpreted*: \<open>AnaEval.check_antiq\<close> resolves it
+  against the closest-surrounding-context stack via \<open>AnaEval.select_ast\<close>
+  \<^emph>\<open>before\<close> calling the handler, so a handler only ever sees the resulting
+  AST node (\<open>type_antiq_fun\<close> in \<^verbatim>\<open>CEnv.thy\<close> has no navi-list parameter at
+  all any more) - the tests below therefore check the resolved \<open>!AST\<close>
+  (via \<open>probe_ast\<close>), not a stashed navi list.
 
   The bracket is its own delimiter rather than bare adjacency to the tag,
   deliberately: \<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close> are ordinary identifier characters with no
   special lexical status, and the tag regex is greedy, so \<open>@answer\<close> (a tag
   that happens to end in the single-character navi alphabet) must keep
   meaning the whole tag \<open>"answer"\<close> with no navi steps at all, not
-  \<open>"answe"\<close> plus a navi step \<open>r\<close> - the last test below confirms this
+  \<open>"answe"\<close> plus a navi step \<open>r\<close> - the ambiguity check below confirms this
   explicitly.\<close>
 
 ML\<open>
@@ -700,47 +731,23 @@ val counting_navi_antiq = let fun probe _ _ thy = (NAVI_COUNT := !NAVI_COUNT + 1
 \<close>
 setup\<open>counting_navi_antiq\<close>
 
-text\<open>No brackets at all, and empty brackets, both give an empty navi list.\<close>
+text\<open>No brackets at all, and empty brackets, both give an empty navi list -
+  \<open>select_ast\<close> is the identity on an empty list, so both resolve to the same
+  closest context as an ordinary, navi-free antiquotation (cf. the
+  "top-level sharing" tests above).\<close>
 c11\<open>
 /*@ probe_ast */
 int navi_none;
 \<close>
-ML\<open>if !NAVI_PROBE = [] then () else error "Expected an empty navi list with no brackets"\<close>
+ML\<open>case !AST of C_Ast.Units [C_Ast.CTranslUnit _] => ()
+   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
 
 c11\<open>
 /*@ probe_ast[] */
 int navi_empty;
 \<close>
-ML\<open>if !NAVI_PROBE = [] then () else error "Expected an empty navi list with empty brackets"\<close>
-
-text\<open>All four navigation constructors, in order, via a cartouche body, a
-  quoted-string body, and combined with an explicit level.\<close>
-c11\<open>
-/*@ probe_ast[uUrd] \<open>a\<close> */
-int navi_all_four;
-\<close>
-ML\<open>if !NAVI_PROBE = [C_Ast.up, C_Ast.Up, C_Ast.right, C_Ast.down] then ()
-   else error "Expected [up, Up, right, down]"\<close>
-
-c11\<open>
-/*@ probe_ast[ur](3) \<open>a\<close> */
-int navi_with_level;
-\<close>
-ML\<open>if !NAVI_PROBE = [C_Ast.up, C_Ast.right] then () else error "Expected [up, right]"\<close>
-
-c11\<open>
-/*@ probe_ast[Ud] "a" */
-int navi_quoted_body;
-\<close>
-ML\<open>if !NAVI_PROBE = [C_Ast.Up, C_Ast.down] then () else error "Expected [Up, down]"\<close>
-
-text\<open>Via a "//" line comment too - a separate lexer state with its own copy
-  of the tag/navi/level regex.\<close>
-c11\<open>
-//@ probe_ast[r] \<open>a\<close>
-int navi_line_comment;
-\<close>
-ML\<open>if !NAVI_PROBE = [C_Ast.right] then () else error "Expected [right]"\<close>
+ML\<open>case !AST of C_Ast.Units [C_Ast.CTranslUnit _] => ()
+   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
 
 text\<open>The ambiguity check: a tag ending in a navi-alphabet letter, with no
   brackets, must still parse as that whole tag with an empty navi list.\<close>
@@ -750,6 +757,169 @@ int navi_tag_ends_in_r;
 \<close>
 ML\<open>if !NAVI_COUNT = 1 then ()
    else error ("Expected the \"answer\" tag to fire exactly once, fired " ^ Int.toString (!NAVI_COUNT))\<close>
+
+text\<open>\<open>u\<close>/\<open>U\<close> ascent: the antiquotation sits on the innermost \<open>b * c\<close>, whose
+  closest-context stack is three consecutive \<open>Expr\<close> frames (\<open>b * c\<close>, the
+  cast around it, the addition around that) before the enclosing statement -
+  exactly the \<open>[expr, expr, expr, stmt, ...]\<close> shape from the design
+  discussion. A lone, final \<open>u\<close> is a no-op (rule 1); two \<open>u\<close>s pop exactly
+  one frame (rule 2); a single \<open>U\<close> collapses the whole three-\<open>expr\<close> run to
+  its outermost member in one step (rule 3), landing on the very same node
+  three plain \<open>u\<close>s reach - a direct consistency check between the two rules;
+  \<open>Uuu\<close> continues two further ascents past that collapsed run.\<close>
+c11\<open>
+int test_navi_u(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast[uu] */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Expr (C_Ast.CCast _) => ()
+   | other => error ("[uu]: expected Expr (CCast _), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_uuu(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast[uuu] */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Expr (C_Ast.CBinary (C_Ast.CAddOp, _, _, _)) => ()
+   | other => error ("[uuu]: expected Expr (CBinary (CAddOp, _, _, _)), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_bigU(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast[U] */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Expr (C_Ast.CBinary (C_Ast.CAddOp, _, _, _)) => ()
+   | other => error ("[U]: expected Expr (CBinary (CAddOp, _, _, _)), same as [uuu], got " ^
+                      C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_Uuu(int a, int b, int c) {
+  int r = a + (int)(/*@ probe_ast[Uuu] */ b * c);
+  return r;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Stmt (C_Ast.CCompound _) => ()
+   | other => error ("[Uuu]: expected Stmt (CCompound _) (the function body), got " ^
+                      C_Ast.pp_root other)\<close>
+
+text\<open>\<open>r\<close>/\<open>d\<close> descent: the antiquotation sits directly on an \<open>if\<close> statement
+  (so its own closest context already \<^emph>\<open>is\<close> that \<open>CIf\<close>, no \<open>u\<close>/\<open>U\<close> prefix
+  needed), whose three navigable children are the condition, the \<open>then\<close>
+  branch, and the \<open>else\<close> branch, in that order: \<open>rd\<close>/\<open>rrd\<close>/\<open>rrrd\<close> select
+  the first/second/third respectively - matching the design discussion's
+  own worked example.\<close>
+c11\<open>
+int test_navi_rd(int a) {
+  /*@ probe_ast[rd] */ if (a) return 1; else return 0;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("a", _, _), _)) => ()
+   | other => error ("[rd]: expected Expr (CVar a), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_rrd(int a) {
+  /*@ probe_ast[rrd] */ if (a) return 1; else return 0;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CReturn (SOME (C_Ast.CConst (C_Ast.CIntConst (C_Ast.CInteger (1, _, _), _))), _)) => ()
+   | other => error ("[rrd]: expected \"return 1;\" (the then-branch), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_rrrd(int a) {
+  /*@ probe_ast[rrrd] */ if (a) return 1; else return 0;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CReturn (SOME (C_Ast.CConst (C_Ast.CIntConst (C_Ast.CInteger (0, _, _), _))), _)) => ()
+   | other => error ("[rrrd]: expected \"return 0;\" (the else-branch), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>\<open>r\<close>/\<open>d\<close> descent generalizes to every \<open>cStatement\<close>/\<open>cExpression\<close>
+  constructor, not just \<open>CIf\<close> (\<open>AnaEval.children_of_stmt\<close>/
+  \<open>AnaEval.children_of_expr\<close>): the antiquotation here sits on the whole
+  expression-\<^emph>\<open>statement\<close> \<open>a + b;\<close>, so a first \<open>d\<close> descends into
+  \<open>CExpr\<close>'s one child (the wrapped \<open>CBinary\<close>) before a second \<open>d\<close>/\<open>rd\<close>
+  reaches the binary's own left/right operand.\<close>
+c11\<open>
+int test_navi_binary_left(int a, int b) {
+  /*@ probe_ast[dd] */ a + b;
+  return 0;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("a", _, _), _)) => ()
+   | other => error ("[dd]: expected Expr (CVar a), got " ^ C_Ast.pp_root other)\<close>
+
+c11\<open>
+int test_navi_binary_right(int a, int b) {
+  /*@ probe_ast[drrd] */ a + b;
+  return 0;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("b", _, _), _)) => ()
+   | other => error ("[drrd]: expected Expr (CVar b), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>\<open>CCall\<close>'s children are the called function expression followed by its
+  arguments, in order.\<close>
+c11\<open>
+int test_navi_call_arg(int f(int, int), int x, int y) {
+  /*@ probe_ast[drrrd] */ f(x, y);
+  return 0;
+}
+\<close>
+ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("y", _, _), _)) => ()
+   | other => error ("[drrrd]: expected Expr (CVar y), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>\<open>CCompound\<close>'s children are its \<^emph>\<open>statements\<close> alone, in order -
+  a block-local declaration has no \<open>root\<close> variant, so it is silently
+  skipped rather than occupying a navigable index.\<close>
+c11\<open>
+int test_navi_compound_skips_decl(void) {
+  /*@ probe_ast[d] */
+  {
+    int x = 0;
+    x = 1;
+  }
+  return 0;
+}
+\<close>
+ML\<open>case !AST of
+     C_Ast.Stmt (C_Ast.CExpr (SOME (C_Ast.CAssign (_, C_Ast.CVar (C_Ast.Ident ("x", _, _), _), _, _)), _)) => ()
+   | other => error ("[d]: expected \"x = 1;\" (the decl skipped), got " ^ C_Ast.pp_root other)\<close>
+
+text\<open>\<open>d\<close> on a leaf must \<open>error\<close>, not raise an uncaught SML \<open>Subscript\<close>
+  exception - the antiquotation here sits on \<open>a\<close> (an expression-statement
+  wrapping a bare \<open>CVar\<close>), so \<open>[dd]\<close> reaches the leaf via one \<open>d\<close> through
+  \<open>CExpr\<close>'s own single child before the second \<open>d\<close> finds nothing to
+  descend into. \<open>c11_reject\<close> cannot express this: it only ever exercises
+  the parser, never \<open>analyse_and_eval\<close>, so a fragment that parses fine but
+  fails \<open>select_ast\<close> is not something it can reject. This is therefore run
+  directly via \<open>run_c11\<close> (the same function the \<open>c11\<close> command itself
+  calls) inside a \<open>handle ERROR\<close> that re-raises unless the message is
+  exactly the expected "navigation index ... out of range" one - the
+  resulting theory is discarded either way, so this never actually stores
+  anything.
+
+  \<open>@{here}\<close>, not \<open>Input.string\<close>, supplies the source's start/end position:
+  \<open>Input.string\<close>'s \<open>Position.no_range\<close> starves the lexer of a real
+  reference offset, which silently breaks position-based comment
+  attachment (the antiquotation ends up attached to the whole function
+  instead of \<open>a\<close>, so the wrong error fires) rather than failing loudly -
+  confirmed empirically, not merely inferred.\<close>
+ML\<open>
+val _ =
+  (run_c11 (Input.source true
+       "int leaf_error_test(int a) {\n  /*@ probe_ast[dd] */ a;\n  return 0;\n}\n"
+       (@{here}, @{here})) @{theory};
+   error "leaf-error test: expected a select_ast navigation error, but none occurred")
+  handle ERROR msg =>
+    if String.isSubstring "navigation index" msg then ()
+    else error ("leaf-error test: unexpected error message: " ^ msg)
+\<close>
 
 section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
 
