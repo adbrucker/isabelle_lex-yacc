@@ -234,6 +234,113 @@ val _ =
                      (case other of NONE => "not found" | SOME _ => "found as a different kind"))
 \<close>
 
+subsection\<open>Struct/Union/Enum Tags, and Struct/Union Member Linking\<close>
+text\<open>
+  A struct/union/enum \<^emph>\<open>tag\<close> is registered into \<open>cenv\<close>'s \<open>types\<close> table (the
+  tag namespace, shared by all three - see \<open>walk_decl_specs\<close> in
+  \<^verbatim>\<open>AnaEval.thy\<close>) the first time its defining occurrence (one carrying a
+  member/constant list) is walked; a later, bare mention of the same tag
+  hyperlinks back to it instead of registering again. An enum's own
+  constants are \<^emph>\<open>not\<close> a per-type namespace - they are registered into the
+  ordinary \<open>idents\<close> table right alongside variables and functions, exactly
+  like any other declared name, so a later \<open>CVar\<close> reference to one
+  hyperlinks through the very same path an ordinary variable use does.\<close>
+c11\<open>
+struct point { int x; int y; };
+struct point pt = { .x = 1, .y = 2 };
+struct point *pp = &pt;
+
+int use_point_twice(void) {
+  struct point another;
+  return pt.x + pp->y + another.x;
+}
+\<close>
+
+text\<open>Hard, batch-checkable confirmation that the block above actually
+  registered \<open>point\<close> as a \<open>Struct_tag\<close> (with both its member declarations),
+  rather than merely parsing without error.\<close>
+ML\<open>
+val CEnv.mk {types, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup types "point" of
+    SOME (CEnv.Struct_tag (_, decls)) =>
+      if length decls = 2 then writeln "PASS: point registered as Struct_tag with 2 member declarations"
+      else error ("FAIL: point's Struct_tag has " ^ Int.toString (length decls) ^
+                   " member declarations, expected 2")
+  | other => error ("FAIL: point not registered as Struct_tag: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+\<close>
+
+text\<open>A union shares the very same tag namespace and the very same member
+  resolution as a struct (\<open>walk_decl_specs\<close> handles both via one
+  \<open>CStruct\<close> constructor, distinguished only by \<open>cStructTag\<close>).\<close>
+c11\<open>
+union num { int i; double d; };
+union num n = { .i = 42 };
+
+int use_union(void) {
+  return n.i;
+}
+\<close>
+ML\<open>
+val CEnv.mk {types, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup types "num" of
+    SOME (CEnv.Union_tag _) => writeln "PASS: num registered as Union_tag"
+  | other => error ("FAIL: num not registered as Union_tag: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+\<close>
+
+text\<open>An enum's constants land in the ordinary \<open>idents\<close> namespace, tagged
+  \<open>Enum\<close> - both for a named enum (whose tag is \<^emph>\<open>also\<close> registered, into
+  \<open>types\<close>) and an anonymous one (which still has real, nameable constants,
+  even though its own type has no tag to register).\<close>
+c11\<open>
+enum Color { RED, GREEN, BLUE };
+enum Color c = RED;
+
+int use_color(void) {
+  return c == GREEN;
+}
+
+enum { FOO, BAR };
+
+int use_anonymous_enum(void) {
+  return FOO + BAR;
+}
+\<close>
+ML\<open>
+val CEnv.mk {idents, types, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup types "Color" of
+    SOME (CEnv.Enum_tag _) => writeln "PASS: Color registered as Enum_tag"
+  | other => error ("FAIL: Color not registered as Enum_tag: " ^
+                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+val _ =
+  List.app (fn name =>
+              case Symtab.lookup idents name of
+                SOME (CEnv.Enum _) => writeln ("PASS: " ^ name ^ " registered as Enum")
+              | other => error ("FAIL: " ^ name ^ " not registered as Enum: " ^
+                                 (case other of NONE => "not found" | SOME _ => "found as a different kind")))
+    ["RED", "GREEN", "BLUE", "FOO", "BAR"]
+\<close>
+
+text\<open>Member linking (\<open>AnaEval.report_member_use\<close>) only resolves the common
+  case - a bare variable as the base expression - and falls back to
+  \<^ML>\<open>Markup.bad ()\<close>, not an \<open>error\<close>, for anything it cannot resolve: a
+  non-variable base (a function call), and a field name genuinely not among
+  the type's own members. Both are expected to succeed exactly like their
+  resolvable counterparts above - only the markup differs, not the
+  outcome.\<close>
+c11\<open>
+struct point make_point(void);
+
+int use_unresolved_members(void) {
+  struct point pt;
+  return make_point().x + pt.not_a_real_field;
+}
+\<close>
+
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>

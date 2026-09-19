@@ -63,12 +63,24 @@ type pos = Position.T
 
 datatype ident_kind = Global of (pos C_Ast.cDeclaration)
                     | Local  of (pos C_Ast.cDeclaration)
-                    | Enum
+                    | Enum   of (pos C_Ast.cDeclaration)
                     | Parameter of (pos C_Ast.cDeclaration) (* really  ? *)
                     | Cpp_const of (pos C_Ast.cDeclaration)
                     | Cpp_macro of (pos C_Ast.ident list * pos C_Ast.cDeclaration)
 
-datatype type_ident = NOT_YET_DEFINED
+(* A struct/union/enum tag's own registration in "cenv"'s "types" table - the
+   C11 tag namespace, shared by all three, kept separate from "idents" (see
+   "AnaEval.walk_decl_specs"). "Struct_tag"/"Union_tag" carry the defining
+   occurrence's own position and its raw member declaration list (searched on
+   demand by "AnaEval.report_member_use", not pre-indexed by member name - a
+   struct/union rarely has enough members for a linear scan to matter);
+   "Enum_tag" carries only its own position - an enum's constants are *not* a
+   per-type member namespace in C, they live in the ordinary "idents" table
+   right alongside variables and functions (see "Enum" above), so there is
+   nothing further to store here for them. *)
+datatype type_ident = Struct_tag of pos * pos C_Ast.cDeclaration list
+                     | Union_tag  of pos * pos C_Ast.cDeclaration list
+                     | Enum_tag   of pos
 
 (* The cartouche/string body handed to a handler now carries its own source
    position alongside its text ("pos", the antiquotation's "cartouche"

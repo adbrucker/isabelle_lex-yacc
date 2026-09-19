@@ -1,5 +1,5 @@
 (***********************************************************************************
- * Copyright (c) University of Paris-Saclay
+ * Copyright (c) University of Paris-Saclay, 2026
  *
  * Author : Burkhart Wolff
  *
@@ -28,10 +28,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  ***********************************************************************************)
 
+(*<*)
 theory C11_Manual
   imports "C11"
 begin
-
+(*>*)
 section\<open>What is Isabelle/C\<close>
 
 text\<open>
@@ -43,7 +44,7 @@ text\<open>
   Isabelle-level content - proof obligations, HOL terms, arbitrary Isar commands -
   to specific points in the C source via a comment-based antiquotation mechanism.
   It is not a C compiler, nor a verification tool in its own right: it is the
-  \<^emph>\<open>front-end layer\<close> a verification tool, a documentation generator, or a static
+  \<^emph>\<open>front-end layer\<close> of a verification tool, a documentation generator, or a static
   analysis would be built on top of.
 \<close>
 
@@ -71,7 +72,13 @@ text\<open>
   comments, an environment tracking declarations across a translation unit,
   programmable handlers - can be reproduced on top of a generic parser-generator
   toolkit, while \<^emph>\<open>simplifying\<close> the parts of the original design that experience
-  showed to be disproportionately complex. The antiquotation-navigation language
+  showed to be disproportionately complex. Since the lexer-part of version 1.0
+  was effectively based on a version-split from Isabelle2019, the maintenance of
+  Isabelle/C version 1.0 turned out to be problematic at various occasions in the
+  Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein Grosses Dankeschoen an 
+  Makarius Wenzel der wiederholt ``ìssues'' des AFP Eintrags loeste und
+  den Prototypen damit am Leben hielt\<close>.
+  The antiquotation-navigation language
   (\<^verbatim>\<open>select_ast\<close>, \<open>\<section>2.4\<close>) is the clearest example: Isabelle/C 1.0's own
   navigation concept is, by design, considerably more general (and considerably
   more complex) than what most annotations actually need; this project restarts
