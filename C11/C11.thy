@@ -332,16 +332,15 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement source)))
 
 (* Isabelle_C's counterpart is "C_file \<open>path\<close>". Resources.parse_file/
-   Token.file_source/Resources.provide_file are the same Isabelle/Pure
-   building blocks the built-in ML_file/SML_file commands use (see
-   Pure/ML/ml_file.ML): the path is resolved relative to this theory's
-   master directory, the resulting Input.source carries correct file
-   positions (so parse errors point at the actual file/line/column, not
-   at the command invocation), and the file is registered as a dependency
-   so `isabelle build` re-checks this theory when it changes. Note the
+   Token.file_source are the same Isabelle/Pure building blocks the built-in
+   ML_file/SML_file commands use (see Pure/ML/ml_file.ML): the path is
+   resolved relative to this theory's master directory, and the resulting
+   Input.source carries correct file positions (so parse errors point at
+   the actual file/line/column, not at the command invocation). Note the
    keyword kind below: "c11_file" is declared "thy_load" (a specialised
    "thy_decl"), not "diag" - Resources.parse_file's file-dependency
-   resolution is only actually wired up by Isabelle's command-span scanner
+   resolution (so `isabelle build` re-checks this theory when the file
+   changes) is only actually wired up by Isabelle's command-span scanner
    for thy_load-kind commands (matching how ML_file/SML_file/external_file
    are themselves declared in Pure.thy); under "diag" the file is never
    read, silently. "c11"/"c11_ident"/"c11_expr"/"c11_statement" are "thy_decl"
@@ -358,7 +357,18 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    "analyse_and_eval" nor "full_eval_and_store" at all, so a file read via
    "c11_file" got no hyperlinking whatsoever, unlike every other accepting
    command - now fixed by routing through the same "full_eval_and_store"
-   helper "run_c11_kind" itself uses. *)
+   helper "run_c11_kind" itself uses.
+
+   Ported for Isabelle2026: "Resources.provide_file"/"provide_file'" (a
+   digest-based "this file has now genuinely been read" bookkeeping step,
+   raising an error on a duplicate use of the same source path within one
+   theory) no longer exist - "Token.file" itself dropped its own "digest"
+   field, and upstream's own "Pure/ML/ml_file.ML" simply stopped calling the
+   analogous step too (confirmed by diffing it against the Isabelle2025-2
+   version - the call was deleted outright, with nothing replacing it, not
+   renamed), so this command no longer calls it either. The file dependency
+   itself is unaffected - it was always established by the "thy_load"
+   command-span scanner (see above), not by this now-removed step. *)
 fun run_c11_file get_file thy =
     let
       val _ = C11_Comments.reset ()
@@ -371,10 +381,8 @@ fun run_c11_file get_file thy =
       case res of
         NONE => (C11_Typedefs.restore typedef_snapshot; error "c11_file: no result")
       | SOME root =>
-          let
-            val root = require_kind is_units "translation unit" "c11_file" root
-            val thy' = full_eval_and_store root thy
-          in Resources.provide_file file thy' end
+          let val root = require_kind is_units "translation unit" "c11_file" root
+          in full_eval_and_store root thy end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
