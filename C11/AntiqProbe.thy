@@ -74,10 +74,16 @@ fun this_theory_units n =
       |> map #1
   in List.drop (my_keys, length my_keys - n) end
 
+fun pp_navi C_Ast.up = "u"
+  | pp_navi C_Ast.Up = "U"
+  | pp_navi C_Ast.right = "r"
+  | pp_navi C_Ast.down = "d"
+
 fun pp_comment (C_Ast.Raw_txt frags) =
       "Raw_txt " ^ String.concatWith " | " (map (fn (t, _) => "[" ^ t ^ "]") frags)
-  | pp_comment (C_Ast.Antiquotation ({tag = (tag, _)}, {level}, {cartouche = (body, _)})) =
-      "Antiquotation tag=" ^ tag ^ " level=" ^ Int.toString level ^ " body=[" ^ body ^ "]"
+  | pp_comment (C_Ast.Antiquotation ({tag = (tag, _)}, navi, {level}, {cartouche = (body, _)})) =
+      "Antiquotation tag=" ^ tag ^ " navi=[" ^ String.concat (map pp_navi navi) ^
+      "] level=" ^ Int.toString level ^ " body=[" ^ body ^ "]"
 
 fun comments_of_ni ni = (case ni of
       C_Ast.OnlyPos _ => [] | C_Ast.NodeInfo (cs, _) => cs)

@@ -80,13 +80,25 @@ datatype type_ident = NOT_YET_DEFINED
    it; "term" (AnaEval.thy) needs it to build a genuinely position-carrying
    "Input.source" for Isabelle's own term parser, so hovering over a symbol
    *inside* the parsed term links back to *that* symbol's own place in the
-   C source, not to some unrelated fallback position. *)
-type 'a type_antiq_fun = 'a * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
+   C source, not to some unrelated fallback position.
+
+   A handler also receives the antiquotation's own "navi list" - the
+   "up"/"Up"/"right"/"down" steps written as an optional bracketed
+   "@tag[navi] ..." right after the tag (see "C_Ast.navi", and
+   "parse_tag_navi_level" in C11_Parser.thy for the syntax) - as its own
+   parameter, alongside "root" and "level". Deliberately not yet
+   interpreted anywhere in this pass: every handler this round simply
+   ignores it (matching that every test so far uses an empty navi list);
+   what the individual steps should actually do to root resolution is
+   separate, later design work. *)
+type 'a type_antiq_fun0 = 'a * C_Ast.navi list * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
 
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
-                       c_antiq : (cenv type_antiq_fun) Symtab.table,
+                       c_antiq : (cenv type_antiq_fun0) Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
+
+type type_antiq_fun = cenv type_antiq_fun0
 
 val empty_cenv = mk{idents  = Symtab.empty,
                   types   = Symtab.empty ,

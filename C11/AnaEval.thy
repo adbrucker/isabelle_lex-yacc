@@ -231,14 +231,17 @@ end
    always the outermost of any nodes genuinely tied at one position) is the
    one that wins. The handler receives "(body, body_pos)", not just "body" -
    see "type_antiq_fun" in CEnv.thy for why the cartouche's own position now
-   travels all the way to the handler instead of being discarded here. *)
+   travels all the way to the handler instead of being discarded here - and,
+   separately, the antiquotation's own "navi list" (the "@tag[navi] ..."
+   bracket, see "C_Ast.navi"), passed through unchanged and not yet
+   interpreted anywhere in this pass. *)
 fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo)
     : (int * (theory -> theory)) list =
   case ni of
     C_Ast.OnlyPos _ => []
   | C_Ast.NodeInfo (cs, _) =>
       List.mapPartial
-        (fn c as C_Ast.Antiquotation ({tag = (tag, _)}, {level}, {cartouche = (body, body_pos)}) =>
+        (fn c as C_Ast.Antiquotation ({tag = (tag, _)}, navi, {level}, {cartouche = (body, body_pos)}) =>
               if Dispatched_Antiqs.already_dispatched c then NONE
               else
                 let val mk {c_antiq, ...} = cenv in
@@ -248,7 +251,7 @@ fun check_antiq cenv (as_root : unit -> pos C_Ast.root) (ni : pos C_Ast.nodeInfo
                              quote tag)
                   | SOME antiq_fun =>
                       (Dispatched_Antiqs.mark c;
-                       SOME (level, antiq_fun (cenv, as_root (), level) (body, body_pos)))
+                       SOME (level, antiq_fun (cenv, navi, as_root (), level) (body, body_pos)))
                 end
           | C_Ast.Raw_txt _ => NONE)
         cs
@@ -806,19 +809,25 @@ declare [[ML_catch_all = true]]
 
 ML\<open>
 val CENV = Unsynchronized.ref(CEnv.empty_cenv);
-val probe_cenv = let fun probe (cenv, _ , _) (_ : string * Position.T) thy = (CENV := cenv; thy)
+val probe_cenv = let fun probe (cenv, _ : C_Ast.navi list, _ , _) (_ : string * Position.T) thy =
+                              (CENV := cenv; thy)
                  in  CEnv.store_antiq ("probe_cenv",  probe) end
 
 
 val AST = Unsynchronized.ref((C_Ast.Units []): (Position.T C_Ast.root) )
-val probe_ast = let fun probe (_, c_ast , l) (_ : string * Position.T) thy =
+(* Stashed alongside "AST" by the same "probe_ast" handler, purely so a test
+   can confirm the "@tag[navi] ..." bracket (see "C_Ast.navi") was parsed
+   into exactly the expected "navi list" and reached the handler intact -
+   not otherwise used by "probe_ast" itself. *)
+val NAVI_PROBE = Unsynchronized.ref ([] : C_Ast.navi list)
+val probe_ast = let fun probe (_, navi, c_ast , l) (_ : string * Position.T) thy =
                               (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ C_Ast.pp_root c_ast);
-                               AST := c_ast; thy)
+                               AST := c_ast; NAVI_PROBE := navi; thy)
                 in  CEnv.store_antiq ("probe_ast",  probe) end
 
 
-val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
+val highlight = let fun probe (_, _ : C_Ast.navi list, c_ast , _) (_ : string * Position.T) thy =
                               (Position.report (AnaEval.pos_of_root c_ast) Markup.intensify;
                                thy)
                 in  CEnv.store_antiq ("highlight",  probe) end
@@ -838,7 +847,7 @@ val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
    (\<^verbatim>\<open>Token.inner_syntax_of\<close>/\<^verbatim>\<open>Syntax.implode_input\<close>): a bare string handed
    to \<^ML>\<open>Syntax.read_term\<close> carries no position of its own, so Isabelle falls
    back to whatever ambient position happens to be active - here, that turned
-   out to be the antiquotation's own *resolved C_Ast context* position (§B's
+   out to be the antiquotation's own *resolved C_Ast context* position (\<section>B's
    "ctx"-derived root), not any position inside the term text itself. In
    practice this meant hovering over a symbol *inside* the parsed term (e.g.
    the "0" or the "@" of a list-append) flickered between unrelated C-source
@@ -867,7 +876,7 @@ val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
 val TERM_PROBE = Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
 val term_antiq =
   let
-    fun probe (_, c_ast, _) (body, body_pos) thy =
+    fun probe (_, _ : C_Ast.navi list, c_ast, _) (body, body_pos) thy =
       let
         val ctxt = Proof_Context.init_global thy
         (* "body_pos" is already a single merged range position (built via

@@ -208,14 +208,17 @@
    embedded in C comments, e.g. for Isabelle_C-style annotations), since a
    parser needs somewhere to attach them once it has to track them at all:
    "'a comment = Raw_txt of (string * 'a) list | Antiquotation of
-   {tag : string * 'a} * {level : int} * {cartouche : string * 'a}" - each
-   piece of text tagged with its own position, "level" an optional integer
-   written as "@tag(level) ..." (0 when omitted) distinguishing several uses
-   of the same tag, and "cartouche" the antiquotation's body text - written
-   either as a nested Isabelle cartouche "\<open>...\<close>" or, equivalently, as a
-   double-quoted string "..." (the field keeps its original name for either
-   spelling, since both denote the same body). "nodeInfo" was redesigned
-   around this:
+   {tag : string * 'a} * navi list * {level : int} * {cartouche : string * 'a}"
+   - each piece of text tagged with its own position, a "navi list" (a
+   sequence of "up"/"Up"/"right"/"down" steps written as an optional
+   bracketed "[...]" right after the tag, e.g. "@tag[ur](2) ...", empty when
+   omitted - see "navi" itself for what the individual steps mean), "level"
+   an optional integer written as "@tag(level) ..." (0 when omitted)
+   distinguishing several uses of the same tag, and "cartouche" the
+   antiquotation's body text - written either as a nested Isabelle cartouche
+   "\<open>...\<close>" or, equivalently, as a double-quoted string "..." (the field
+   keeps its original name for either spelling, since both denote the same
+   body). "nodeInfo" was redesigned around this:
    instead of the old "OnlyPos of 'a * ('a * int) | NodeInfo of 'a *
    ('a * int) * namea" pair-of-positions-plus-a-name shape, it is now
    "'a nodeInfo = OnlyPos of 'a | NodeInfo of 'a comment list * 'a" - a
@@ -342,8 +345,15 @@ structure C_Ast : sig
   datatype ('a, 'b) either = Left of 'a | Right of 'b
 
   datatype cChar = CChar of char * bool | CChars of char list * bool
-  datatype 'a comment = Raw_txt of (string*'a) list  
-                      | Antiquotation of {tag : string*'a} * {level:int} * {cartouche:string * 'a} 
+  (* One navigation step in an antiquotation's "[navi]" bracket (see
+     "Antiquotation" below): "up"/"Up" move toward the root, "right"/"down"
+     move away from it - exact semantics (how many steps, which child/sibling)
+     are deliberately not fixed yet, this is purely the syntax's target type.
+     No position parameter: a navigation step has no source span of its own
+     worth reporting, unlike a name or a body. *)
+  datatype navi = up | Up | right | down
+  datatype 'a comment = Raw_txt of (string*'a) list
+                      | Antiquotation of {tag : string*'a} * navi list * {level:int} * {cartouche:string * 'a}
   datatype 'a nodeInfo = OnlyPos of 'a | NodeInfo of 'a comment list * 'a
 
   datatype namea = Name of int
@@ -628,8 +638,10 @@ datatype cChar = CChar of char * bool | CChars of char list * bool;
 
 datatype 'a flags = Flags of int;
 
-datatype 'a comment = Raw_txt of (string*'a) list  
-                    | Antiquotation of {tag : string * 'a} * {level : int} * {cartouche : string * 'a} 
+datatype navi = up | Up | right | down;
+
+datatype 'a comment = Raw_txt of (string*'a) list
+                    | Antiquotation of {tag : string * 'a} * navi list * {level : int} * {cartouche : string * 'a}
 
 datatype 'a nodeInfo = OnlyPos of 'a | NodeInfo of 'a comment list * 'a
 

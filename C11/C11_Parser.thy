@@ -251,7 +251,7 @@ structure C11_Comments = struct
     if List.all Char.isSpace (String.explode text) then ()
     else push (C_Ast.Raw_txt [(text, pos)])
 
-  fun push_antiquotation tag level cartouche = push (C_Ast.Antiquotation (tag, level, cartouche))
+  fun push_antiquotation tag navi level cartouche = push (C_Ast.Antiquotation (tag, navi, level, cartouche))
 
   (* Called once per real token, at its start position: claims whatever
      comments/antiquotations have accumulated since the previous token. *)
@@ -370,37 +370,71 @@ fun push_raw_fragment (yypos, yytext) =
     C11_Comments.push_raw (yytext, Position.range_position (get_pos yypos, get_pos (yypos + String.size yytext)))
 
 (* Antiquotation state: the tag most recently seen ("@tag", or "@tag(N)"
-   with an explicit level - see "parse_tag_and_level" below), and the text
-   of the cartouche body currently being scanned (accumulated fragment by
-   fragment across possibly-nested "\<open>...\<close>", the same way the surrounding
-   comment text itself is never assembled into one string up front - see
-   the ANTIQ lexer rules below), together with that body's start position.
-   The quoted-string body alternative ("@tag(N) \"...\"") needs none of
-   this: since a quoted body cannot nest, it is matched, extracted, and
-   pushed in one shot by a single lex rule/handler - see
-   "antiq_tag_and_string_seen" below - without ever touching this state. *)
-val antiq_tag : (string * int * Position.T) ref = ref ("", 0, Position.none)
+   with an explicit level, or "@tag[navi]"/"@tag[navi](N)" with a navigation
+   string too - see "parse_tag_navi_level" below), and the text of the
+   cartouche body currently being scanned (accumulated fragment by fragment
+   across possibly-nested "\<open>...\<close>", the same way the surrounding comment
+   text itself is never assembled into one string up front - see the ANTIQ
+   lexer rules below), together with that body's start position. The
+   quoted-string body alternative ("@tag(N) \"...\"") needs none of this:
+   since a quoted body cannot nest, it is matched, extracted, and pushed in
+   one shot by a single lex rule/handler - see "antiq_tag_and_string_seen"
+   below - without ever touching this state. *)
+val antiq_tag : (string * C_Ast.navi list * int * Position.T) ref =
+  ref ("", [], 0, Position.none)
 val antiq_buf : string list ref = ref []
 val antiq_start : Position.T ref = ref Position.none
 
-(* Splits the text matched after the leading "@" into the tag name and its
-   optional parenthesized level ("foo" -> ("foo", 0), "foo(3)"/"foo (3)" ->
-   ("foo", 3)) - shared by the cartouche-body path ("antiq_tag_seen") and
-   the quoted-string-body path ("antiq_tag_and_string_seen"), so both
-   notations parse "@tag(N)" identically. *)
-fun parse_tag_and_level text =
+(* Maps one navigation-string character to its "C_Ast.navi" constructor -
+   the lexer's own "{NAVI}*" = "[uUrd]*" regex already guarantees every
+   character reaching this function is one of exactly these four, so no
+   other case is reachable. *)
+fun char_to_navi #"u" = C_Ast.up
+  | char_to_navi #"U" = C_Ast.Up
+  | char_to_navi #"r" = C_Ast.right
+  | char_to_navi #"d" = C_Ast.down
+  | char_to_navi c =
+      (* Unreachable in practice - "{NAVI}*" = "[uUrd]*" is the only regex
+         that ever calls this, and it cannot match anything else - "raise
+         Fail", not Isabelle's own "error", since this sandboxed ML
+         environment is not guaranteed to have "error" (Isabelle/Pure's,
+         not Standard ML's) in scope; "raise Fail" is core Standard ML,
+         always available. *)
+      raise Fail ("invalid navigation character " ^ String.str c)
+
+(* Splits the text matched after the leading "@" into the tag name, its
+   optional bracketed navigation string ("foo" -> [], "foo[ur]" ->
+   [right, down] naming the constructors in "C_Ast.navi" - not "u"/"r"; see
+   "char_to_navi" - "foo[]" -> [] too, syntactically present but empty), and
+   its optional parenthesized level ("foo" -> 0, "foo(3)"/"foo (3)" -> 3) -
+   shared by the cartouche-body path ("antiq_tag_seen") and the
+   quoted-string-body path ("antiq_tag_and_string_seen"), so both notations
+   parse "@tag[navi](N)" identically. The lexer's own regex
+   ("{L}{A}*({HWS}*\"[\"{NAVI}*\"]\")?({HWS}*\"(\"{D}+\")\")?") already
+   guarantees this exact shape - name, then optionally "[navi]", then
+   optionally "(level)", each optionally preceded by horizontal whitespace -
+   so this just re-walks that same shape without needing to re-validate it. *)
+fun parse_tag_navi_level text =
     let
       val trim = Substring.string o Substring.dropr Char.isSpace o Substring.full
-      val stripped =
-        Substring.string (Substring.dropl (fn c => c = #"@" orelse Char.isSpace c) (Substring.full text))
-    in
-      case String.fields (fn c => c = #"(") stripped of
-        [name] => (trim name, 0)
-      | [name, rest] =>
-          (trim name,
-           valOf (Int.fromString (String.substring (rest, 0, String.size rest - 1))))
-      | _ => (trim stripped, 0)
-    end
+      val after_at =
+        Substring.dropl (fn c => c = #"@" orelse Char.isSpace c) (Substring.full text)
+      val (name_ss, rest1) =
+        Substring.splitl (fn c => Char.isAlphaNum c orelse c = #"_") after_at
+      val rest1' = Substring.dropl Char.isSpace rest1
+      val (navi, rest2) =
+        if Substring.size rest1' > 0 andalso Substring.sub (rest1', 0) = #"[" then
+          let
+            val (navi_ss, after) = Substring.splitl (fn c => c <> #"]") (Substring.triml 1 rest1')
+          in (map char_to_navi (String.explode (Substring.string navi_ss)), Substring.triml 1 after) end
+        else ([], rest1')
+      val rest2' = Substring.dropl Char.isSpace rest2
+      val level =
+        if Substring.size rest2' > 0 andalso Substring.sub (rest2', 0) = #"(" then
+          let val (lvl_ss, _) = Substring.splitl (fn c => c <> #")") (Substring.triml 1 rest2')
+          in valOf (Int.fromString (Substring.string lvl_ss)) end
+        else 0
+    in (trim (Substring.string name_ss), navi, level) end
 
 (* "@tag(level)" with no cartouche/string body at all is a valid, complete
    antiquotation in its own right - the body defaults to the empty string,
@@ -420,16 +454,16 @@ fun parse_tag_and_level text =
    before. The empty-string body's own "cartouche" position is the tag's
    own position - there is no text of its own to span. *)
 fun antiq_flush_pending_tag () =
-    let val (name, level, pos) = !antiq_tag in
+    let val (name, navi, level, pos) = !antiq_tag in
       if name = "" then ()
       else
-        (antiq_tag := ("", 0, Position.none);
-         C11_Comments.push_antiquotation {tag = (name, pos)} {level = level} {cartouche = ("", pos)})
+        (antiq_tag := ("", [], 0, Position.none);
+         C11_Comments.push_antiquotation {tag = (name, pos)} navi {level = level} {cartouche = ("", pos)})
     end
 
 fun antiq_tag_seen (yypos, yytext) =
-    let val (name, level) = parse_tag_and_level yytext
-    in antiq_flush_pending_tag (); antiq_tag := (name, level, get_pos yypos) end
+    let val (name, navi, level) = parse_tag_navi_level yytext
+    in antiq_flush_pending_tag (); antiq_tag := (name, navi, level, get_pos yypos) end
 
 fun antiq_body_start yypos = antiq_start := get_pos yypos
 
@@ -439,15 +473,15 @@ fun antiq_body_finish yypos =
     let
       val body_text = String.concat (rev (!antiq_buf))
       val body_pos = Position.range_position (!antiq_start, get_pos yypos)
-      val (tag_text, level, tag_pos) = !antiq_tag
+      val (tag_text, navi, level, tag_pos) = !antiq_tag
     in
       antiq_buf := [];
       (* Clear the pending-tag marker now that its body has been found -
          otherwise a later "antiq_flush_pending_tag" (on the next tag, or at
          the comment's end) would wrongly re-push this same tag a second
          time, now with an empty body. *)
-      antiq_tag := ("", 0, Position.none);
-      C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} {level = level} {cartouche = (body_text, body_pos)}
+      antiq_tag := ("", [], 0, Position.none);
+      C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* The quoted-string alternative to a cartouche body: unlike "\<open>...\<close>",
@@ -468,13 +502,13 @@ fun antiq_tag_and_string_seen (yypos, yytext) =
     let
       fun find_quote i = if String.sub (yytext, i) = #"\"" then i else find_quote (i + 1)
       val qpos = find_quote 0
-      val (name, level) = parse_tag_and_level (String.substring (yytext, 0, qpos))
+      val (name, navi, level) = parse_tag_navi_level (String.substring (yytext, 0, qpos))
       val body_len = String.size yytext - qpos - 2
       val body_text = String.substring (yytext, qpos + 1, body_len)
       val body_start = yypos + qpos + 1
       val body_pos = Position.range_position (get_pos body_start, get_pos (body_start + body_len))
     in
-      C11_Comments.push_antiquotation {tag = (name, get_pos yypos)} {level = level} {cartouche = (body_text, body_pos)}
+      C11_Comments.push_antiquotation {tag = (name, get_pos yypos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* Overrides the default "fun eof () = Tokens.EOF(Position.none, Position.none)"
@@ -525,6 +559,7 @@ SP=(u8|u|U|L);
 ES=(\\(['"?\\abfnrtv]|{O}{1,3}|x{H}+));
 WS=[\ \t\r\n\011\012];
 HWS=[\ \t\011\012];
+NAVI=[uUrd];
 OPENCART=\\\<open>;
 CLOSECART=\\\<close>;
 %s COMMENT INCLUDE LCOMMENT ANTIQ;
@@ -664,10 +699,10 @@ lex_rules\<open>
 <COMMENT>"*"+[^*/@\\\n]*                   => (push_raw_fragment (yypos, yytext); lex());
 <COMMENT>"*"+"/"                            => (antiq_flush_pending_tag (); YYBEGIN INITIAL; lex());
 
-<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
+<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
                                             => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
                                                 antiq_tag_and_string_seen (yypos, yytext); lex());
-<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?
+<COMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?
                                             => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
                                                 antiq_tag_seen (yypos, yytext); lex());
 <COMMENT>"@"                               => (push_raw_fragment (yypos, yytext); lex());
@@ -677,10 +712,10 @@ lex_rules\<open>
                                                 antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
 
 <LCOMMENT>[^@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
+<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
                                             => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
                                                 antiq_tag_and_string_seen (yypos, yytext); lex());
-<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"("{D}+")")?
+<LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?
                                             => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
                                                 antiq_tag_seen (yypos, yytext); lex());
 <LCOMMENT>"@"                              => (push_raw_fragment (yypos, yytext); lex());

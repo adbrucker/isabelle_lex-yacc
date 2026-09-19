@@ -267,7 +267,7 @@ int test_arith(void) {
 }
 \<close>
 
-ML\<open>CEnv.get_ast "C11#4" @{theory}\<close>
+ML\<open>CEnv.get_ast "C11_Tests#4" @{theory}\<close>
 
 c11\<open>
 int f(int x) {
@@ -278,7 +278,7 @@ int f(int x) {
 \<close>
 
 declare [[ML_print_depth=100]]
-ML\<open>CEnv.get_ast "C11#5" @{theory}\<close>
+ML\<open>CEnv.get_ast "C11_Tests#5" @{theory}\<close>
 
 
 subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
@@ -469,7 +469,7 @@ text\<open>
 ML\<open>
 fun dummy_antiq tag =
   let
-    fun probe (_, _, level) (body, _ : Position.T) thy =
+    fun probe (_, _ : C_Ast.navi list, _, level) (body, _ : Position.T) thy =
       (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
                 quote body);
        thy)
@@ -672,6 +672,84 @@ int test_term_anchor;
 \<close>
 ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
    else error "TERM_PROBE ref was never updated"\<close>
+
+subsection\<open>Navigation Strings in Antiquotations\<close>
+text\<open>
+  An antiquotation may carry a navigation string - zero or more
+  \<open>u\<close>/\<open>U\<close> steps followed by zero or more \<open>r\<close>/\<open>d\<close> steps (so it may be
+  empty), written as an optional bracketed \<open>[navi]\<close> right after the tag and
+  before the optional \<open>(level)\<close> or the body: \<open>@tag[navi](level) \<open>...\<close>\<close>. It
+  is mapped into \<open>C_Ast.navi list\<close> (\<open>u\<close>\<open>\<mapsto>\<close>\<open>up\<close>, \<open>U\<close>\<open>\<mapsto>\<close>\<open>Up\<close>, \<open>r\<close>\<open>\<mapsto>\<close>
+  \<open>right\<close>, \<open>d\<close>\<open>\<mapsto>\<close>\<open>down\<close>) and threaded all the way to the antiquotation
+  handler as a new second argument (\<open>type_antiq_fun\<close> in \<^verbatim>\<open>CEnv.thy\<close>) -
+  every handler this round simply ignores it, matching that every test here
+  uses an empty navi list; what the individual steps should actually do to
+  root resolution is separate, later design work.
+
+  The bracket is its own delimiter rather than bare adjacency to the tag,
+  deliberately: \<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close> are ordinary identifier characters with no
+  special lexical status, and the tag regex is greedy, so \<open>@answer\<close> (a tag
+  that happens to end in the single-character navi alphabet) must keep
+  meaning the whole tag \<open>"answer"\<close> with no navi steps at all, not
+  \<open>"answe"\<close> plus a navi step \<open>r\<close> - the last test below confirms this
+  explicitly.\<close>
+
+ML\<open>
+val NAVI_COUNT = Unsynchronized.ref 0
+val counting_navi_antiq = let fun probe _ _ thy = (NAVI_COUNT := !NAVI_COUNT + 1; thy) in CEnv.store_antiq ("answer", probe) end
+\<close>
+setup\<open>counting_navi_antiq\<close>
+
+text\<open>No brackets at all, and empty brackets, both give an empty navi list.\<close>
+c11\<open>
+/*@ probe_ast */
+int navi_none;
+\<close>
+ML\<open>if !NAVI_PROBE = [] then () else error "Expected an empty navi list with no brackets"\<close>
+
+c11\<open>
+/*@ probe_ast[] */
+int navi_empty;
+\<close>
+ML\<open>if !NAVI_PROBE = [] then () else error "Expected an empty navi list with empty brackets"\<close>
+
+text\<open>All four navigation constructors, in order, via a cartouche body, a
+  quoted-string body, and combined with an explicit level.\<close>
+c11\<open>
+/*@ probe_ast[uUrd] \<open>a\<close> */
+int navi_all_four;
+\<close>
+ML\<open>if !NAVI_PROBE = [C_Ast.up, C_Ast.Up, C_Ast.right, C_Ast.down] then ()
+   else error "Expected [up, Up, right, down]"\<close>
+
+c11\<open>
+/*@ probe_ast[ur](3) \<open>a\<close> */
+int navi_with_level;
+\<close>
+ML\<open>if !NAVI_PROBE = [C_Ast.up, C_Ast.right] then () else error "Expected [up, right]"\<close>
+
+c11\<open>
+/*@ probe_ast[Ud] "a" */
+int navi_quoted_body;
+\<close>
+ML\<open>if !NAVI_PROBE = [C_Ast.Up, C_Ast.down] then () else error "Expected [Up, down]"\<close>
+
+text\<open>Via a "//" line comment too - a separate lexer state with its own copy
+  of the tag/navi/level regex.\<close>
+c11\<open>
+//@ probe_ast[r] \<open>a\<close>
+int navi_line_comment;
+\<close>
+ML\<open>if !NAVI_PROBE = [C_Ast.right] then () else error "Expected [right]"\<close>
+
+text\<open>The ambiguity check: a tag ending in a navi-alphabet letter, with no
+  brackets, must still parse as that whole tag with an empty navi list.\<close>
+c11\<open>
+/*@ answer */
+int navi_tag_ends_in_r;
+\<close>
+ML\<open>if !NAVI_COUNT = 1 then ()
+   else error ("Expected the \"answer\" tag to fire exactly once, fired " ^ Int.toString (!NAVI_COUNT))\<close>
 
 section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
 
