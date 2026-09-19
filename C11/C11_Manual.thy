@@ -45,7 +45,7 @@ text\<open>
   to specific points in the C source via a comment-based antiquotation mechanism.
   It is not a C compiler, nor a verification tool in its own right: it is the
   \<^emph>\<open>front-end layer\<close> of a verification tool, a documentation generator, or a static
-  analysis would be built on top of.
+  analysis that would be built on top of it.
 \<close>
 
 subsection\<open>Context\<close>
@@ -61,11 +61,11 @@ text\<open>
   sub-term of the surrounding AST.
 
   This project - \<^bold>\<open>Isabelle/C, Version 2.0\<close> - is a from-scratch redesign of that
-  same user-facing idea, built instead on \<^verbatim>\<open>ml_lex_yacc\<close>, this repository's own
+  same user-facing idea, built instead on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's own
   generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/Pure: plain
   ml-lex/ml-yacc, not a bespoke parser combinator, and a genuinely reusable
   framework (the same one already used for a Pascal fragment, a Datalog engine,
-  and a calculator example elsewhere in this session's history) rather than a
+  and a calculator example elsewhere in \<^verbatim>\<open>ml_lex_yacc\<close>'s example suite) rather than a
   single-purpose C front-end. It is not a port of the AFP entry's code, and does
   not depend on it; it exists to answer a narrower question: how much of the same
   \<^emph>\<open>shape\<close> - inline and file-based parsing commands, antiquotation-carrying
@@ -75,8 +75,8 @@ text\<open>
   showed to be disproportionately complex. Since the lexer-part of version 1.0
   was effectively based on a version-split from Isabelle2019, the maintenance of
   Isabelle/C version 1.0 turned out to be problematic at various occasions in the
-  Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein Grosses Dankeschoen an 
-  Makarius Wenzel der wiederholt ``ìssues'' des AFP Eintrags loeste und
+  Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein grosses Dankeschoen an 
+  Makarius Wenzel, der wiederholt ``ìssues'' des AFP Eintrags loeste und
   den Prototypen damit am Leben hielt\<close>.
   The antiquotation-navigation language
   (\<^verbatim>\<open>select_ast\<close>, \<open>\<section>2.4\<close>) is the clearest example: Isabelle/C 1.0's own
@@ -284,6 +284,42 @@ text\<open>
     merely stored text.
 \<close>
 
+subsection\<open>Predefined Header Declarations\<close>
+
+text\<open>
+  Real C code routinely uses names this fragment never itself declares -
+  \<open>printf\<close>, \<open>malloc\<close>, \<open>errno\<close>, \<open>assert\<close> - because they come from a system
+  header, and \<open>#include\<close> here is purely syntactic (\<open>\<section>1.1\<close>): no header
+  search, no real preprocessing, nothing textually inserted. Left alone,
+  every such use would be reported exactly like a genuinely undeclared
+  name (\<open>Markup.bad ()\<close>, \<open>\<section>2.2\<close>) - technically correct (this fragment
+  really never saw a declaration for it), but noisy and unhelpful for
+  anything beyond a self-contained toy example.
+
+  \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>3\<close>) closes this gap the simplest
+  way available: it lets a theory tell \<open>cenv\<close> directly what a header
+  \<^emph>\<open>would\<close> have declared - global variables, macro constants/macros, and
+  function prototypes - by parsing and walking \<open>decl_list\<close> through
+  exactly the same machinery an ordinary top-level declaration in a real
+  \<open>c11\<close> block goes through. Once registered this way, a predefined name is
+  indistinguishable in \<open>cenv\<close> from one the theory declared itself: it
+  hyperlinks, participates in scoping, and can be the target of a struct/
+  union/enum tag or member lookup (\<open>\<section>2.2\<close>) exactly the same way.
+
+  Two things are deliberately \<^emph>\<open>not\<close> provided, matching the "basic
+  functionality" this command is scoped to. First, \<open>header\<close> is a label
+  only - \<open>c11_predef\<close> is entirely disconnected from \<open>#include\<close>: writing
+  \<open>#include <stdio.h>\<close> does not automatically bring \<open>printf\<close> into scope,
+  and declaring \<open>printf\<close> via \<open>c11_predef\<close> does not require ever having
+  written that \<open>#include\<close> anywhere. Second, \<open>decl_list\<close> may only declare
+  an \<^emph>\<open>interface\<close>, never an implementation - a function \<^emph>\<open>definition\<close>
+  (a real \<open>{ ... }\<close> body) is rejected outright, since the point is only to
+  let the environment know a name exists and roughly what it looks like,
+  not to give it real, executable semantics. A genuine limitation of what
+  can be declared this way at all - not a scoping choice - is discussed in
+  \<open>\<section>4\<close>.
+\<close>
+
 section\<open>The C11 Main Commands\<close>
 
 text\<open>
@@ -305,6 +341,14 @@ text\<open>
     above, document a fragment as correctly \<^emph>\<open>not\<close> that shape - rejected
     either by a genuine parse failure, or by parsing successfully as the
     \<^emph>\<open>wrong\<close> shape (an expression handed to \<open>c11_statement_reject\<close>, say).
+  \<^descr> \<open>c11_predef [header] \<open>decl_list\<close>\<close> (\<open>\<section>2.6\<close>) registers a fragment of
+    predefined global variables/macro-definitions/function prototypes into
+    \<open>cenv\<close> - the usual contents of a standard header such as \<open>stdio.h\<close> -
+    so that later uses of names like \<open>printf\<close> are no longer "genuinely
+    undeclared". \<open>header\<close> (e.g.\ \<open>stdio.h\<close>, parsed directly as a dotted
+    \<open>name\<close> token) is a label only, echoed in the confirmation message. A
+    function \<^emph>\<open>definition\<close> (a real \<open>{ ... }\<close> body) is rejected outright:
+    this command is for declaring an interface, never an implementation.
 \<close>
 
 text\<open>A whole translation unit, with declaration/use hyperlinking and a
@@ -330,6 +374,13 @@ text\<open>Documenting, rather than silently accepting, an out-of-scope construc
 c11_reject\<open>
 #define SQUARE(x) x * x
 \<close>
+
+text\<open>A predefined-header fragment, and a later, now-resolvable use of one of its names:\<close>
+c11_predef [stdio.h] \<open>
+int printf(const char *format, ...);
+\<close>
+
+c11_expr\<open>printf("hello, %d\n", 42)\<close>
 
 subsection\<open>An Example Session\<close>
 
@@ -472,11 +523,37 @@ text\<open>
     optional \<open>#else\<close>) are recognized as real AST nodes; the general \<open>#if\<close>/
     \<open>#elif\<close> constant-expression language, token pasting/stringizing, and
     \<open>_Pragma\<close> are out of scope.
-  \<^item> \<^bold>\<open>No struct/union member namespace.\<close> \<open>analyse_and_eval\<close> does not walk
-    into a struct/union's own member list or an enum's own values - member
-    names live in a per-type namespace this fragment does not yet track
-    (\<open>type_ident\<close>, \<^verbatim>\<open>CEnv.thy\<close>, is still a placeholder), and enum constants
-    are consequently not registered into \<open>cenv\<close> either.
+  \<^item> \<^bold>\<open>Member linking only resolves a bare-variable base.\<close> A struct/union/enum
+    \<^emph>\<open>tag\<close> is tracked (\<open>type_ident\<close>, \<^verbatim>\<open>CEnv.thy\<close>) and hyperlinked like any
+    other declared name, and an enum's own constants are registered into the
+    ordinary namespace right alongside variables and functions - but
+    resolving a member access \<open>e.field\<close>/\<open>e->field\<close> back to \<open>field\<close>'s own
+    declaration (\<open>AnaEval.report_member_use\<close>) only handles \<open>e\<close> a bare
+    variable, re-deriving its struct/union tag from its own stored
+    declaration-specifiers \<^emph>\<open>directly\<close> - a \<open>typedef\<close>'d name standing in for
+    a struct/union type is not chased (see the next item), and neither is
+    any other base expression shape (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained
+    \<open>a.b.c\<close>): both fall back to unresolved markup rather than a hyperlink,
+    exactly like a genuinely undeclared name.
+  \<^item> \<^bold>\<open>No \<open>typedef\<close> names at all.\<close> Following the reference grammar's own
+    note, this fragment's lexer never produces a \<open>TYPEDEF_NAME\<close> token -
+    "these tokens remain part of the grammar, but are only ever produced
+    were a symbol table to be added later" (\<^verbatim>\<open>C11_Parser.thy\<close>). A
+    \<open>typedef\<close>'d type name is therefore not recognized as a type at all,
+    anywhere: \<open>typedef int my_int; my_int x;\<close> fails to parse today,
+    independently of everything else in this manual. This is the one real
+    gap in \<open>c11_predef\<close> (\<open>\<section>2.6\<close>, \<open>\<section>3\<close>): most of \<open>stdio.h\<close> (the
+    non-\<open>FILE\<close>-taking functions), all of \<open>stdlib.h\<close>, \<open>errno.h\<close>, and
+    \<open>assert.h\<close> are
+    declarable without needing any such name, but \<open>setjmp.h\<close>'s \<open>jmp_buf\<close>
+    and \<open>stdarg.h\<close>'s \<open>va_list\<close> are themselves always \<open>typedef\<close>'d types in
+    a real C library - so \<^emph>\<open>every\<close> declaration in those two headers needs
+    exactly the mechanism this fragment does not have. A standards-faithful
+    \<open>c11_predef [setjmp.h] \<open>int setjmp(jmp_buf env); ...\<close>\<close> cannot be
+    written at all until real \<open>typedef\<close> support (lexer feedback
+    registering a \<open>typedef\<close>'d name so a later use of it is lexed as
+    \<open>TYPEDEF_NAME\<close>) is added - a separate, materially larger piece of work,
+    deliberately out of scope here.
   \<^item> \<^bold>\<open>A single, shared, non-reentrant lexer state.\<close> The generated lexer
     keeps its antiquotation-comment accumulator in one shared, mutable
     structure (\<^verbatim>\<open>C11_Comments\<close>) rather than a value threaded functionally
@@ -505,7 +582,7 @@ text\<open>
   of C11, suitable as the basis for a verification tool, a documentation
   generator, or a static analysis; what is documented in \<open>\<section>4\<close> as missing is,
   in every case, a scoping decision rather than an accident - room for a later
-  round to extend the environment to struct/union members, broaden the
+  round to chase \<open>typedef\<close> names and richer member-access shapes, broaden the
   preprocessor fragment, or grow \<open>select_ast\<close>'s own \<open>children_of\<close> table
   (\<open>\<section>2.4\<close>) as concrete uses demand it.
 \<close>

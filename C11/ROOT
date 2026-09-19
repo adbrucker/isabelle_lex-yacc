@@ -1,0 +1,29 @@
+chapter AFP
+
+(* Deliberately independent of the parent "../ROOT" ("Isabelle_Lex-Yacc")
+   rather than a sub-session of it: "directories .." reaches "LexYacc.thy"/
+   "YaccLib.thy" for "C11_Parser.thy"'s own relative import, which is
+   exactly what makes the two sessions unable to share one build graph (see
+   the note in "../ROOT"). Build with "isabelle build -d C11 C11" - never
+   together with "Isabelle_Lex-Yacc" in the same invocation, and no "ROOTS"
+   file here for the same reason. *)
+session "C11" (AFP) = HOL +
+  options [timeout = 1200, document = pdf, document_output = "output"]
+  directories
+    ".."
+  theories [document = false]
+    C11_Tests
+    AntiqProbe
+  theories
+    C11_Manual
+  document_files
+    "root.tex"
+    "root.bib"
+    "figures/ExecutionOrderLevels.png"
+    "figures/NaviInExpr1.png"
+    "figures/NaviInExpr2.png"
+    "figures/NaviInStmt1.png"
+    "figures/NaviInExpr3.png"
+    "figures/NaviInStmt2.png"
+    "figures/AcslRequiresEnsuresHighlight.png"
+    "figures/DeclUseHoverLoop2.png"

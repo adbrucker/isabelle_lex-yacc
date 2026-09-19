@@ -341,6 +341,112 @@ int use_unresolved_members(void) {
 }
 \<close>
 
+subsection\<open>\<open>c11_predef\<close>: a Basic Predefined-Header Mechanism\<close>
+text\<open>
+  \<open>c11_predef [header] \<open>decl_list\<close>\<close> registers a fragment of predefined
+  global variables/macro-definitions/function prototypes into \<open>cenv\<close>,
+  exactly the way an ordinary \<open>c11\<close> translation unit's own top-level
+  declarations do (it is parsed and walked the same way, via
+  \<open>full_eval_and_store\<close>) - so that later uses of e.g. \<open>printf\<close>/\<open>malloc\<close>/
+  \<open>errno\<close> are no longer "genuinely undeclared" but hyperlink like any
+  other predeclared name. \<open>header\<close> (a bracketed \<open>name\<close> token, so a dotted
+  form like \<open>stdio.h\<close> parses directly, no quoting needed) is a label only,
+  echoed in the confirmation message - it is deliberately \<^emph>\<open>not\<close> connected
+  to \<open>#include\<close> in any way (which stays purely syntactic, see above): a
+  later \<open>#include <stdio.h>\<close> is not required for these declarations to be
+  in scope, and does not itself trigger anything.
+
+  Four small, genuinely representative fragments below cover the common,
+  non-\<open>FILE\<close>-taking parts of \<open>stdio.h\<close> (\<open>printf\<close>/\<open>putchar\<close>/\<open>getchar\<close>/
+  \<open>puts\<close> need only built-in types; \<open>fopen\<close>/\<open>fprintf\<close> and friends need
+  \<open>FILE\<close>, out of scope - see below), all of \<open>stdlib.h\<close>'s allocation/exit/
+  conversion functions, \<open>errno.h\<close>'s \<open>errno\<close> plus two error-code constants,
+  and \<open>assert.h\<close>'s \<open>assert\<close> - written here as this fragment's simplified,
+  single-expression \<open>#define\<close> (\<open>\<section>\<close> "The Preprocessor Fragment" above), so
+  it registers and type-checks as a call, not with real assertion-failure
+  semantics (which would need a statement, not an expression).\<close>
+c11_predef [stdio.h] \<open>
+int printf(const char *format, ...);
+int putchar(int c);
+int getchar(void);
+int puts(const char *s);
+\<close>
+
+c11_predef [stdlib.h] \<open>
+void *malloc(unsigned long size);
+void *calloc(unsigned long nmemb, unsigned long size);
+void *realloc(void *ptr, unsigned long size);
+void free(void *ptr);
+void exit(int status);
+void abort(void);
+int atoi(const char *nptr);
+double atof(const char *nptr);
+\<close>
+
+c11_predef [errno.h] \<open>
+extern int errno;
+#define EDOM = 33
+#define ERANGE = 34
+\<close>
+
+c11_predef [assert.h] \<open>
+#define assert(expr) = expr
+\<close>
+
+text\<open>Every one of the declared names above is now an ordinary, resolvable
+  use - not \<open>Markup.bad ()\<close> - exactly like a name the same theory declared
+  itself.\<close>
+c11\<open>
+int use_predefined(int argc, char **argv) {
+  int r = atoi(argv[0]);
+  if (r == 0) {
+    printf("bad: %d\n", errno);
+    exit(EDOM);
+  }
+  putchar(getchar());
+  assert(r > 0);
+  return r;
+}
+\<close>
+
+text\<open>Hard, batch-checkable confirmation that every name above actually
+  registered into \<open>idents\<close>, rather than merely parsing without error.\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  List.app (fn name =>
+              case Symtab.lookup idents name of
+                SOME _ => ()
+              | NONE => error ("FAIL: " ^ name ^ " not registered by c11_predef"))
+    ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc", "free",
+     "exit", "abort", "atoi", "atof", "errno", "EDOM", "ERANGE", "assert"]
+\<close>
+
+text\<open>\<open>c11_predef\<close> rejects a function \<^emph>\<open>definition\<close> (a real body) outright -
+  it is for declaring an interface, never an implementation. This is a
+  deliberately-failing case (a bare \<open>c11_predef\<close> with a genuine \<open>{ ... }\<close>
+  body errors immediately), so it cannot sit in this permanent, always-
+  succeeding suite - confirmed instead via an isolated probe, per this
+  project's own verification convention: \<open>c11_predef [bad_impl.h] \<open>int
+  bad_fn(void) { return 1; }\<close>\<close> fails with "function definitions are not
+  allowed here, only prototypes".
+
+  A more fundamental, real limitation \<^emph>\<open>not\<close> addressed here: this
+  fragment's lexer never produces a \<open>TYPEDEF_NAME\<close> token (\<^verbatim>\<open>C11_Parser.thy\<close>
+  - "these tokens remain part of the grammar, but are only ever produced
+  were a symbol table to be added later"), so a \<open>typedef\<close>'d type name is
+  not recognized as a type at all, anywhere, independently of
+  \<open>c11_predef\<close>. \<open>setjmp.h\<close>'s \<open>jmp_buf\<close> and \<open>stdarg.h\<close>'s \<open>va_list\<close> are
+  themselves always \<open>typedef\<close>'d types in a real C library, so \<^emph>\<open>every\<close>
+  declaration in those two headers needs exactly the mechanism this
+  fragment does not have: a standards-faithful \<open>c11_predef [setjmp.h]
+  \<open>int setjmp(jmp_buf env); ...\<close>\<close> cannot be written at all - confirmed via
+  an isolated probe, where it fails with a genuine parse error on
+  \<open>jmp_buf\<close> (an ordinary identifier, not a recognized type) - until real
+  \<open>typedef\<close> support (lexer feedback registering a \<open>typedef\<close>'d name so a
+  later use of it is lexed as \<open>TYPEDEF_NAME\<close>) is added, a separate,
+  materially larger piece of work.\<close>
+
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
@@ -606,8 +712,9 @@ ML\<open>
 fun dummy_antiq tag =
   let
     fun probe (_, _, level) (body, _ : Position.T) thy =
-      (writeln (quote tag ^ " (level " ^ Int.toString level ^ "): This is a dummy-antiquotation. body=" ^
-                quote body);
+      (writeln (quote tag ^ " (level " ^ Int.toString level 
+                          ^ "): This is a dummy-antiquotation. body=" 
+                          ^ quote body);
        thy)
   in CEnv.store_antiq (tag, probe) end
 \<close>
@@ -802,11 +909,14 @@ ML\<open>case !AST of
 text\<open>The \<open>term\<close> antiquotation: parses its cartouche body as a genuine HOL
   term against the theory's current context via \<^ML>\<open>Syntax.read_term\<close> - an
   ACSL-style \<open>requires\<close>/\<open>ensures\<close> clause written this way is now a real,
-  checked HOL proposition, not just stored text.\<close>
+  checked HOL proposition, not just stored text. Note that the term 
+  antiquotation allows fot type-checking, navigation, hovering and coloring
+  of free variables in the current Isabelle/HOL context.\<close>
 c11\<open>
-//@ term \<open>\<lambda>x. [1 + (0::nat)] @ [] = [2+x]\<close>
+//@ term \<open>\<lambda>x. [1 + (0::nat) + a] @ [] = [2+x]\<close>
 int test_term_anchor;              
 \<close>
+
 ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
    else error "TERM_PROBE ref was never updated"\<close>
 

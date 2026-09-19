@@ -1,5 +1,5 @@
 (***********************************************************************************
- * Copyright (c) University of Paris-Saclay
+ * Copyright (c) University of Paris-Saclay 2026
  *
  * Author : Burkhart Wolff
  *
@@ -30,7 +30,7 @@
 
 theory C11
   imports  "C11_Parser" "AnaEval" 
-  keywords "c11" "c11_ident" "c11_expr" "c11_statement" :: thy_decl
+  keywords "c11" "c11_ident" "c11_expr" "c11_statement" "c11_predef" :: thy_decl
   and      "c11_file" :: thy_load
   and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
 begin
@@ -374,6 +374,76 @@ fun run_c11_file get_file thy =
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
         "Read and syntax-check an external C11 source file, and store its AST"
         (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
+
+(* "c11_predef [header] \<open>decl_list\<close>" gives a real, "#include"-independent
+   \<^emph>\<open>basic\<close> functionality (the user's own word - see the design discussion
+   this responds to): a way to tell this fragment about the usual global
+   variables/macro-definitions/function prototypes a real "#include <header>"
+   would bring into scope, so that later uses of e.g. "printf"/"malloc"/
+   "errno" are no longer "genuinely undeclared" (\<^ML>\<open>Markup.bad ()\<close>) but
+   resolve into "cenv" exactly like any other predeclared name. "header" is a
+   plain label (a "name" token, so a dotted form like "stdio.h" parses
+   directly as a "long_ident" - no quoting needed), echoed in the reported
+   confirmation message; it plays no functional role and is not connected to
+   "#include" in any way - "#include" stays purely syntactic (see above), and
+   declaring "stdio.h"'s contents this way does not require ever having
+   written "#include <stdio.h>", nor does it restrict which uses of the
+   declared names are accepted. "decl_list" is parsed and walked exactly like
+   an ordinary "c11" translation unit (reusing "full_eval_and_store", so
+   struct/union/enum tags and enum constants register too, and any
+   antiquotation present would be dispatched the same way) - with one added
+   restriction: a function \<^emph>\<open>definition\<close> (a real body, not just a prototype)
+   is rejected outright, since "c11_predef" is for declaring an interface,
+   never an implementation, matching "no implementations" in the design
+   discussion.
+
+   A real limitation, not yet addressed: this fragment's lexer never
+   produces a "TYPEDEF_NAME" token (see the note on this in
+   \<^verbatim>\<open>C11_Parser.thy\<close> - "these tokens remain part of the grammar, but are
+   only ever produced were a symbol table to be added later"), so a
+   "typedef"'d type name is not recognized as a type at all, anywhere, by
+   this fragment today - independently of "c11_predef". Most of "stdio.h"
+   (the non-"FILE"-taking functions), all of "stdlib.h", "errno.h", and
+   "assert.h" are declarable without needing any such name; "setjmp.h"'s
+   "jmp_buf" and "stdarg.h"'s "va_list" are themselves always "typedef"'d
+   types in a real C library, so \<^emph>\<open>every\<close> declaration in those two headers
+   needs exactly the mechanism this fragment does not have - a
+   standards-faithful "c11_predef [setjmp.h] \<open>...\<close>"/"c11_predef [stdarg.h]
+   \<open>...\<close>" cannot be written at all until real "typedef" support (lexer
+   feedback registering a "typedef"'d name so a later use of it is lexed as
+   "TYPEDEF_NAME") is added - a separate, materially larger piece of work,
+   deliberately out of scope here. *)
+fun reject_predef_implementations header (C_Ast.Units us) =
+      List.app (fn C_Ast.CTranslUnit (eds, _) =>
+                    List.app (fn C_Ast.CFDefExt (C_Ast.CFunDef (_, _, _, _, ni)) =>
+                                  error ("c11_predef " ^ quote header ^
+                                         ": function definitions are not allowed here, only " ^
+                                         "prototypes (no \"{ ... }\" body)" ^
+                                         Position.here (C_Ast.pos_of_NodeInfo ni))
+                                | _ => ())
+                      eds)
+        us
+  | reject_predef_implementations _ _ = () (* unreachable: "root" is already known to be "Units" *)
+
+fun run_c11_predef header source thy =
+    let
+      val _ = C11_Comments.reset ()
+      val ctxt = Proof_Context.init_global thy
+      val res = C11.parse_source ctxt source
+    in
+      case res of
+        NONE => error ("c11_predef " ^ quote header ^ ": no result")
+      | SOME root =>
+          let
+            val root = require_kind is_units "translation unit" ("c11_predef " ^ quote header) root
+            val _ = reject_predef_implementations header root
+          in full_eval_and_store root thy end
+    end
+
+val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
+        "Declare a fragment of predefined C11 global variables/macros/function prototypes"
+        (Parse.$$$ "[" |-- Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
+          >> (fn (header, source) => Toplevel.theory (run_c11_predef header source)))
 
 (* C11.parse_source (generated by the `linker` template in YaccLib.thy)
    always delegates to Isabelle_lex_yacc.parse_source, which hard-codes
