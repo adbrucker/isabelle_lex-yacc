@@ -315,13 +315,15 @@ val _ =
   case Symtab.lookup types "Color" of
     SOME (CEnv.Enum_tag _) => writeln "PASS: Color registered as Enum_tag"
   | other => error ("FAIL: Color not registered as Enum_tag: " ^
-                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+                     (case other of NONE => "not found" 
+                                  | SOME _ => "found as a different kind"))
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents name of
                 SOME (CEnv.Enum _) => writeln ("PASS: " ^ name ^ " registered as Enum")
               | other => error ("FAIL: " ^ name ^ " not registered as Enum: " ^
-                                 (case other of NONE => "not found" | SOME _ => "found as a different kind")))
+                                 (case other of NONE => "not found" 
+                                              | SOME _ => "found as a different kind")))
     ["RED", "GREEN", "BLUE", "FOO", "BAR"]
 \<close>
 
@@ -458,21 +460,82 @@ text\<open>\<open>c11_predef\<close> rejects a function \<^emph>\<open>definitio
   bad_fn(void) { return 1; }\<close>\<close> fails with "function definitions are not
   allowed here, only prototypes".
 
-  A more fundamental, real limitation \<^emph>\<open>not\<close> addressed here: this
-  fragment's lexer never produces a \<open>TYPEDEF_NAME\<close> token (\<^verbatim>\<open>C11_Parser.thy\<close>
-  - "these tokens remain part of the grammar, but are only ever produced
-  were a symbol table to be added later"), so a \<open>typedef\<close>'d type name is
-  not recognized as a type at all, anywhere, independently of
-  \<open>c11_predef\<close>. \<open>setjmp.h\<close>'s \<open>jmp_buf\<close> and \<open>stdarg.h\<close>'s \<open>va_list\<close> are
-  themselves always \<open>typedef\<close>'d types in a real C library, so \<^emph>\<open>every\<close>
-  declaration in those two headers needs exactly the mechanism this
-  fragment does not have: a standards-faithful \<open>c11_predef [setjmp.h]
-  \<open>int setjmp(jmp_buf env); ...\<close>\<close> cannot be written at all - confirmed via
-  an isolated probe, where it fails with a genuine parse error on
-  \<open>jmp_buf\<close> (an ordinary identifier, not a recognized type) - until real
-  \<open>typedef\<close> support (lexer feedback registering a \<open>typedef\<close>'d name so a
-  later use of it is lexed as \<open>TYPEDEF_NAME\<close>) is added, a separate,
-  materially larger piece of work.\<close>
+  A real limitation this fragment \<^emph>\<open>used\<close> to have here - the lexer never
+  producing a \<open>TYPEDEF_NAME\<close> token at all, so \<open>setjmp.h\<close>'s \<open>jmp_buf\<close> and
+  \<open>stdarg.h\<close>'s \<open>va_list\<close> (both always \<open>typedef\<close>'d types in a real C
+  library) could not be declared - is now resolved, see the subsection
+  right below.\<close>
+
+subsection\<open>\<open>typedef\<close> Support: \<open>setjmp.h\<close> and \<open>stdarg.h\<close>\<close>
+text\<open>
+  \<open>C11_Typedefs\<close> (\<^verbatim>\<open>C11_Parser.thy\<close>) gives the lexer real "lexer hack"
+  feedback: once a \<open>typedef\<close> declaration has been reduced, its name is
+  recognized as \<open>TYPEDEF_NAME\<close> (not a plain identifier) in every later use,
+  in the same or a later command - exactly what a standards-faithful
+  \<open>c11_predef [setjmp.h]\<close>/\<open>c11_predef [stdarg.h]\<close> needs, since both
+  headers' one exported type is itself always a \<open>typedef\<close>. The genuine
+  glibc shape of \<open>jmp_buf\<close> - an array of a tagged struct, not the struct
+  itself - registers and resolves correctly, same as \<open>stdarg.h\<close>'s simpler
+  \<open>va_list\<close>.
+
+  This mechanism has two narrow, documented limitations (\<open>C11_Typedefs\<close>'s
+  own note in \<^verbatim>\<open>C11_Parser.thy\<close>), neither exercised by the headers below:
+  a typedef'd name used as the \<^emph>\<open>literal next\<close> token right after its own
+  \<open>";"\<close> is not recognized (the lexer may already have fetched that token as
+  a plain identifier, its own required lookahead, before registration can
+  run); and once registered, a name stays a typedef name for the rest of
+  the session, so - matching real C's own restriction - it cannot later be
+  redeclared as an unrelated, fresh typedef.\<close>
+c11_predef [setjmp.h] \<open>
+typedef struct __jmp_buf_tag { int __magic; } jmp_buf[1];
+int setjmp(jmp_buf env);
+void longjmp(jmp_buf env, int val);
+\<close>
+
+c11_predef [stdarg.h] \<open>
+typedef struct { int __offset; } va_list;
+int vprintf(const char *format, va_list ap);
+\<close>
+
+text\<open>Confirmed via the same "not registered before \<open>#include\<close>, registered
+  after" round-trip as the other headers above - both \<open>jmp_buf\<close>/\<open>va_list\<close>
+  themselves (as types) and the functions declared in terms of them use
+  correctly within one translation unit.\<close>
+c11\<open>
+#include <setjmp.h>
+#include <stdarg.h>
+
+int use_typedefs(void) {
+  jmp_buf env;
+  va_list ap;
+  return setjmp(env);
+}
+\<close>
+
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  List.app (fn name =>
+              case Symtab.lookup idents name of
+                SOME _ => ()
+              | NONE => error ("FAIL: " ^ name ^ " not registered after #include"))
+    ["setjmp", "longjmp", "vprintf"]
+\<close>
+
+text\<open>Regression test for the error-recovery corruption this feature's
+  registration side effect was originally vulnerable to (see the long note
+  on \<open>C11_Typedefs.snapshot\<close>/\<open>restore\<close> in \<^verbatim>\<open>C11_Parser.thy\<close>): a
+  \<open>c11_reject\<close> fragment reusing a fresh name right next to a malformed
+  declaration must never leak a spurious typedef registration for that
+  name, even though the fragment drives ML-Yacc's error-recovery path -
+  confirmed here by using that same name in an ordinary, immediately
+  following declaration and checking it is \<^emph>\<open>not\<close> mistaken for a type.\<close>
+c11_reject\<open>
+regression_probe_name y = 5 regression_probe_name z = 6;
+\<close>
+c11\<open>
+int regression_probe_name = 7;
+\<close>
 
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>

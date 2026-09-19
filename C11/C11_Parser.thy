@@ -61,10 +61,19 @@ text\<open>
   how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
-  below. Following the reference grammar's own note, identifiers are never lexed as
-  \<open>TYPEDEF_NAME\<close> or
-  \<open>ENUMERATION_CONSTANT\<close> (which would require a symbol table); these tokens remain
-  part of the grammar, but are only ever produced were a symbol table to be added later.
+  below. Following the reference grammar's own note, an identifier is lexed as
+  \<open>TYPEDEF_NAME\<close> (carrying its own text, unlike the reference grammar's bare token)
+  exactly when \<^verbatim>\<open>C11_Typedefs\<close> (below) has, at some earlier point in the session,
+  seen it declared by a real \<open>typedef\<close> - a small amount of lexer feedback, the
+  classic mechanism this disambiguation needs, added specifically so headers such as
+  \<open>setjmp.h\<close>/\<open>stdarg.h\<close> (whose own declarations are *entirely* built from
+  \<open>typedef\<close>'d names, \<open>jmp_buf\<close>/\<open>va_list\<close>) can be declared via \<open>c11_predef\<close>
+  (\<^verbatim>\<open>C11.thy\<close>) at all. \<open>ENUMERATION_CONSTANT\<close> remains unproduced - an enum
+  constant's own use is syntactically indistinguishable from an ordinary
+  identifier's (both reduce through \<open>IDENTIFIER\<close>/\<open>CVar\<close>), so recognizing it
+  lexically was never actually needed for \<open>AnaEval.thy\<close>'s own enum-constant
+  declaration/use hyperlinking (\<open>walk_decl_specs\<close>), unlike \<open>TYPEDEF_NAME\<close>, which
+  is needed just to \<^emph>\<open>parse\<close> a later use of the name as a type at all.
   The grammar has two known shift/reduce conflicts (the dangling \<open>ELSE\<close> and the
   \<open>ATOMIC\<close>/\<open>type_name\<close> ambiguity), both correctly resolved by ml-yacc's default
   shift preference, exactly as documented for the reference grammar.
@@ -313,9 +322,106 @@ structure C11_Comments = struct
 
   fun reset () = Synchronized.change state (fn _ => {pending = [], attached = []})
 end
+
+(* Minimal "typedef name" lexer feedback, the classic mechanism a C grammar
+   needs to disambiguate a bare identifier from a type name at lex time
+   (e.g. "setjmp.h"'s "jmp_buf", "stdarg.h"'s "va_list" - see the "typedef"
+   note in the header comment above): "names" is the set of identifiers a
+   "typedef" declaration has, at some point, declared - consulted by the
+   lexer's own "IDENTIFIER" rule (below) to decide whether to emit
+   "Tokens.IDENTIFIER" or "Tokens.TYPEDEF_NAME" for a given piece of text.
+
+   "register_if_typedef" is called from "declaration"'s own second
+   alternative (below), the *only* point where both the complete,
+   already-fully-reduced "declaration_specifiers" (to check for "CTypedef")
+   and the complete "init_declarator_list" (the names to register, if so)
+   are simultaneously available as plain, local SML values - deliberately
+   *not* threaded through a separate mutable "pending"-style flag set by one
+   grammar action and read by another (a first version did exactly that,
+   and was reverted - see the note on "C11_Typedefs.snapshot" below for why,
+   and why reading two already-computed values off the parser's own stack
+   here does *not* by itself make this call safe either).
+
+   This still registers well before the declaration's own closing ";" is
+   even shifted - "declaration"'s action runs once "declaration_specifiers
+   init_declarator_list SEMI" is *fully* matched, i.e. after every declarator
+   in "init_declarator_list" (each, in turn, reduced from its own, earlier
+   tokens) is already built - so well before the lexer is ever asked for a
+   token belonging to a *later* declaration; a name reused as a type only a
+   few tokens later, in the same or a later declaration (e.g. "typedef ...
+   jmp_buf; int setjmp(jmp_buf env);" - the realistic shape "c11_predef"
+   fragments for "setjmp.h"/"stdarg.h" need, "jmp_buf" not being the very
+   next token lexed after the typedef's own ";") resolves correctly; the one
+   remaining, narrower edge case - a typedef'd name reused as the *literal
+   next* token right after its own ";" - is not handled (the lexer may
+   already have fetched that one token as plain "IDENTIFIER" as its own
+   required lookahead before this action can run) and is not needed by
+   anything in this project so far. A related, but genuinely different,
+   restriction: once a name is registered here, it stays a typedef name for
+   the rest of the session (see "never reset" below), so it can no longer
+   also be used as a *fresh* declarator elsewhere - re-declaring the exact
+   same name as a new, unrelated typedef (not real C either) fails with a
+   parse error pointing at whatever follows it, which is a real, if narrow,
+   limitation worth knowing about but is not specific to typedef at all
+   (ordinary C forbids redeclaring a typedef name too); genuine, one-time
+   uses of realistic shapes - including glibc's actual array-typedef
+   "jmp_buf" declarator, "typedef struct __jmp_buf_tag { ... } jmp_buf[1];"
+   - parse and register correctly, confirmed via this project's own
+   "c11_predef [setjmp.h]" test. Deliberately never reset: unlike
+   "C11_Comments" (reset once per "c11"-family command, since its own job is
+   "pending since the last token"), a "typedef" name needs to stay
+   recognized for the rest of the session, the same way "CEnv.cenv"'s own
+   tables persist across commands - matching this project's already-
+   documented "single, shared, non-reentrant lexer state" limitation (the
+   C11 manual's own Limitations section), not a new instance of it. *)
+structure C11_Typedefs = struct
+  val names : string list Synchronized.var =
+    Synchronized.var "C11_Typedefs.names" []
+
+  fun is_typedef name = member (op =) (Synchronized.value names) name
+
+  (* "mlyacc-polyml/mlyacc-lib/parser2.sml" (this project's underlying LR
+     driver, vendored from Appel/Tarditi's ML-Yacc) documents that its
+     error-recovery routine assumes semantic actions are side-effect-free:
+     on a syntax error, "distanceParse" (parser2.sml ~239-271) speculatively
+     re-invokes the very same "saction" used for genuine reduces, once per
+     candidate token insertion/deletion it tries, and simply discards the
+     losing candidates - their semantic actions still ran for real. Every
+     action in this grammar was already effect-free except this one, which
+     is why a "c11_reject" fragment containing a malformed declaration next
+     to some identifier "n" could permanently, incorrectly add "n" to
+     "names" even though the fragment is correctly rejected overall (caught
+     via a hard trace showing exactly this for three "c11_reject" blocks
+     using "x" in "C11_Tests.thy", with zero legitimate "typedef" anywhere
+     in the source). "snapshot"/"restore" let every top-level parse entry
+     point in "C11.thy" undo any registration a discarded recovery trial
+     made, by rolling back to the pre-parse snapshot whenever the command
+     does not end in a genuine, committed accept. This does not guard the
+     narrower case of a mid-command recovery trial inside a fragment that
+     ultimately *does* parse successfully as a whole - not observed in
+     practice and not guarded against here. *)
+  fun snapshot () = Synchronized.value names
+  fun restore snap = Synchronized.change names (fn _ => snap)
+
+  fun register name =
+    Synchronized.change names (fn ns => if member (op =) ns name then ns else name :: ns)
+
+  fun register_if_typedef (specs : Position.T C_Ast.cDeclarationSpecifier list)
+        (entries : ((Position.T C_Ast.cDeclarator option * Position.T C_Ast.cInitializer option) *
+                    Position.T C_Ast.cExpression option) list) =
+    let val is_td = List.exists (fn C_Ast.CStorageSpec (C_Ast.CTypedef _) => true | _ => false) specs
+    in
+      if is_td then
+        List.app (fn ((SOME (C_Ast.CDeclr (SOME (C_Ast.Ident (name, _, _)), _, _, _, _)), _), _) => register name
+                    | _ => ())
+          entries
+      else ()
+    end
+end
 \<close>
 SML_import \<open>structure C_Ast = struct open C_Ast end\<close>
 SML_import \<open>structure C11_Comments = struct open C11_Comments end\<close>
+SML_import \<open>structure C11_Typedefs = struct open C11_Typedefs end\<close>
 
 ml_lex_yacc [verbose] "C11" where
 lex_user_declarations\<open>
@@ -627,7 +733,9 @@ lex_rules\<open>
 <INITIAL>"_Thread_local"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.THREAD_LOCAL));
 <INITIAL>"__func__"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.FUNC_NAME));
 
-<INITIAL>{L}{A}*	=> (c11_tok_val (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
+<INITIAL>{L}{A}*	=> (if C11_Typedefs.is_typedef yytext
+                            then c11_tok_val (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
+                            else c11_tok_val (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
 
 <INITIAL>{HP}{H}+{IS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
 <INITIAL>{NZ}{D}*{IS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
@@ -871,7 +979,7 @@ yacc_definitions\<open>
         AND_OP | OR_OP | MUL_ASSIGN | DIV_ASSIGN | MOD_ASSIGN | ADD_ASSIGN |
         SUB_ASSIGN | LEFT_ASSIGN | RIGHT_ASSIGN | AND_ASSIGN |
         XOR_ASSIGN | OR_ASSIGN |
-        TYPEDEF_NAME | ENUMERATION_CONSTANT |
+        TYPEDEF_NAME of string | ENUMERATION_CONSTANT |
         TYPEDEF | EXTERN | STATIC | AUTO | REGISTER | INLINE |
         CONST | RESTRICT | VOLATILE |
         BOOL | CHAR | SHORT | INT | LONG | SIGNED | UNSIGNED | FLOAT | DOUBLE | VOID |
@@ -1180,43 +1288,44 @@ expression:
 constant_expression: 
         conditional_expression    (conditional_expression)
 
-declaration: 
-        declaration_specifiers SEMI    
+declaration:
+        declaration_specifiers SEMI
                       (CDecl (declaration_specifiers, [], ndi2 (declaration_specifiersleft, SEMIright)))
-|       declaration_specifiers init_declarator_list SEMI    
-                      (CDecl (declaration_specifiers, init_declarator_list, 
+|       declaration_specifiers init_declarator_list SEMI
+                      (C11_Typedefs.register_if_typedef declaration_specifiers init_declarator_list;
+                       CDecl (declaration_specifiers, init_declarator_list,
                                ndi2 (declaration_specifiersleft, SEMIright)))
-|       static_assert_declaration    
+|       static_assert_declaration
                       (static_assert_declaration)
 
-declaration_specifiers: 
-        storage_class_specifier declaration_specifiers    
+declaration_specifiers:
+        storage_class_specifier declaration_specifiers
                       (CStorageSpec storage_class_specifier :: declaration_specifiers)
-|       storage_class_specifier    
+|       storage_class_specifier
                       ([CStorageSpec storage_class_specifier])
-|       type_specifier declaration_specifiers    
+|       type_specifier declaration_specifiers
                       (CTypeSpec type_specifier :: declaration_specifiers)
 |       type_specifier([CTypeSpec type_specifier])
-|       type_qualifier declaration_specifiers    
+|       type_qualifier declaration_specifiers
                       (CTypeQual type_qualifier :: declaration_specifiers)
 |       type_qualifier([CTypeQual type_qualifier])
-|       function_specifier declaration_specifiers    
+|       function_specifier declaration_specifiers
                       (CFunSpec function_specifier :: declaration_specifiers)
-|       function_specifier    
+|       function_specifier
                       ([CFunSpec function_specifier])
-|       alignment_specifier declaration_specifiers    
+|       alignment_specifier declaration_specifiers
                       (CAlignSpec alignment_specifier :: declaration_specifiers)
-|       alignment_specifier    
+|       alignment_specifier
                       ([CAlignSpec alignment_specifier])
 
-init_declarator_list: 
-        init_declarator    
+init_declarator_list:
+        init_declarator
                       ([init_declarator])
-|       init_declarator_list COMMA init_declarator    
+|       init_declarator_list COMMA init_declarator
                       (init_declarator_list @ [init_declarator])
 
-init_declarator: 
-        declarator ASSIGN initializer    
+init_declarator:
+        declarator ASSIGN initializer
                       ((SOME declarator, SOME initializer), NONE)
 |       declarator    ((SOME declarator, NONE), NONE)
 
@@ -1246,7 +1355,7 @@ type_specifier:
 |       struct_or_union_specifier    
                       (struct_or_union_specifier)
 |       enum_specifier(enum_specifier)
-|       TYPEDEF_NAME  (CTypeDef (Ident ("", 0, ndi TYPEDEF_NAMEleft), ndi TYPEDEF_NAMEleft))
+|       TYPEDEF_NAME  (CTypeDef (Ident (TYPEDEF_NAME, 0, ndi TYPEDEF_NAMEleft), ndi TYPEDEF_NAMEleft))
 
 struct_or_union_specifier: 
         struct_or_union LBRACE struct_declaration_list RBRACE    

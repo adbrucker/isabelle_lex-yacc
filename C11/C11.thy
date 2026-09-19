@@ -288,10 +288,11 @@ fun run_c11_kind check kind_name cmd_name full_eval source thy =
     let
       val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
+      val typedef_snapshot = C11_Typedefs.snapshot ()
       val res = C11.parse_source ctxt source
     in
       case res of
-        NONE => error (cmd_name ^ ": no result")
+        NONE => (C11_Typedefs.restore typedef_snapshot; error (cmd_name ^ ": no result"))
       | SOME root =>
           let
             val root = require_kind check kind_name cmd_name root
@@ -364,10 +365,11 @@ fun run_c11_file get_file thy =
       val file = get_file thy
       val source = Token.file_source file
       val ctxt = Proof_Context.init_global thy
+      val typedef_snapshot = C11_Typedefs.snapshot ()
       val res = C11.parse_source ctxt source
     in
       case res of
-        NONE => error "c11_file: no result"
+        NONE => (C11_Typedefs.restore typedef_snapshot; error "c11_file: no result")
       | SOME root =>
           let
             val root = require_kind is_units "translation unit" "c11_file" root
@@ -404,22 +406,20 @@ val _ = Outer_Syntax.command @{command_keyword "c11_file"}
    for declaring an interface, never an implementation, matching "no
    implementations" in the design discussion.
 
-   A real limitation, not yet addressed: this fragment's lexer never
-   produces a "TYPEDEF_NAME" token (see the note on this in
-   \<^verbatim>\<open>C11_Parser.thy\<close> - "these tokens remain part of the grammar, but are
-   only ever produced were a symbol table to be added later"), so a
-   "typedef"'d type name is not recognized as a type at all, anywhere, by
-   this fragment today - independently of "c11_predef". Most of "stdio.h"
-   (the non-"FILE"-taking functions), all of "stdlib.h", "errno.h", and
-   "assert.h" are declarable without needing any such name; "setjmp.h"'s
-   "jmp_buf" and "stdarg.h"'s "va_list" are themselves always "typedef"'d
-   types in a real C library, so \<^emph>\<open>every\<close> declaration in those two headers
-   needs exactly the mechanism this fragment does not have - a
-   standards-faithful "c11_predef [setjmp.h] \<open>...\<close>"/"c11_predef [stdarg.h]
-   \<open>...\<close>" cannot be written at all until real "typedef" support (lexer
-   feedback registering a "typedef"'d name so a later use of it is lexed as
-   "TYPEDEF_NAME") is added - a separate, materially larger piece of work,
-   deliberately out of scope here. *)
+   "typedef" is now supported (\<^verbatim>\<open>C11_Parser.thy\<close>'s "C11_Typedefs" - real
+   lexer feedback, registering a "typedef"'d name so a later use of it is
+   lexed as "TYPEDEF_NAME"), so "setjmp.h" and "stdarg.h" can be declared
+   faithfully, including the genuine glibc array-typedef shape of "jmp_buf"
+   itself: "c11_predef [setjmp.h] \<open>typedef struct __jmp_buf_tag { ... }
+   jmp_buf[1]; int setjmp(jmp_buf env); ...\<close>". Two narrow, documented
+   limitations remain, both in "C11_Typedefs"'s own note in
+   \<^verbatim>\<open>C11_Parser.thy\<close>: a typedef'd name used as the *literal next* token
+   right after its own ";" is not recognized (the lexer may already have
+   fetched that token as plain "IDENTIFIER" as required lookahead before
+   registration runs); and once registered, a name stays a typedef name for
+   the rest of the session, so it cannot be redeclared as an unrelated,
+   fresh typedef later (matching, not violating, real C's own restriction
+   against redeclaring a typedef name). *)
 fun reject_predef_implementations header (C_Ast.Units us) =
       List.app (fn C_Ast.CTranslUnit (eds, _) =>
                     List.app (fn C_Ast.CFDefExt (C_Ast.CFunDef (_, _, _, _, ni)) =>
@@ -436,10 +436,12 @@ fun run_c11_predef header source thy =
     let
       val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
+      val typedef_snapshot = C11_Typedefs.snapshot ()
       val res = C11.parse_source ctxt source
     in
       case res of
-        NONE => error ("c11_predef " ^ quote header ^ ": no result")
+        NONE => (C11_Typedefs.restore typedef_snapshot;
+                  error ("c11_predef " ^ quote header ^ ": no result"))
       | SOME root0 =>
           let
             val root = require_kind is_units "translation unit" ("c11_predef " ^ quote header) root0
@@ -527,11 +529,19 @@ fun parse_source_quiet ctxt source =
 fun run_c11_kind_reject check kind_name source thy =
     let
       val ctxt = Proof_Context.init_global thy
+      val typedef_snapshot = C11_Typedefs.snapshot ()
       val rejected =
         (case parse_source_quiet ctxt source of
            SOME root => not (check root)
          | NONE => true)
           handle Rejected _ => true
+      (* A "_reject" fragment is never a genuine declaration, whether it
+         ends up rejected via a hard parse failure or (the rarer,
+         still-a-test-failure) "accepted but wrong shape" branch below - so
+         any typedef registration a discarded error-recovery trial made
+         while parsing it (see the note on "C11_Typedefs.snapshot" in
+         "C11_Parser.thy") is unconditionally rolled back here. *)
+      val _ = C11_Typedefs.restore typedef_snapshot
       val _ =
         if rejected
         then writeln ("OK: malformed input was correctly rejected as a " ^ kind_name ^ ".")

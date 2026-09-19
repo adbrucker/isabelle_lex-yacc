@@ -544,29 +544,31 @@ text\<open>
     declaration (\<open>AnaEval.report_member_use\<close>) only handles \<open>e\<close> a bare
     variable, re-deriving its struct/union tag from its own stored
     declaration-specifiers \<^emph>\<open>directly\<close> - a \<open>typedef\<close>'d name standing in for
-    a struct/union type is not chased (see the next item), and neither is
-    any other base expression shape (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained
-    \<open>a.b.c\<close>): both fall back to unresolved markup rather than a hyperlink,
-    exactly like a genuinely undeclared name.
-  \<^item> \<^bold>\<open>No \<open>typedef\<close> names at all.\<close> Following the reference grammar's own
-    note, this fragment's lexer never produces a \<open>TYPEDEF_NAME\<close> token -
-    "these tokens remain part of the grammar, but are only ever produced
-    were a symbol table to be added later" (\<^verbatim>\<open>C11_Parser.thy\<close>). A
-    \<open>typedef\<close>'d type name is therefore not recognized as a type at all,
-    anywhere: \<open>typedef int my_int; my_int x;\<close> fails to parse today,
-    independently of everything else in this manual. This is the one real
-    gap in \<open>c11_predef\<close> (\<open>\<section>2.6\<close>, \<open>\<section>3\<close>): most of \<open>stdio.h\<close> (the
-    non-\<open>FILE\<close>-taking functions), all of \<open>stdlib.h\<close>, \<open>errno.h\<close>, and
-    \<open>assert.h\<close> are
-    declarable without needing any such name, but \<open>setjmp.h\<close>'s \<open>jmp_buf\<close>
-    and \<open>stdarg.h\<close>'s \<open>va_list\<close> are themselves always \<open>typedef\<close>'d types in
-    a real C library - so \<^emph>\<open>every\<close> declaration in those two headers needs
-    exactly the mechanism this fragment does not have. A standards-faithful
-    \<open>c11_predef [setjmp.h] \<open>int setjmp(jmp_buf env); ...\<close>\<close> cannot be
-    written at all until real \<open>typedef\<close> support (lexer feedback
-    registering a \<open>typedef\<close>'d name so a later use of it is lexed as
-    \<open>TYPEDEF_NAME\<close>) is added - a separate, materially larger piece of work,
-    deliberately out of scope here.
+    a struct/union type is not chased (\<open>typedef\<close> names are now recognized,
+    see the next item, but \<open>report_member_use\<close> itself was not extended to
+    look one through), and neither is any other base expression shape
+    (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained \<open>a.b.c\<close>): all three fall back
+    to unresolved markup rather than a hyperlink, exactly like a genuinely
+    undeclared name.
+  \<^item> \<^bold>\<open>\<open>typedef\<close> names, with two narrow gaps.\<close> \<open>C11_Typedefs\<close>
+    (\<^verbatim>\<open>C11_Parser.thy\<close>) gives the lexer real "lexer hack" feedback: once a
+    \<open>typedef\<close> declaration has been reduced, its name is recognized as
+    \<open>TYPEDEF_NAME\<close> (not a plain identifier) in every later use, in the same
+    or a later command - \<open>typedef int my_int; my_int x;\<close> now parses (given
+    at least one further token between the \<open>typedef\<close>'s own \<open>";"\<close> and
+    \<open>my_int\<close>'s reuse, see below), and \<open>c11_predef [setjmp.h]\<close>/
+    \<open>c11_predef [stdarg.h]\<close> (\<open>\<section>2.6\<close>, \<open>\<section>3\<close>) can now be written faithfully,
+    including the genuine glibc shape of \<open>jmp_buf\<close> itself (an array of a
+    tagged struct, not the struct itself). Two narrow limitations remain: a
+    typedef'd name used as the \<^emph>\<open>literal next\<close> token right after its own
+    \<open>";"\<close> is not recognized (the underlying LALR(1) parser has already
+    fetched that token as a plain identifier, its own required one-token
+    lookahead, before the reduce that registers the name can run); and once
+    registered, a name stays a typedef name for the rest of the session
+    (the "single, shared, non-reentrant lexer state" item below applies
+    here too), so it cannot later be redeclared as an unrelated, fresh
+    typedef - matching, not violating, real C's own restriction against
+    redeclaring a typedef name.
   \<^item> \<^bold>\<open>A single, shared, non-reentrant lexer state.\<close> The generated lexer
     keeps its antiquotation-comment accumulator in one shared, mutable
     structure (\<^verbatim>\<open>C11_Comments\<close>) rather than a value threaded functionally
@@ -595,9 +597,9 @@ text\<open>
   of C11, suitable as the basis for a verification tool, a documentation
   generator, or a static analysis; what is documented in \<open>\<section>4\<close> as missing is,
   in every case, a scoping decision rather than an accident - room for a later
-  round to chase \<open>typedef\<close> names and richer member-access shapes, broaden the
-  preprocessor fragment, or grow \<open>select_ast\<close>'s own \<open>children_of\<close> table
-  (\<open>\<section>2.4\<close>) as concrete uses demand it.
+  round to chase \<open>typedef\<close>'d names through member-access base expressions,
+  broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s own
+  \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
 \<close>
 
 section\<open>Annex: The C11 Grammar as Railroad Diagrams\<close>
