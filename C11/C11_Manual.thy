@@ -324,6 +324,123 @@ c11_reject\<open>
 #define SQUARE(x) x * x
 \<close>
 
+subsection\<open>An Example Session\<close>
+
+text\<open>
+  The following are jEdit/PIDE screenshots from an interactive session against
+  this test suite, using the \<open>highlight\<close> antiquotation (\<open>\<section>2.5\<close>) to make
+  \<open>select_ast\<close>'s resolved node visible directly in the editor - the same
+  effect \<open>probe_ast\<close> makes visible programmatically (\<open>\<section>2.5\<close>) is shown here
+  as PIDE markup instead.
+
+  \<^bold>\<open>Order.\<close> \<open>level\<close> reorders execution independently of textual order
+  (\<open>\<section>2.4\<close>): despite \<open>setup(1) \<open>alfa\<close>\<close> appearing \<^emph>\<open>after\<close>
+  \<open>setup(2) \<open>beta\<close>\<close> in the source, the Output panel confirms it ran first.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.8\textwidth]{figures/ExecutionOrderLevels}
+  \end{center}
+  \caption{\<open>setup(1)\<close> executes before \<open>setup(2)\<close>, despite being written
+    textually after it - the Output panel (bottom) reports \<open>"alfa"\<close> before
+    \<open>"beta"\<close>.}
+  \label{fig:execution-order-levels}
+  \end{figure}
+
+  \<^bold>\<open>Ascending with \<open>u\<close>.\<close> Two screenshots against the same nested cast
+  expression \<open>a + (int)(b * c)\<close> (\<open>\<section>2.4\<close>): \<open>[uu]\<close> ascends one level from
+  \<open>b * c\<close> to the enclosing cast, \<open>[uuu]\<close> ascends one level further, to the
+  outer addition.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.8\textwidth]{figures/NaviInExpr1}
+  \end{center}
+  \caption{\<open>highlight[uu]\<close>: two ascend-steps from \<open>b * c\<close> land on the
+    enclosing cast \<open>(int)(b * c)\<close>.}
+  \label{fig:navi-in-expr-1}
+  \end{figure}
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.8\textwidth]{figures/NaviInExpr2}
+  \end{center}
+  \caption{\<open>highlight[uuu]\<close>: one more ascend-step reaches the outer
+    addition \<open>a + (int)(b * c)\<close>.}
+  \label{fig:navi-in-expr-2}
+  \end{figure}
+
+  \<^bold>\<open>Descending with \<open>r\<close>/\<open>d\<close>.\<close> One screenshot shows all three navigable
+  children of a single \<open>if\<close>/\<open>else\<close> statement at once: \<open>[rd]\<close>, \<open>[rrd]\<close>, and
+  \<open>[rrrd]\<close> select the condition, the then-branch, and the else-branch
+  respectively.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.9\textwidth]{figures/NaviInStmt1}
+  \end{center}
+  \caption{\<open>highlight[rd]\<close>/\<open>highlight[rrd]\<close>/\<open>highlight[rrrd]\<close> on three
+    copies of the same \<open>if (a) return 1; else return 0;\<close>, selecting the
+    condition, the then-branch, and the else-branch respectively.}
+  \label{fig:navi-in-stmt-1}
+  \end{figure}
+
+  A second pair contrasts \<open>[dd]\<close> against no navigation string at all on the
+  same expression-statement \<open>a + b;\<close>: \<open>[dd]\<close> descends to the left operand
+  \<open>a\<close>, while a bare \<open>highlight\<close> (empty navigation string) highlights the
+  \<^emph>\<open>whole\<close> closest-context expression instead - the default \<open>select_ast\<close>
+  falls back to when no navigation is requested.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.8\textwidth]{figures/NaviInExpr3}
+  \end{center}
+  \caption{\<open>highlight[dd]\<close> (top) selects the left operand \<open>a\<close>; a bare
+    \<open>highlight\<close> with no navigation string (bottom) highlights the whole
+    expression \<open>a + b\<close> instead.}
+  \label{fig:navi-in-expr-3}
+  \end{figure}
+
+  Finally, \<open>[d]\<close> on a compound statement demonstrates that a block-local
+  declaration is silently not a navigable child (\<open>\<section>2.4\<close>): the highlighted
+  target is the first real \<^emph>\<open>statement\<close>, not the \<open>int x = 0;\<close> declaration
+  that precedes it in the source.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.6\textwidth]{figures/NaviInStmt2}
+  \end{center}
+  \caption{\<open>highlight[d]\<close> on a compound statement skips its block-local
+    declaration \<open>int x = 0;\<close> and lands on \<open>x = 1;\<close>.}
+  \label{fig:navi-in-stmt-2}
+  \end{figure}
+
+  \<^bold>\<open>Beyond navigation.\<close> Two further screenshots show the surrounding
+  machinery the navigation examples above build on: an ACSL-style
+  \<open>requires\<close>/\<open>ensures\<close>/\<open>highlight\<close> block attached to a function definition
+  (\<open>\<section>2.3\<close>), and declaration/use hyperlinking (\<open>\<section>2.2\<close>) - hovering a use of
+  \<open>sum\<close> inside a \<open>while\<close> loop shows its declaration kind and offers to jump
+  to it.
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.7\textwidth]{figures/AcslRequiresEnsuresHighlight}
+  \end{center}
+  \caption{An ACSL-style \<open>requires\<close>/\<open>ensures\<close>/\<open>highlight\<close> comment attached
+    to \<open>int abs(int n)\<close>.}
+  \label{fig:acsl-requires-ensures-highlight}
+  \end{figure}
+
+  \begin{figure}[!htb]
+  \begin{center}
+  \includegraphics[width=0.6\textwidth]{figures/DeclUseHoverLoop2}
+  \end{center}
+  \caption{Hovering a use of \<open>sum\<close> inside a \<open>while\<close> loop: the popup reports
+    \<open>C11 local variable "sum"\<close>, hyperlinked back to its declaration.}
+  \label{fig:decl-use-hover-loop}
+  \end{figure}
+\<close>
+
 section\<open>Limitations\<close>
 
 text\<open>

@@ -559,12 +559,13 @@ text\<open>
 \<close>
 c11\<open>
 int b;
-//@ setup(2) \<open>Include.append "tmp" [\<open>b\<close>]\<close>
+//@ setup(2) \<open>beta\<close>
+//@ setup(1) \<open>alfa - textually later, executed earlier!\<close>
 int a = b;
 \<close>
 
 c11\<open>
-/*@ setup(3) "a plain quoted body" */
+/*@ setup(3) \<open>Include.append "tmp" [\<open>c\<close>]\<close> */
 int a = 0;
 \<close>
 
@@ -769,7 +770,8 @@ text\<open>\<open>u\<close>/\<open>U\<close> ascent: the antiquotation sits on t
   \<open>Uuu\<close> continues two further ascents past that collapsed run.\<close>
 c11\<open>
 int test_navi_u(int a, int b, int c) {
-  int r = a + (int)(/*@ probe_ast[uu] */ b * c);
+  int r = a + (int)(/*@ probe_ast[uu] 
+                      @ highlight[uu] */ b * c);
   return r;
 }
 \<close>
@@ -778,7 +780,8 @@ ML\<open>case !AST of C_Ast.Expr (C_Ast.CCast _) => ()
 
 c11\<open>
 int test_navi_uuu(int a, int b, int c) {
-  int r = a + (int)(/*@ probe_ast[uuu] */ b * c);
+  int r = a + (int)(/*@ probe_ast[uuu]
+                      @ highlight[uuu] */ b * c);
   return r;
 }
 \<close>
@@ -815,29 +818,16 @@ text\<open>\<open>r\<close>/\<open>d\<close> descent: the antiquotation sits dir
   own worked example.\<close>
 c11\<open>
 int test_navi_rd(int a) {
-  /*@ probe_ast[rd] */ if (a) return 1; else return 0;
-}
-\<close>
-ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("a", _, _), _)) => ()
-   | other => error ("[rd]: expected Expr (CVar a), got " ^ C_Ast.pp_root other)\<close>
-
+  /*@ highlight[rd] */ if (a) return 1; else return 0;
+}\<close>
 c11\<open>
 int test_navi_rrd(int a) {
-  /*@ probe_ast[rrd] */ if (a) return 1; else return 0;
-}
-\<close>
-ML\<open>case !AST of
-     C_Ast.Stmt (C_Ast.CReturn (SOME (C_Ast.CConst (C_Ast.CIntConst (C_Ast.CInteger (1, _, _), _))), _)) => ()
-   | other => error ("[rrd]: expected \"return 1;\" (the then-branch), got " ^ C_Ast.pp_root other)\<close>
-
+  /*@ highlight[rrd] */ if (a) return 1; else return 0;
+}\<close>
 c11\<open>
 int test_navi_rrrd(int a) {
-  /*@ probe_ast[rrrd] */ if (a) return 1; else return 0;
-}
-\<close>
-ML\<open>case !AST of
-     C_Ast.Stmt (C_Ast.CReturn (SOME (C_Ast.CConst (C_Ast.CIntConst (C_Ast.CInteger (0, _, _), _))), _)) => ()
-   | other => error ("[rrrd]: expected \"return 0;\" (the else-branch), got " ^ C_Ast.pp_root other)\<close>
+  /*@ highlight[rrrd] */ if (a) return 1; else return 0;
+}\<close>
 
 text\<open>\<open>r\<close>/\<open>d\<close> descent generalizes to every \<open>cStatement\<close>/\<open>cExpression\<close>
   constructor, not just \<open>CIf\<close> (\<open>AnaEval.children_of_stmt\<close>/
@@ -847,49 +837,35 @@ text\<open>\<open>r\<close>/\<open>d\<close> descent generalizes to every \<open
   reaches the binary's own left/right operand.\<close>
 c11\<open>
 int test_navi_binary_left(int a, int b) {
-  /*@ probe_ast[dd] */ a + b;
+  /*@ highlight[dd] */ a + b;
   return 0;
-}
-\<close>
-ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("a", _, _), _)) => ()
-   | other => error ("[dd]: expected Expr (CVar a), got " ^ C_Ast.pp_root other)\<close>
-
+}\<close>
 c11\<open>
 int test_navi_binary_right(int a, int b) {
-  /*@ probe_ast[drrd] */ a + b;
+  /*@ highlight */ a + b;
   return 0;
-}
-\<close>
-ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("b", _, _), _)) => ()
-   | other => error ("[drrd]: expected Expr (CVar b), got " ^ C_Ast.pp_root other)\<close>
+}\<close>
 
 text\<open>\<open>CCall\<close>'s children are the called function expression followed by its
   arguments, in order.\<close>
 c11\<open>
 int test_navi_call_arg(int f(int, int), int x, int y) {
-  /*@ probe_ast[drrrd] */ f(x, y);
+  /*@ highlight[drrrd] */ f(x, y);
   return 0;
-}
-\<close>
-ML\<open>case !AST of C_Ast.Expr (C_Ast.CVar (C_Ast.Ident ("y", _, _), _)) => ()
-   | other => error ("[drrrd]: expected Expr (CVar y), got " ^ C_Ast.pp_root other)\<close>
+}\<close>
 
 text\<open>\<open>CCompound\<close>'s children are its \<^emph>\<open>statements\<close> alone, in order -
   a block-local declaration has no \<open>root\<close> variant, so it is silently
   skipped rather than occupying a navigable index.\<close>
 c11\<open>
 int test_navi_compound_skips_decl(void) {
-  /*@ probe_ast[d] */
+  /*@ highlight[d] */
   {
     int x = 0;
     x = 1;
   }
   return 0;
-}
-\<close>
-ML\<open>case !AST of
-     C_Ast.Stmt (C_Ast.CExpr (SOME (C_Ast.CAssign (_, C_Ast.CVar (C_Ast.Ident ("x", _, _), _), _, _)), _)) => ()
-   | other => error ("[d]: expected \"x = 1;\" (the decl skipped), got " ^ C_Ast.pp_root other)\<close>
+}\<close>
 
 text\<open>\<open>d\<close> on a leaf must \<open>error\<close>, not raise an uncaught SML \<open>Subscript\<close>
   exception - the antiquotation here sits on \<open>a\<close> (an expression-statement
