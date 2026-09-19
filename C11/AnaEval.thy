@@ -580,17 +580,52 @@ fun report_type_use cenv name use_pos =
         end
   end
 
-(* The struct/union tag named directly (not through a "typedef") among a
-   declaration's own "cDeclarationSpecifier list", if any - used by
-   "report_member_use" to find what struct/union type a variable used as the
-   base of a "CMember" access ("pt.x"/"pp->y") was declared with. Only the
-   *first* such specifier is considered (a well-formed declaration has at
-   most one type-specifying "CSUType" anyway). *)
-fun struct_union_tag_of_specs [] = NONE
-  | struct_union_tag_of_specs
-      (C_Ast.CTypeSpec (C_Ast.CSUType (C_Ast.CStruct (_, SOME (C_Ast.Ident (name, _, _)), _, _, _), _)) :: _) =
-      SOME name
-  | struct_union_tag_of_specs (_ :: specs) = struct_union_tag_of_specs specs
+(* The member-declaration list of the struct/union type a "cDeclarationSpecifier
+   list" names, if any - used by "report_member_use" to find what a variable
+   used as the base of a "CMember" access ("pt.x"/"pp->y") was declared with.
+   Only the *first* type-specifying specifier is considered (a well-formed
+   declaration has at most one anyway). Three shapes, the third one new (this
+   is exactly the "member linking only resolves ... not chased through a
+   typedef" gap the C11 manual's Limitations section used to document):
+    - "CSUType" with its own inline member list ("struct point { ... } pt;",
+      or the same with no tag name at all, "struct { ... } pt;") - the list
+      is used directly, no lookup needed, so an anonymous struct/union now
+      resolves too (a small, free improvement over the old, tag-only version
+      of this function - anonymous struct/union variables used to fall
+      through to "NONE"/\<^ML>\<open>Markup.bad ()\<close> here regardless of "typedef").
+    - "CSUType" naming a tag with no inline body ("struct point pt;") - the
+      list comes from "cenv"'s "types" table, exactly as before.
+    - "CTypeDef" (a typedef'd name standing in for the real type, e.g.
+      "point_t pt;" for "typedef struct point_s { ... } point_t;") - chased
+      by looking the name up in "cenv"'s "idents" (typedef names are
+      registered there like any other declared name - see "walk_decl") and
+      recursing into *its own* declaration specifiers; this also, for free,
+      chases a typedef of a typedef ("typedef point_t point_t2;"), since the
+      recursive call is exactly the same function. *)
+fun member_decls_of_specs cenv [] = NONE
+  | member_decls_of_specs cenv
+      (C_Ast.CTypeSpec (C_Ast.CSUType (C_Ast.CStruct (_, ident_opt, decls_opt, _, _), _)) :: _) =
+      (case decls_opt of
+         SOME decls => SOME decls
+       | NONE =>
+           (case ident_opt of
+              NONE => NONE
+            | SOME (C_Ast.Ident (name, _, _)) =>
+                let val mk {types, ...} = cenv in
+                  case Symtab.lookup types name of
+                    SOME (CEnv.Struct_tag (_, decls)) => SOME decls
+                  | SOME (CEnv.Union_tag (_, decls)) => SOME decls
+                  | _ => NONE
+                end))
+  | member_decls_of_specs cenv (C_Ast.CTypeSpec (C_Ast.CTypeDef (C_Ast.Ident (name, _, _), _)) :: _) =
+      let val mk {idents, ...} = cenv in
+        case Symtab.lookup idents name of
+          SOME (Global (C_Ast.CDecl (specs', _, _))) => member_decls_of_specs cenv specs'
+        | SOME (Local (C_Ast.CDecl (specs', _, _))) => member_decls_of_specs cenv specs'
+        | SOME (Parameter (C_Ast.CDecl (specs', _, _))) => member_decls_of_specs cenv specs'
+        | _ => NONE
+      end
+  | member_decls_of_specs cenv (_ :: specs) = member_decls_of_specs cenv specs
 
 (* A struct/union's registered member declaration list has no per-name index
    (see "CEnv.type_ident") - searched linearly here via "find_decl_pos",
@@ -607,16 +642,16 @@ fun find_member_pos [] (_ : string) = NONE
    the common case, "e1" a bare variable: falls back to \<^ML>\<open>Markup.bad ()\<close>
    (not an \<open>error\<close>, matching "report_use"'s own philosophy) for every other
    base expression shape (a function call, an array index, another member
-   access, \<open>\<dots>\<close>) or step that cannot be resolved (the base variable's own
-   type has no direct struct/union tag - e.g. it is `typedef`'d, or built-in,
-   or the field genuinely is not one of that type's members) - resolving
-   those in general would need real type inference, which this fragment does
-   not have. *)
+   access, \<open>\<dots>\<close>) - resolving those in general would need real type
+   inference, which this fragment does not have - or a field genuinely not
+   among the resolved type's own members. The base variable's type *is*
+   chased through any number of "typedef"s via "member_decls_of_specs" (a
+   real limitation this fragment used to have here - see its own note). *)
 fun report_member_use cenv e1 (field_name, field_pos) =
   let val use_range = name_range (field_name, field_pos) in
     case e1 of
       C_Ast.CVar (C_Ast.Ident (base_name, _, _), _) =>
-        let val mk {idents, types, ...} = cenv in
+        let val mk {idents, ...} = cenv in
           case Symtab.lookup idents base_name of
             NONE => Position.report use_range (Markup.bad ())
           | SOME ik =>
@@ -627,25 +662,15 @@ fun report_member_use cenv e1 (field_name, field_pos) =
                      | _ => NONE) of
                  NONE => Position.report use_range (Markup.bad ())
                | SOME specs =>
-                   (case struct_union_tag_of_specs specs of
+                   (case member_decls_of_specs cenv specs of
                       NONE => Position.report use_range (Markup.bad ())
-                    | SOME tag =>
-                        (case Symtab.lookup types tag of
-                           SOME (CEnv.Struct_tag (_, decls)) =>
-                             (case find_member_pos decls field_name of
-                                NONE => Position.report use_range (Markup.bad ())
-                              | SOME decl_pos =>
-                                  Position.report use_range
-                                    (Position.entity_markup "C11 struct/union member"
-                                      (field_name, name_range (field_name, decl_pos))))
-                         | SOME (CEnv.Union_tag (_, decls)) =>
-                             (case find_member_pos decls field_name of
-                                NONE => Position.report use_range (Markup.bad ())
-                              | SOME decl_pos =>
-                                  Position.report use_range
-                                    (Position.entity_markup "C11 struct/union member"
-                                      (field_name, name_range (field_name, decl_pos))))
-                         | _ => Position.report use_range (Markup.bad ()))))
+                    | SOME decls =>
+                        (case find_member_pos decls field_name of
+                           NONE => Position.report use_range (Markup.bad ())
+                         | SOME decl_pos =>
+                             Position.report use_range
+                               (Position.entity_markup "C11 struct/union member"
+                                 (field_name, name_range (field_name, decl_pos))))))
         end
     | _ => Position.report use_range (Markup.bad ())
   end
@@ -809,20 +834,27 @@ and walk_declarator cenv ctx (C_Ast.CDeclr (_, derived, _, _, ni)) =
 
 (* Walks a "cDeclarationSpecifier list" (a declaration's/function-definition's
    own leading specs, e.g. "struct point"/"enum Color" in "struct point pt;"
-   or "enum Color make_color(void) { ... }") for the two things it can
+   or "enum Color make_color(void) { ... }") for the three things it can
    introduce: a struct/union/enum *tag* declaration or use (registered into,
    or looked up in, "cenv"'s "types" - the tag namespace, shared by all
-   three), and - for an enum specifically - its own constant list, each
-   registered into the ordinary "idents" table exactly like any other
-   declared name ("Enum"), since C's enum constants are not a per-type
-   namespace at all. An anonymous struct/union/enum ("struct { ... } x;")
+   three); for an enum specifically, its own constant list, each registered
+   into the ordinary "idents" table exactly like any other declared name
+   ("Enum"), since C's enum constants are not a per-type namespace at all;
+   and a "typedef"'d name's own *use* as a type ("CTypeDef", e.g. "jmp_buf"
+   in "jmp_buf env;") - hyperlinked via the ordinary "report_use" (typedef
+   names are registered into "idents" like any other declared name, by
+   "walk_decl" - there is no dedicated "ident_kind" for them, so they show up
+   with whatever generic kind label their own declaration had, e.g. "C11
+   global variable"), *not* chased any further here (chasing a typedef'd
+   name back to the real struct/union type it names, for member-access
+   resolution, is "member_decls_of_specs"'s own, separate job, used by
+   "report_member_use"). An anonymous struct/union/enum ("struct { ... } x;")
    has no tag to register, but an anonymous *enum*'s constants still are
    registered (they are not anonymous themselves, only their enclosing type
-   is). Every other specifier ("CVoidType", "CTypeDef", "CTypeOfExpr", \<open>\<dots>\<close>)
-   is not walked - a "typedef"'d name is not chased back to what it names
-   (typedef names are not tracked at all yet), and "CTypeOfExpr"/
-   "CTypeOfType"/"CAtomicType"'s own nested expression/declaration is left
-   for a later pass, matching this fragment's existing, deliberate scope. *)
+   is). Every other specifier ("CVoidType", "CTypeOfExpr", \<open>\<dots>\<close>) is not
+   walked - "CTypeOfExpr"/"CTypeOfType"/"CAtomicType"'s own nested
+   expression/declaration is left for a later pass, matching this fragment's
+   existing, deliberate scope. *)
 and walk_decl_specs cenv ctx specs =
   fold (fn spec => fn (cenv, acc) =>
           case spec of
@@ -868,6 +900,8 @@ and walk_decl_specs cenv ctx specs =
                             in (cenv'', acc @ acts') end)
                       consts (cenv1, acc)
               end
+          | C_Ast.CTypeSpec (C_Ast.CTypeDef (C_Ast.Ident (name, _, ident_ni), _)) =>
+              (report_use cenv name (C_Ast.pos_of_NodeInfo ident_ni); (cenv, acc))
           | _ => (cenv, acc))
     specs (cenv, [])
 

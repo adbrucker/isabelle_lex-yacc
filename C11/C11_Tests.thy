@@ -343,6 +343,63 @@ int use_unresolved_members(void) {
 }
 \<close>
 
+subsection\<open>Member Linking Through a \<open>typedef\<close>\<close>
+text\<open>
+  \<open>AnaEval.member_decls_of_specs\<close> is what \<open>report_member_use\<close> actually
+  calls to find a base variable's member-declaration list: it chases a
+  \<open>CTypeDef\<close> specifier back through \<open>idents\<close> to the \<open>typedef\<close>'s own
+  declaration specifiers and recurses - so a \<open>typedef\<close>'d name standing in
+  for a struct/union type is now resolved, any number of \<open>typedef\<close>s deep,
+  and an inline struct/union body (named tag or fully anonymous) is used
+  directly, with no separate \<open>types\<close> lookup needed at all. Since
+  \<open>report_member_use\<close> itself only ever produces PIDE markup (never a
+  checkable ML value, see the note above), these tests call
+  \<open>member_decls_of_specs\<close> directly against the real \<open>specs\<close> stored for
+  each variable, the same way the tag tests above check \<open>types\<close> directly
+  rather than relying on markup.\<close>
+c11\<open>
+typedef struct point_s { int x; int y; } point_t;
+int dummy_intervening_1;
+point_t p;
+
+typedef struct { int a; int b; int c; } triple_t;
+int dummy_intervening_2;
+triple_t t;
+
+typedef point_t point_t2;
+int dummy_intervening_3;
+point_t2 q;
+
+struct { int z; } w;
+
+int use_typedef_members(void) {
+  return p.x + t.b + q.y + w.z;
+}
+\<close>
+ML\<open>
+val cenv = CEnv.get (Context.Theory @{theory})
+val CEnv.mk {idents, ...} = cenv
+fun specs_of name =
+  case Symtab.lookup idents name of
+    SOME (CEnv.Global (C_Ast.CDecl (specs, _, _))) => specs
+  | SOME (CEnv.Local (C_Ast.CDecl (specs, _, _))) => specs
+  | _ => error ("FAIL: " ^ name ^ " not registered as a variable with declaration specifiers")
+fun check_members (var, expected_len, descr) =
+  case AnaEval.member_decls_of_specs cenv (specs_of var) of
+    NONE => error ("FAIL: " ^ descr ^ " (" ^ var ^ ") did not chase to any member list")
+  | SOME decls =>
+      if length decls = expected_len then
+        writeln ("PASS: " ^ descr ^ " (" ^ var ^ ") chased to " ^ Int.toString expected_len ^
+                 " member declaration(s)")
+      else
+        error ("FAIL: " ^ descr ^ " (" ^ var ^ ") chased to " ^ Int.toString (length decls) ^
+               " member declaration(s), expected " ^ Int.toString expected_len)
+val _ = check_members ("p", 2, "named-tag typedef (point_t -> struct point_s)")
+val _ = check_members ("t", 3, "anonymous-struct typedef (triple_t)")
+val _ = check_members ("q", 2, "typedef of a typedef (point_t2 -> point_t -> struct point_s)")
+val _ = check_members ("w", 1, "a direct (non-typedef) anonymous struct variable")
+\<close>
+
 subsection\<open>\<open>c11_predef\<close>: a Basic Predefined-Header Mechanism\<close>
 text\<open>
   \<open>c11_predef [header] \<open>decl_list\<close>\<close> does \<^emph>\<open>not\<close> itself register any

@@ -539,17 +539,20 @@ text\<open>
   \<^item> \<^bold>\<open>Member linking only resolves a bare-variable base.\<close> A struct/union/enum
     \<^emph>\<open>tag\<close> is tracked (\<open>type_ident\<close>, \<^verbatim>\<open>CEnv.thy\<close>) and hyperlinked like any
     other declared name, and an enum's own constants are registered into the
-    ordinary namespace right alongside variables and functions - but
-    resolving a member access \<open>e.field\<close>/\<open>e->field\<close> back to \<open>field\<close>'s own
-    declaration (\<open>AnaEval.report_member_use\<close>) only handles \<open>e\<close> a bare
-    variable, re-deriving its struct/union tag from its own stored
-    declaration-specifiers \<^emph>\<open>directly\<close> - a \<open>typedef\<close>'d name standing in for
-    a struct/union type is not chased (\<open>typedef\<close> names are now recognized,
-    see the next item, but \<open>report_member_use\<close> itself was not extended to
-    look one through), and neither is any other base expression shape
-    (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained \<open>a.b.c\<close>): all three fall back
-    to unresolved markup rather than a hyperlink, exactly like a genuinely
-    undeclared name.
+    ordinary namespace right alongside variables and functions. Resolving a
+    member access \<open>e.field\<close>/\<open>e->field\<close> back to \<open>field\<close>'s own declaration
+    (\<open>AnaEval.report_member_use\<close>) only handles \<open>e\<close> a bare variable - but,
+    for that variable, \<open>AnaEval.member_decls_of_specs\<close> now chases its type
+    through any number of \<open>typedef\<close>s (via \<open>idents\<close>, recursively) to find
+    the real struct/union member list, including an inline, fully anonymous
+    struct/union body (\<open>typedef struct { \<dots> } point_t;\<close>) - so
+    \<open>report_member_use\<close> genuinely handles the same shapes
+    \<open>c11_predef [setjmp.h]\<close>/\<open>c11_predef [stdarg.h]\<close> (\<open>\<section>2.6\<close>) already need
+    \<open>typedef\<close> support for. No other base expression shape is resolved
+    (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained \<open>a.b.c\<close>): all three still fall
+    back to unresolved markup rather than a hyperlink, exactly like a
+    genuinely undeclared name - resolving those in general would need real
+    type inference, which this fragment does not have.
   \<^item> \<^bold>\<open>\<open>typedef\<close> names, with two narrow gaps.\<close> \<open>C11_Typedefs\<close>
     (\<^verbatim>\<open>C11_Parser.thy\<close>) gives the lexer real "lexer hack" feedback: once a
     \<open>typedef\<close> declaration has been reduced, its name is recognized as
@@ -597,9 +600,9 @@ text\<open>
   of C11, suitable as the basis for a verification tool, a documentation
   generator, or a static analysis; what is documented in \<open>\<section>4\<close> as missing is,
   in every case, a scoping decision rather than an accident - room for a later
-  round to chase \<open>typedef\<close>'d names through member-access base expressions,
-  broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s own
-  \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
+  round to resolve member access through base expression shapes other than a
+  bare variable, broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s
+  own \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
 \<close>
 
 section\<open>Annex: The C11 Grammar as Railroad Diagrams\<close>
