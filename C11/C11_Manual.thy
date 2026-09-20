@@ -61,23 +61,24 @@ text\<open>
   sub-term of the surrounding AST.
 
   This project - \<^bold>\<open>Isabelle/C, Version 2.0\<close> - is a from-scratch redesign of that
-  same user-facing idea, built instead on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's own
-  generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/Pure: plain
-  ml-lex/ml-yacc, not a bespoke parser combinator, and a genuinely reusable
-  framework (the same one already used for a Pascal fragment, a Datalog engine,
-  and a calculator example elsewhere in \<^verbatim>\<open>ml_lex_yacc\<close>'s example suite) rather than a
-  single-purpose C front-end. It is not a port of the AFP entry's code, and does
-  not depend on it; it exists to answer a narrower question: how much of the same
-  \<^emph>\<open>shape\<close> - inline and file-based parsing commands, antiquotation-carrying
+  same idea of a generic fontend/IDE for C, which can be hooked up with semantic
+  backends, i.e specific analyser or verification environments implemented in Isabelle/HOL.
+  Isabelle/C Version 2 is built on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's own
+  generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/Pure
+  rather than the hand-crafted mix of generated lexer and parser sources of Version 1.    
+  It is not a port of the AFP entry's code, and does not depend on it; 
+  it exists to answer a narrower question: how much of the  \<^emph>\<open>essence\<close> of the 
+  Isabelle/C approach - inline and file-based parsing commands, antiquotation-carrying
   comments, an environment tracking declarations across a translation unit,
   programmable handlers - can be reproduced on top of a generic parser-generator
-  toolkit, while \<^emph>\<open>simplifying\<close> the parts of the original design that experience
+  toolkit, while \<^emph>\<open>simplifying\<close> the original design that experience
   showed to be disproportionately complex. Since the lexer-part of version 1.0
   was effectively based on a version-split from Isabelle2019, the maintenance of
   Isabelle/C version 1.0 turned out to be problematic at various occasions in the
   Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein grosses Dankeschoen an 
   Makarius Wenzel, der wiederholt ``ìssues'' des AFP Eintrags loeste und
-  den Prototypen damit am Leben hielt\<close>.
+  diesen Prototypen damit bis jetzt am Leben hielt.\<close>
+ 
   The antiquotation-navigation language
   (\<^verbatim>\<open>select_ast\<close>, \<open>\<section>2.4\<close>) is the clearest example: Isabelle/C 1.0's own
   navigation concept is, by design, considerably more general (and considerably
@@ -86,6 +87,7 @@ text\<open>
   cover the common cases plainly, at the cost of not (yet) covering everything
   the original does.
 \<close>
+
 
 section\<open>Main Features of Isabelle/C\<close>
 
@@ -159,7 +161,7 @@ text\<open>
   attached to whichever AST node it resolves against (\<open>\<section>2.4\<close>). \<open>tag\<close> selects a
   \<^emph>\<open>handler\<close>: an ordinary ML function of type
 
-  \<^verbatim>\<open>type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) -> theory -> theory\<close>
+  \<^verbatim>\<open>type type_antiq_fun = cenv * pos C_Ast.root * int -> (string * pos) -> theory -> theory\<close>
 
   registered once, ahead of time, via \<open>CEnv.store_antiq (tag, handler)\<close>. When
   \<open>analyse_and_eval\<close> reaches a node carrying an \<open>@tag ...\<close> antiquotation, it
