@@ -1457,12 +1457,52 @@ val ml_antiq =
       end
   in CEnv.store_antiq ("ML", probe) end
 
+(* A "text" antiquotation for Isabelle's own "text\<open>...\<close>" command
+   (\<^verbatim>\<open>Pure/pure_syn.ML\<close>'s "document_body", \<^verbatim>\<open>Pure/Thy/document_output.ML\<close>):
+   a "//@ text \<open>...\<close>" comment is run through the very same
+   "Document_Output.output_document" a real "text" command uses, so an inner
+   antiquotation inside its body (\<open>@{term ...}\<close>, \<open>@{thm ...}\<close>, \<open>\<dots>\<close>) gets
+   genuine checking, hyperlinking, and hovering, and markdown paragraphs are
+   recognized - real Isabelle document-processing machinery, not merely
+   stored text, matching this fragment's usual "real machinery, not a toy"
+   bar (\<open>term\<close>, above, is the closest precedent: a genuine
+   \<^ML>\<open>Syntax.read_term\<close>, not opaque text either).
+
+   Deliberately does \<^emph>\<open>not\<close> attempt to make the result appear in the
+   generated document/PDF itself - an earlier version of this antiquotation
+   tried exactly that (via "Toplevel.theory'"'s own "presentation" slot in
+   "C11.thy"), and hit a genuine, confirmed wall: "Document_Output"'s own
+   "segment_content" only ever consults a command's presentation for
+   commands whose keyword *kind* is "document_heading"/"document_body"/
+   "document_raw" (\<^ML>\<open>Keyword.is_document\<close>, "Pure/Isar/keyword.ML"), a
+   fixed, closed set no "thy_decl" command - which "c11"/"c11_file" must be,
+   to mutate "cenv" at all - can ever belong to. Not a missing wiring step,
+   a hard mutual exclusion in Isabelle/Pure itself; see the Manual's own
+   Limitations section. The resulting \<^ML_type>\<open>Latex.text\<close> is instead
+   stashed into \<^ML>\<open>TEXT_PROBE\<close>, exactly like \<open>term\<close>'s own \<open>TERM_PROBE\<close>
+   above - real checking and PIDE integration for the cartouche's own
+   formal content, with no further ambition than that. *)
+val TEXT_PROBE = Unsynchronized.ref ([] : Latex.text)
+val text_antiq =
+  let
+    fun probe (_, _, _) (body, body_pos) thy =
+      let
+        val ctxt = Proof_Context.init_global thy
+        val start_pos = Position.no_range_position body_pos
+        val end_pos = Position.symbol_explode body start_pos
+        val source = Input.source true body (start_pos, end_pos)
+        val _ = Context_Position.reports ctxt (Document_Output.document_reports source)
+        val latex = Document_Output.output_document ctxt {markdown = true} source
+      in (TEXT_PROBE := latex; thy) end
+  in CEnv.store_antiq ("text", CEnv.lift_theory_antiq probe) end
+
 \<close>
 
 setup\<open>probe_cenv\<close>
 setup\<open>probe_ast\<close>
 setup\<open>highlight\<close>
 setup\<open>term_antiq\<close>
+setup\<open>text_antiq\<close>
 setup\<open>ml_antiq\<close>
 
 end

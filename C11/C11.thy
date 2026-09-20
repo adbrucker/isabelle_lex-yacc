@@ -278,13 +278,31 @@ fun require_kind check kind_name cmd_name root =
    root and reports both. Factored out rather than duplicated so "c11" and
    "c11_file" cannot again silently drift apart the way they already once
    did (see "run_c11_file"'s own note). *)
-(* Returns "Context.generic", not "theory": the antiquotation actions chained
-   below are now "Context.generic -> Context.generic" (CEnv.thy's own note on
-   "type_antiq_fun0" explains why), so this must stop at the same level rather
-   than eagerly re-extracting a "theory" until every one of them has actually
-   run. "store_root"'s own state lives entirely inside the "theory" value
-   itself, so passing through "Context.theory_of"/"Context.Theory" around it
-   loses nothing. *)
+(* The antiquotation actions chained below are "Context.generic ->
+   Context.generic" (CEnv.thy's own note on "type_antiq_fun0" explains why),
+   so folding them must happen at that level, not plain "theory" - but the
+   final result here is unwrapped straight back to plain "theory" via
+   "Context.theory_of": "store_root"'s own state lives entirely inside the
+   "theory" value itself, so this loses nothing.
+
+   An earlier version of this function, and of "run_c11"/"run_c11_file"
+   below, instead stayed at "Context.generic" all the way out and routed
+   their own outermost lift through "Toplevel.theory'" with a "presentation"
+   slot attached, specifically so a "text" antiquotation's real
+   "Document_Output.output_document" result could reach the generated
+   document. That does not work: confirmed against "Pure/Thy/
+   document_output.ML"'s own "segment_content"/"output_command" that a
+   command's presentation ("Toplevel.output_of") is only ever consulted for
+   commands whose keyword *kind* is "document_heading"/"document_body"/
+   "document_raw" (\<^ML>\<open>Keyword.is_document\<close>, "Pure/Isar/keyword.ML") - a
+   fixed, closed set that a "thy_decl" command such as "c11"/"c11_file" can
+   never belong to, since "thy_decl" is what lets it mutate "cenv" at all.
+   Not a missing wiring step - a hard mutual exclusion in Isabelle/Pure
+   itself (and, it turns out, the reason the original Isabelle/C's own
+   "text" inner-antiquotation is byte-identical to its own "ML" one instead
+   of doing real document output - the same wall, confirmed by inspection,
+   not merely inferred). The Manual's own Limitations section (\<open>\<section>4\<close>)
+   documents this. *)
 fun full_eval_and_store root thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
@@ -293,7 +311,7 @@ fun full_eval_and_store root thy =
       val thy_for_store = Context.theory_of context_for_store
       val (key, thy'') = store_root root thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-    in Context.Theory thy'' end
+    in thy'' end
 
 (* "full_eval_and_store" (above) and this no longer share one function under
    a boolean flag the way they once did: after the antiquotation-handler
@@ -323,14 +341,8 @@ fun run_c11_kind check kind_name cmd_name source thy =
           in thy'' end
     end
 
-(* Takes "Context.generic", not plain "theory", as its own incoming state -
-   "Toplevel.generic_theory" (below) needs a function of that shape to lift
-   to "Toplevel.transition -> Toplevel.transition" - extracting "thy" via
-   "Context.theory_of" right away, since parsing/"full_eval_and_store"
-   themselves are still ordinary "theory"-based operations throughout. *)
-fun run_c11 source (context : Context.generic) =
+fun run_c11 source thy =
     let
-      val thy = Context.theory_of context
       val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
       val typedef_snapshot = C11_Typedefs.snapshot ()
@@ -345,7 +357,7 @@ fun run_c11 source (context : Context.generic) =
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
         "Syntax check a C11 translation unit and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.generic_theory (run_c11 source)))
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
 
 fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" source
 
@@ -403,13 +415,8 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    renamed), so this command no longer calls it either. The file dependency
    itself is unaffected - it was always established by the "thy_load"
    command-span scanner (see above), not by this now-removed step. *)
-(* Takes "Context.generic", not plain "theory", for the same reason "run_c11"
-   above does - "get_file", from "Resources.parse_file", is still plain
-   "theory -> Token.file", so "thy" is extracted via "Context.theory_of"
-   before it is ever called. *)
-fun run_c11_file get_file (context : Context.generic) =
+fun run_c11_file get_file thy =
     let
-      val thy = Context.theory_of context
       val _ = C11_Comments.reset ()
       val file = get_file thy
       val source = Token.file_source file
@@ -426,7 +433,7 @@ fun run_c11_file get_file (context : Context.generic) =
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
         "Read and syntax-check an external C11 source file, and store its AST"
-        (Resources.parse_file >> (fn get_file => Toplevel.generic_theory (run_c11_file get_file)))
+        (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
 
 (* "c11_predef [header] \<open>decl_list\<close>" gives a real \<^emph>\<open>basic\<close> functionality
    (the user's own word - see the design discussion this responds to): a way

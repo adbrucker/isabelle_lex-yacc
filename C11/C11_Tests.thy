@@ -1251,6 +1251,25 @@ int test_ml_anchor;
 ML\<open>if ml_antiq_escaped 0 = 42 then ()
    else error "FAIL: ml_antiq_escaped did not have the expected value"\<close>
 
+text\<open>The \<open>text\<close> antiquotation: runs its cartouche body through the same
+  \<^ML>\<open>Document_Output.output_document\<close> a real top-level \<open>text\<open>...\<close>\<close> command
+  uses (\<^verbatim>\<open>Pure/pure_syn.ML\<close>/\<^verbatim>\<open>Pure/Thy/document_output.ML\<close>), so an inner
+  antiquotation inside its body - \<open>@{term \<open>...\<close>}\<close> below - gets genuine
+  checking, hyperlinking, and hovering, not just opaque text. It does
+  \<^emph>\<open>not\<close> reach the generated document/PDF itself - a real, confirmed
+  limitation of this mechanism, not an oversight, documented in the
+  Manual's own Limitations section (\<open>\<section>4\<close>) - so, exactly like \<open>term\<close>
+  above, the resulting \<open>Latex.text\<close> is stashed into a ref
+  (\<^ML>\<open>TEXT_PROBE\<close>) for this test to check directly.\<close>
+c11\<open>
+//@ text \<open>A genuine formal comment, computing @{term \<open>1 + (1::nat)\<close>}.\<close>
+int test_text_anchor;
+\<close>
+
+ML\<open>if null (!TEXT_PROBE)
+   then error "FAIL: the text antiquotation above produced no Latex.text at all"
+   else ()\<close>
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more
@@ -1433,14 +1452,18 @@ text\<open>\<open>d\<close> on a leaf must \<open>error\<close>, not raise an un
   reference offset, which silently breaks position-based comment
   attachment (the antiquotation ends up attached to the whole function
   instead of \<open>a\<close>, so the wrong error fires) rather than failing loudly -
-  confirmed empirically, not merely inferred. \<open>run_c11\<close> itself now takes
-  \<open>Context.generic\<close>, not a bare \<open>theory\<close> (\<open>\<section>2.2\<close>'s note on
-  \<open>type_antiq_fun0\<close>) - \<open>Context.Theory @{theory}\<close> wraps it.\<close>
+  confirmed empirically, not merely inferred. \<open>run_c11\<close> itself takes a
+  plain \<open>theory\<close>, same as \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close>'s own
+  \<open>run_c11_kind\<close> - only the antiquotation-action folding one level inside
+  it (\<open>full_eval_and_store\<close>, \<^verbatim>\<open>C11.thy\<close>) briefly touches
+  \<open>Context.generic\<close> (\<open>\<section>2.2\<close>'s note on \<open>type_antiq_fun0\<close>), and the
+  \<open>c11\<close> command's own outermost lift is \<open>Toplevel.theory'\<close>, not
+  \<open>Toplevel.generic_theory\<close> (\<open>\<section>2.3\<close>'s note on the \<open>text\<close> antiquotation).\<close>
 ML\<open>
 val _ =
   (run_c11 (Input.source true
        "int leaf_error_test(int a) {\n  /*@ probe_ast[dd] */ a;\n  return 0;\n}\n"
-       (@{here}, @{here})) (Context.Theory @{theory});
+       (@{here}, @{here})) @{theory};
    error "leaf-error test: expected a select_ast navigation error, but none occurred")
   handle ERROR msg =>
     if String.isSubstring "navigation index" msg then ()

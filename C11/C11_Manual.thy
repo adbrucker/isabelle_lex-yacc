@@ -296,7 +296,7 @@ text\<open>
 subsection\<open>Standard Antiquotations\<close>
 
 text\<open>
-  \<^verbatim>\<open>AnaEval.thy\<close> registers five demonstration handlers, available to every
+  \<^verbatim>\<open>AnaEval.thy\<close> registers six demonstration handlers, available to every
   theory that imports \<^verbatim>\<open>C11\<close> (they are not meant as production
   verification-condition generators - each is a small, self-contained example
   of one facility a real handler might use):
@@ -329,6 +329,14 @@ text\<open>
     \<open>CEnv.lift_theory_antiq\<close>, since that is precisely the capability a plain
     \<open>theory -> theory\<close> function cannot express - the reason a handler's own
     type was generalized past \<open>theory -> theory\<close> in the first place.
+  \<^descr> \<open>text\<close> runs its body through the same \<^ML>\<open>Document_Output.output_document\<close>
+    a real top-level \<open>text\<open>...\<close>\<close> command uses (\<^verbatim>\<open>Pure/pure_syn.ML\<close>/
+    \<^verbatim>\<open>Pure/Thy/document_output.ML\<close>), so an inner antiquotation inside its
+    body - \<open>@{term \<open>...\<close>}\<close>, \<open>@{thm \<open>...\<close>}\<close>, \<open>\<dots>\<close> - gets genuine checking,
+    hyperlinking, and hovering, not just opaque text; the resulting
+    \<open>Latex.text\<close> is stashed into \<^ML>\<open>TEXT_PROBE\<close>, exactly like \<open>term\<close>'s own
+    \<open>TERM_PROBE\<close> above. Unlike \<open>ML\<close>, it does \<^emph>\<open>not\<close> reach the generated
+    document/PDF itself - see \<open>\<section>4\<close>.
 \<close>
 
 subsection\<open>Predefined Header Declarations\<close>
@@ -670,6 +678,34 @@ text\<open>
     here too), so it cannot later be redeclared as an unrelated, fresh
     typedef - matching, not violating, real C's own restriction against
     redeclaring a typedef name.
+  \<^item> \<^bold>\<open>The \<open>text\<close> antiquotation never reaches the generated document.\<close>
+    \<open>\<section>2.5\<close>'s \<open>text\<close> handler runs a \<open>//@ text \<open>...\<close>\<close> comment's body through
+    the real \<^ML>\<open>Document_Output.output_document\<close> a top-level \<open>text\<open>...\<close>\<close>
+    command itself uses, so an inner antiquotation inside it (\<open>@{term \<open>...\<close>}\<close>,
+    \<open>@{thm \<open>...\<close>}\<close>) genuinely gets checked, hyperlinked, and hovers - but the
+    resulting \<open>Latex.text\<close> only ever reaches a probe ref
+    (\<^ML>\<open>TEXT_PROBE\<close>), never the generated PDF itself, unlike a real,
+    top-level \<open>text\<open>...\<close>\<close> command written directly in the theory. Making it
+    work was tried, deliberately, given \<open>c11\<close>/\<open>c11_file\<close> already fold an
+    antiquotation's effect through \<open>Context.generic\<close> internally (\<open>\<section>2.2\<close>) -
+    the attempt lifted this all the way out to a real
+    \<open>Toplevel.presentation\<close>, attached via \<open>Toplevel.theory'\<close> instead of the
+    simpler \<open>Toplevel.theory\<close> this fragment otherwise uses throughout - and
+    hit a genuine, confirmed wall, not a missing wiring step:
+    \<^verbatim>\<open>Pure/Thy/document_output.ML\<close>'s own
+    \<open>segment_content\<close> only ever consults a command's own presentation
+    (\<^ML>\<open>Toplevel.output_of\<close>) for commands whose keyword \<^emph>\<open>kind\<close> is
+    \<open>document_heading\<close>/\<open>document_body\<close>/\<open>document_raw\<close>
+    (\<^verbatim>\<open>Keyword.is_document\<close>, \<^verbatim>\<open>Pure/Isar/keyword.ML\<close> - renamed under
+    Isabelle2026, confirmed by inspection to still gate the very same
+    fixed set of kinds there, just via a different API surface) - a fixed, closed
+    set no \<open>thy_decl\<close> command can ever belong to, and \<open>c11\<close>/\<open>c11_file\<close> must
+    stay \<open>thy_decl\<close> to mutate \<open>cenv\<close> at all. One should not expect wonders
+    here: even the original Isabelle/C's own "text" inner-antiquotation never
+    solved this either - inspection shows it is byte-identical to its own
+    "ML" one (runs the body as ML source, nothing document-specific at all),
+    which this project takes as independent confirmation the wall is real,
+    not a gap specific to this fragment's own architecture.
   \<^item> \<^bold>\<open>A single, shared, non-reentrant lexer state.\<close> The generated lexer
     keeps its antiquotation-comment accumulator in one shared, mutable
     structure (\<^verbatim>\<open>C11_Comments\<close>) rather than a value threaded functionally
