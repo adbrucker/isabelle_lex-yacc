@@ -594,6 +594,57 @@ c11\<open>
 int regression_probe_name = 7;
 \<close>
 
+subsection\<open>\<open>set_cenv_default\<close>/\<open>reset_cenv\<close>: Explicit Control over \<open>cenv\<close>'s Scope\<close>
+text\<open>
+  Every \<open>c11\<close>-family command threads \<open>cenv\<close> through the theory like any
+  other persistent, per-theory Isabelle state, which is what lets \<open>c11\<close>
+  fragments be freely interleaved with arbitrary Isar content and still
+  resolve a name back to its declaration in an earlier fragment - but it
+  also means \<open>cenv\<close> only ever grows, with no built-in notion of "start
+  fresh". \<open>set_cenv_default\<close> nominates the \<^emph>\<open>current\<close> \<open>cenv\<close> as the
+  snapshot a later \<open>reset_cenv\<close> restores; \<open>reset_cenv\<close> alone, with no
+  prior \<open>set_cenv_default\<close>, falls back to \<^ML>\<open>CEnv.empty_cenv\<close> rather than
+  erroring (confirmed separately via an isolated probe, per this project's
+  own verification convention, since every test in \<^emph>\<open>this\<close> theory runs
+  after \<open>fact\<close>/\<open>helper\<close>/\<open>\<dots>\<close> above have already accumulated into \<open>cenv\<close>,
+  so "no prior default anywhere in scope" cannot be exercised here).
+
+  \<open>set_cenv_default\<close> is called first below, so the snapshot it captures
+  already includes everything the \<^emph>\<open>rest of this theory\<close> - both above and
+  below this point - depends on (\<open>fact\<close>, the struct/union/enum tags, \<open>\<dots>\<close>);
+  only the throwaway names declared \<^emph>\<open>after\<close> that point and \<^emph>\<open>before\<close> the
+  matching \<open>reset_cenv\<close> are ever at risk of being discarded.\<close>
+set_cenv_default
+c11\<open>int cenv_reset_probe_a;\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  if Symtab.defined idents "cenv_reset_probe_a" andalso Symtab.defined idents "fact" then ()
+  else error "FAIL: both the just-declared probe and an earlier declaration should be visible"
+\<close>
+reset_cenv
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  if Symtab.defined idents "cenv_reset_probe_a" then
+    error "FAIL: cenv_reset_probe_a (declared after set_cenv_default) should not survive reset_cenv"
+  else ()
+val _ =
+  if Symtab.defined idents "fact" then ()
+  else error "FAIL: fact (declared before set_cenv_default) should survive reset_cenv"
+\<close>
+text\<open>Accumulation resumes normally from the restored baseline - a fresh
+  declaration after \<open>reset_cenv\<close> is visible, the discarded one stays gone.\<close>
+c11\<open>int cenv_reset_probe_b;\<close>
+ML\<open>
+val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  if Symtab.defined idents "cenv_reset_probe_b" andalso Symtab.defined idents "fact"
+     andalso not (Symtab.defined idents "cenv_reset_probe_a")
+  then ()
+  else error "FAIL: accumulation after reset_cenv did not resume from the restored baseline"
+\<close>
+
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>

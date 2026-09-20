@@ -64,7 +64,7 @@ text\<open>
   same idea of a generic fontend/IDE for C, which can be hooked up with semantic
   backends, i.e specific analyser or verification environments implemented in Isabelle/HOL.
   Isabelle/C Version 2 is built on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's own
-  generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/Pure
+  generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/HOL ('Main')
   rather than the hand-crafted mix of generated lexer and parser sources of Version 1.    
   It is not a port of the AFP entry's code, and does not depend on it; 
   it exists to answer a narrower question: how much of the  \<^emph>\<open>essence\<close> of the 
@@ -128,12 +128,14 @@ subsection\<open>The C-Environment, and Declaration/Use Navigation\<close>
 
 text\<open>
   \<^verbatim>\<open>CEnv.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table (\<open>idents\<close>,
-  currently variables/functions/parameters/preprocessor constants and macros; a
-  placeholder \<open>types\<close> table for a future type namespace; a registry of
-  antiquotation handlers, \<open>c_antiq\<close>, \<open>\<section>2.3\<close>; and a per-theory AST unit
-  counter) - stored as ordinary \<^verbatim>\<open>Generic_Data\<close>, so it persists across
-  commands within one theory and merges correctly under Isabelle's parallel,
-  incremental checking.
+  currently variables/functions/parameters/preprocessor constants/macros/enum
+  constants; \<open>types\<close>, the separate struct/union/enum \<^emph>\<open>tag\<close> namespace,
+  \<open>\<section>2.6\<close> is not the only reader of it - \<open>\<section>4\<close>'s member-linking item also
+  depends on it directly; a registry of antiquotation handlers, \<open>c_antiq\<close>,
+  \<open>\<section>2.3\<close>; \<open>predefined_envs\<close>, \<open>\<section>2.6\<close>'s reusable per-header effects; and a
+  per-theory AST unit counter) - stored as ordinary \<^verbatim>\<open>Generic_Data\<close>, so it
+  persists across commands within one theory and merges correctly under
+  Isabelle's parallel, incremental checking.
 
   \<^verbatim>\<open>AnaEval.thy\<close>'s \<open>analyse_and_eval\<close> is a single, purely functional, scoped
   walk over a parsed root that populates \<open>cenv\<close> as it goes: entering a function
@@ -148,6 +150,23 @@ text\<open>
   \<open>cenv\<close> is underlined (\<^ML>\<open>Markup.bad ()\<close>) rather than rejected outright,
   since this fragment has no symbol table spanning multiple files - "undeclared
   here" routinely just means "declared somewhere this parse never saw".
+
+  Being ordinary, persistent, per-theory \<^verbatim>\<open>Generic_Data\<close> - the same idiom a
+  simp-set or a \<open>Named_Theorems\<close> collection uses, not something private to
+  the \<open>c11\<close>-family commands - is what lets \<open>c11\<close>/\<open>c11_file\<close>/\<open>\<dots>\<close> be freely
+  \<^emph>\<open>interleaved\<close> with arbitrary Isar content (definitions, proofs, plain
+  text) and still resolve a name used in one C fragment back to its
+  declaration in an earlier one, however much unrelated material sits in
+  between - navigation \<^emph>\<open>across\<close> fragments, scattered through an otherwise
+  ordinary Isabelle theory, is the actual point of threading \<open>cenv\<close> this
+  way rather than starting each fragment from scratch. The flip side is
+  that \<open>cenv\<close> then only ever \<^emph>\<open>grows\<close> across a theory, with no built-in
+  notion of "start this section fresh": two commands, \<open>set_cenv_default\<close>
+  and \<open>reset_cenv\<close> (\<open>\<section>3\<close>), give a theory explicit control over that,
+  letting it nominate a snapshot - typically right after the standard
+  antiquotation handlers below are registered, or later still, once a
+  theory has predefined the headers (\<open>\<section>2.6\<close>) it wants known by default -
+  that a later point in the same theory can return to.
 \<close>
 
 subsection\<open>Programmable C-Antiquotations, and Handlers\<close>
@@ -355,6 +374,17 @@ text\<open>
     dotted \<open>name\<close> token) doubles as the key \<open>#include\<close> looks up. A
     function \<^emph>\<open>definition\<close> (a real \<open>{ ... }\<close> body) is rejected outright:
     this command is for declaring an interface, never an implementation.
+  \<^descr> \<open>set_cenv_default\<close> and \<open>reset_cenv\<close> (\<open>\<section>2.2\<close>) give explicit control
+    over \<open>cenv\<close>'s otherwise ever-growing scope across a theory.
+    \<open>set_cenv_default\<close> takes no argument: it nominates whatever \<open>cenv\<close>
+    holds \<^emph>\<open>right now\<close> as the snapshot a later \<open>reset_cenv\<close> restores -
+    callable more than once, each call moving the baseline forward.
+    \<open>reset_cenv\<close>, likewise argument-free, restores exactly that snapshot;
+    with no \<open>set_cenv_default\<close> anywhere earlier in scope, it falls back to
+    the empty \<open>cenv\<close> rather than erroring. Neither touches the separate,
+    per-\<open>typedef\<close>-name lexer table (\<open>\<section>4\<close>'s \<open>typedef\<close> item) - only the
+    symbolic environment used for hyperlinking and member-/type-chasing is
+    reset.
 \<close>
 
 text\<open>A whole translation unit, with declaration/use hyperlinking and a
@@ -396,6 +426,14 @@ int greet(void) {
   return printf("hello, %d\n", 42);
 }
 \<close>
+
+text\<open>\<open>set_cenv_default\<close>/\<open>reset_cenv\<close>: the snapshot below already includes
+  everything declared above (\<open>max\<close>, \<open>printf\<close>, \<open>greet\<close>, \<open>\<dots>\<close>), so only
+  \<open>scratch_only\<close> - declared \<^emph>\<open>after\<close> \<open>set_cenv_default\<close> - is at risk of
+  being forgotten once \<open>reset_cenv\<close> runs.\<close>
+set_cenv_default
+c11\<open>int scratch_only;\<close>
+reset_cenv
 
 subsection\<open>An Example Session\<close>
 
@@ -605,6 +643,8 @@ text\<open>
   round to resolve member access through base expression shapes other than a
   bare variable, broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s
   own \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
+
+  \pagebreak
 \<close>
 
 section\<open>Annex: The C11 Grammar as Railroad Diagrams\<close>

@@ -233,6 +233,34 @@ fun get_predefined_env header thy =
        val mk {predefined_envs, ...} = get (Context.Theory thy)
     in Symtab.lookup predefined_envs header end
 
+(* Backs the "set_cenv_default"/"reset_cenv" commands (C11.thy): lets a
+   theory nominate its own "cenv" snapshot, at whatever point in the
+   document it chooses, as the value "reset_cenv" later restores - e.g.
+   right after the standard antiquotation handlers are registered
+   (AnaEval.thy's own "setup"s), or later still, once a downstream theory
+   has also predefined the headers it wants known by default. A genuinely
+   separate "Generic_Data" registry, not a field folded into "cenv" itself
+   (which would make every snapshot recursively carry a copy of itself) -
+   "NONE" until "set_cenv_default" is first used, at which point
+   "reset_cenv" restores exactly that snapshot; used before that, it falls
+   back to "empty_cenv", matching "reset" being meaningful even for a
+   theory that never bothered to nominate a richer default. "merge" keeps
+   whichever side already has a snapshot (arbitrarily the left, on the rare
+   case both do - the two would only genuinely differ if two branches of a
+   theory-merge graph each called "set_cenv_default" with different
+   content, a corner case no more resolvable "correctly" here than
+   "merge_cenv"'s own key-collision tie-break above is). *)
+structure Default_Env = Generic_Data
+  (type T = cenv option
+   val empty = NONE
+   val merge = fn (a, b) => if is_some a then a else b)
+
+fun set_cenv_default thy = Context.theory_map (Default_Env.put (SOME (get (Context.Theory thy)))) thy
+
+fun reset_cenv thy =
+    let val default = case Default_Env.get (Context.Theory thy) of SOME c => c | NONE => empty_cenv
+    in Context.theory_map (put default) thy end
+
 end
 \<close>
 
