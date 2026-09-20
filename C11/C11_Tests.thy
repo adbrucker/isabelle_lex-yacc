@@ -1026,7 +1026,7 @@ fun dummy_antiq tag =
                           ^ "): This is a dummy-antiquotation. body=" 
                           ^ quote body);
        thy)
-  in CEnv.store_antiq (tag, probe) end
+  in CEnv.store_antiq (tag, CEnv.lift_theory_antiq probe) end
 \<close>
 setup\<open>dummy_antiq "setup"\<close>
 setup\<open>dummy_antiq "requires"\<close>
@@ -1128,7 +1128,7 @@ ML\<open>
 val COUNT = Unsynchronized.ref 0
 val counting_antiq = 
        let fun probe _ _ thy = (COUNT := !COUNT + 1; thy) 
-       in CEnv.store_antiq ("counter", probe) end
+       in CEnv.store_antiq ("counter", CEnv.lift_theory_antiq probe) end
 \<close>
 setup\<open>counting_antiq\<close>
 
@@ -1230,6 +1230,27 @@ int test_term_anchor;
 ML\<open>if !TERM_PROBE <> Free ("dummy_term_probe", dummyT) then ()
    else error "TERM_PROBE ref was never updated"\<close>
 
+text\<open>The \<open>ML\<close> antiquotation: runs its cartouche body as real ML source at the
+  actual ML toplevel (\<^ML>\<open>ML_Context.exec\<close>/\<^ML>\<open>ML_Context.eval_source\<close>, the
+  same machinery the real top-level \<open>ML\<open>...\<close>\<close> command itself uses,
+  \<^verbatim>\<open>Pure/ML/ml_file.ML\<close>) - a definition written inside a C comment genuinely
+  becomes a later-visible ML binding, not just \<open>theory\<close>-level data. This is
+  exactly the capability that motivated generalizing every antiquotation
+  handler's own type from \<open>theory -> theory\<close> to \<open>Context.generic ->
+  Context.generic\<close> (\<open>\<section>2.2\<close>) - no earlier antiquotation in this theory could
+  do this. \<open>ml_antiq_escaped\<close> is defined \<^emph>\<open>inside\<close> the \<open>c11\<close> block below and
+  read back \<^emph>\<open>outside\<close> it, by a completely ordinary, later \<open>ML\<open>...\<close>\<close>
+  command - the hard, batch-checkable confirmation that the binding really
+  did reach the genuine ML toplevel, not some sandboxed or discarded copy of
+  it.\<close>
+c11\<open>
+//@ ML \<open>fun ml_antiq_escaped x = 42 + x; val t = @{term \<open>0::nat\<close>}\<close>
+int test_ml_anchor;
+\<close>
+
+ML\<open>if ml_antiq_escaped 0 = 42 then ()
+   else error "FAIL: ml_antiq_escaped did not have the expected value"\<close>
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more
@@ -1255,7 +1276,7 @@ text\<open>
 
 ML\<open>
 val NAVI_COUNT = Unsynchronized.ref 0
-val counting_navi_antiq = let fun probe _ _ thy = (NAVI_COUNT := !NAVI_COUNT + 1; thy) in CEnv.store_antiq ("answer", probe) end
+val counting_navi_antiq = let fun probe _ _ thy = (NAVI_COUNT := !NAVI_COUNT + 1; thy) in CEnv.store_antiq ("answer", CEnv.lift_theory_antiq probe) end
 \<close>
 setup\<open>counting_navi_antiq\<close>
 
@@ -1412,12 +1433,14 @@ text\<open>\<open>d\<close> on a leaf must \<open>error\<close>, not raise an un
   reference offset, which silently breaks position-based comment
   attachment (the antiquotation ends up attached to the whole function
   instead of \<open>a\<close>, so the wrong error fires) rather than failing loudly -
-  confirmed empirically, not merely inferred.\<close>
+  confirmed empirically, not merely inferred. \<open>run_c11\<close> itself now takes
+  \<open>Context.generic\<close>, not a bare \<open>theory\<close> (\<open>\<section>2.2\<close>'s note on
+  \<open>type_antiq_fun0\<close>) - \<open>Context.Theory @{theory}\<close> wraps it.\<close>
 ML\<open>
 val _ =
   (run_c11 (Input.source true
        "int leaf_error_test(int a) {\n  /*@ probe_ast[dd] */ a;\n  return 0;\n}\n"
-       (@{here}, @{here})) @{theory};
+       (@{here}, @{here})) (Context.Theory @{theory});
    error "leaf-error test: expected a select_ast navigation error, but none occurred")
   handle ERROR msg =>
     if String.isSubstring "navigation index" msg then ()

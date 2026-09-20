@@ -180,7 +180,7 @@ text\<open>
   attached to whichever AST node it resolves against (\<open>\<section>2.4\<close>). \<open>tag\<close> selects a
   \<^emph>\<open>handler\<close>: an ordinary ML function of type
 
-  \<^verbatim>\<open>type type_antiq_fun = cenv * pos C_Ast.root * int -> (string * pos) -> theory -> theory\<close>
+  \<^verbatim>\<open>type type_antiq_fun = cenv * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic\<close>
 
   registered once, ahead of time, via \<open>CEnv.store_antiq (tag, handler)\<close>. When
   \<open>analyse_and_eval\<close> reaches a node carrying an \<open>@tag ...\<close> antiquotation, it
@@ -191,9 +191,25 @@ text\<open>
   \<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close>; by the time it runs, \<open>navi\<close> has already been resolved to a
   single AST node.
 
-  A handler is free to do anything a \<open>theory -> theory\<close> function can: register a
-  fact, run a tactic, invoke an external tool, or simply inspect the resolved
-  AST and report a warning. A minimal, complete example:
+  \<open>Context.generic\<close>, not plain \<open>theory\<close>, deliberately: a handler is free to do
+  anything a genuine Isar toplevel command can, including running real ML code
+  at the actual ML environment level (\<open>ML\<close>, below) - something no
+  \<open>theory -> theory\<close> function could ever express, since that mutates \<open>theory\<close>
+  \<^emph>\<open>data\<close>, not the ML environment itself. Every antiquotation action collected
+  during a walk is folded together as plain \<open>Context.generic -> Context.generic\<close>
+  functions (ordinary composition) and lifted to
+  \<open>Toplevel.transition -> Toplevel.transition\<close> \<^emph>\<open>exactly once\<close>, at the very
+  end (\<open>full_eval_and_store\<close>, \<^verbatim>\<open>C11.thy\<close>) - not per handler: confirmed directly
+  against \<^verbatim>\<open>Pure/Isar/toplevel.ML\<close> that \<open>Toplevel.theory\<close>/
+  \<open>Toplevel.generic_theory\<close> each \<^emph>\<open>append one alternative\<close> action to a
+  transition's own action list rather than composing sequentially, so chaining
+  several already-lifted handlers with \<open>#>\<close> would silently run only the first
+  of them.
+
+  Most handlers never need this extra generality - they are ordinary
+  \<open>theory -> theory\<close> functions, exactly as before, only now \<^emph>\<open>recaptured\<close> via
+  \<open>CEnv.lift_theory_antiq\<close> at the point they are registered, rather than
+  changing a single line of the handler's own body:
 \<close>
 
 ML\<open>
@@ -203,7 +219,7 @@ val todo_antiq =
       (warning ("TODO (level " ^ Int.toString level ^ ") at " ^
                 Position.here (AnaEval.pos_of_root ast) ^ ": " ^ body);
        thy)
-  in CEnv.store_antiq ("todo", handler) end
+  in CEnv.store_antiq ("todo", CEnv.lift_theory_antiq handler) end
 \<close>
 setup\<open>todo_antiq\<close>
 
@@ -234,10 +250,11 @@ text\<open>
   side-effecting handlers whose relative order matters (a \<open>setup\<close> that must
   run before a later \<open>requires\<close> depends on what it set up, say). \<open>level\<close> is
   the author's own explicit ordering knob: \<open>full_eval_and_store\<close> (\<^verbatim>\<open>C11.thy\<close>)
-  collects every \<open>(level, theory -> theory)\<close> pair the walk produces, sorts by
-  \<open>level\<close> - a stable sort, so antiquotations sharing a level keep their
-  relative, i.e.\ textual, order - and chains them, each against the theory the
-  previous one produced. A physical antiquotation is dispatched \<^emph>\<open>exactly
+  collects every \<open>(level, Context.generic -> Context.generic)\<close> pair the walk
+  produces, sorts by \<open>level\<close> - a stable sort, so antiquotations sharing a
+  level keep their relative, i.e.\ textual, order - and chains them, each
+  against the context the previous one produced. A physical antiquotation is
+  dispatched \<^emph>\<open>exactly
   once\<close> regardless of how many AST nodes reachable from the walk happen to
   share its leftmost source position (the classic case: an expression-statement
   and its own wrapped expression share one leftmost token) - tracked by
@@ -279,7 +296,7 @@ text\<open>
 subsection\<open>Standard Antiquotations\<close>
 
 text\<open>
-  \<^verbatim>\<open>AnaEval.thy\<close> registers four demonstration handlers, available to every
+  \<^verbatim>\<open>AnaEval.thy\<close> registers five demonstration handlers, available to every
   theory that imports \<^verbatim>\<open>C11\<close> (they are not meant as production
   verification-condition generators - each is a small, self-contained example
   of one facility a real handler might use):
@@ -303,6 +320,15 @@ text\<open>
     malformed or ill-typed term is a genuine, checked Isabelle error - e.g.\ an
     ACSL-style \<open>//@ requires \<open>x \<ge> 0\<close>\<close> is a real, checked HOL proposition, not
     merely stored text.
+  \<^descr> \<open>ML\<close> runs its body as real ML source at the actual ML toplevel
+    (\<^ML>\<open>ML_Context.exec\<close>/\<^ML>\<open>ML_Context.eval_source\<close>, the same machinery the
+    real top-level \<open>ML\<open>...\<close>\<close> command itself uses) - a definition written
+    inside a C comment genuinely becomes a later-visible ML binding, not
+    \<open>theory\<close>-level data. Unlike the four above, it is written directly against
+    \<open>Context.generic -> Context.generic\<close> rather than through
+    \<open>CEnv.lift_theory_antiq\<close>, since that is precisely the capability a plain
+    \<open>theory -> theory\<close> function cannot express - the reason a handler's own
+    type was generalized past \<open>theory -> theory\<close> in the first place.
 \<close>
 
 subsection\<open>Predefined Header Declarations\<close>

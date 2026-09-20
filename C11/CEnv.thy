@@ -105,8 +105,26 @@ datatype type_ident = Struct_tag of pos * pos C_Ast.cDeclaration list
    surrounding-context stack *before* calling the handler, so a handler never
    sees a navi list at all, only the single AST node it ends up denoting
    (the closest context itself, when the navi list is empty, matching every
-   test that predates this round). *)
-type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) ->  theory -> theory
+   test that predates this round).
+
+   The result is "Context.generic -> Context.generic", not "theory -> theory":
+   the original Isabelle/C (the AFP entry, "C11-FrontEnd/src/C_Command.thy"'s
+   "C_Isar_Cmd.ML") shows why a handler needs to operate one level deeper than
+   "theory" - its own "ML" inner command runs genuine ML code at the real ML
+   toplevel via "ML_Context.exec"/"ML_Context.eval_source", which mutates the
+   *ML environment*, not theory *data*, something no "theory -> theory"
+   function can express at all. Confirmed directly in
+   "Pure/Isar/toplevel.ML": "Toplevel.theory"/"Toplevel.generic_theory" each
+   *append one alternative* action to a transition's own "trans: trans list"
+   field ("primitive transitions (union)") - chaining several such
+   already-lifted functions with "#>"/"o" does *not* run them in sequence,
+   only the first applicable one ever fires - so every antiquotation action
+   must be folded together as a plain "Context.generic -> Context.generic"
+   function (ordinary composition) *before* ever being lifted to
+   "Toplevel.transition -> Toplevel.transition", and that lift must happen
+   exactly once, at the outermost point (C11.thy's own "c11"/"c11_file"
+   command registrations), not per handler. *)
+type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic
 
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
@@ -115,6 +133,19 @@ datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
 
 type type_antiq_fun = cenv type_antiq_fun0
+
+(* Recaptures a handler written the simpler, "theory -> theory" way (every
+   handler in this project, before this round) as a genuine "type_antiq_fun0"
+   - exactly the idiom "Pure/ML/ml_file.ML" itself uses for its own "provide"
+   step ("Context.mapping provide (Local_Theory.background_theory provide)"),
+   confirmed by reading that file during this project's own Isabelle2026 port
+   earlier this session. "local_theory" is "Proof.context" itself (a standard
+   Isabelle/Pure type synonym), so "Local_Theory.background_theory f" is
+   already usable directly as "Context.mapping"'s second,
+   "Proof.context -> Proof.context" argument. *)
+fun lift_theory_antiq (f : 'a * pos C_Ast.root * int -> (string * pos) -> theory -> theory)
+    : 'a * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic =
+  fn args => fn body => Context.mapping (f args body) (Local_Theory.background_theory (f args body))
 
 (* "predefined_envs" holds, per header name (\<^verbatim>\<open>c11_predef\<close>'s own bracketed
    label, e.g. \<open>"stdio.h"\<close>), a pair of the reusable *effect* that header's

@@ -200,13 +200,15 @@ text\<open>
   here transitively via \<^verbatim>\<open>AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close>
   key - \<^verbatim>\<open>open CEnv\<close> below makes \<open>store_root\<close>/\<open>get_ast\<close>/\<open>\<dots>\<close> usable unqualified
   throughout the rest of this theory. \<open>AnaEval.analyse_and_eval\<close> also runs on
-  every successful parse, \<open>c11\<close> included, but only \<open>c11\<close>'s own antiquotation
-  actions are actually chained onto the stored theory (\<open>run_c11_kind\<close>'s
-  \<open>full_eval\<close> flag): \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> are syntax-checks
-  on a single fragment, not a compilation unit, so \<open>analyse_and_eval\<close> is run
-  there purely for its \<^emph>\<open>side effect\<close> - the declaration/use hyperlinking
-  reported via \<^ML>\<open>Position.report\<close> during the walk - and its returned theory
-  and antiquotation actions are deliberately discarded rather than persisted.
+  every successful parse, \<open>c11\<close> included, but only \<open>c11\<close>/\<open>c11_file\<close>'s own
+  antiquotation actions are actually chained onto the stored theory
+  (\<open>full_eval_and_store\<close>, called directly by \<open>run_c11\<close>/\<open>run_c11_file\<close>, not by
+  \<open>run_c11_kind\<close>): \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> (\<open>run_c11_kind\<close>'s
+  own remaining callers) are syntax-checks on a single fragment, not a
+  compilation unit, so \<open>analyse_and_eval\<close> is run there purely for its
+  \<^emph>\<open>side effect\<close> - the declaration/use hyperlinking reported via
+  \<^ML>\<open>Position.report\<close> during the walk - and its returned theory and
+  antiquotation actions are deliberately discarded rather than persisted.
   Each accepting command has a \<open>_reject\<close>
   counterpart (\<open>c11_reject\<close> - pre-existing, kept general-purpose across
   all four shapes - and the three new \<open>c11_ident_reject\<close>/\<open>c11_expr_reject\<close>/
@@ -276,16 +278,34 @@ fun require_kind check kind_name cmd_name root =
    root and reports both. Factored out rather than duplicated so "c11" and
    "c11_file" cannot again silently drift apart the way they already once
    did (see "run_c11_file"'s own note). *)
+(* Returns "Context.generic", not "theory": the antiquotation actions chained
+   below are now "Context.generic -> Context.generic" (CEnv.thy's own note on
+   "type_antiq_fun0" explains why), so this must stop at the same level rather
+   than eagerly re-extracting a "theory" until every one of them has actually
+   run. "store_root"'s own state lives entirely inside the "theory" value
+   itself, so passing through "Context.theory_of"/"Context.Theory" around it
+   loses nothing. *)
 fun full_eval_and_store root thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
       val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
-      val thy_for_store = fold (fn (_, f) => f) sorted_evals thy'
+      val context_for_store = fold (fn (_, f) => f) sorted_evals (Context.Theory thy')
+      val thy_for_store = Context.theory_of context_for_store
       val (key, thy'') = store_root root thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-    in thy'' end
+    in Context.Theory thy'' end
 
-fun run_c11_kind check kind_name cmd_name full_eval source thy =
+(* "full_eval_and_store" (above) and this no longer share one function under
+   a boolean flag the way they once did: after the antiquotation-handler
+   generalization (CEnv.thy), the two paths genuinely differ in what they
+   return ("Context.generic" vs plain "theory"), not just in whether they
+   chain antiquotation actions - "run_c11"/"run_c11_file" (below) call
+   "full_eval_and_store" directly instead. This keeps exactly its own former
+   "full_eval = false" body: "c11_ident"/"c11_expr"/"c11_statement" still
+   never chain antiquotation actions onto the stored theory (a standalone
+   fragment is a syntax check, not a genuine compilation unit - see the
+   Manual's own note on this), so "theory -> theory" is still all they need. *)
+fun run_c11_kind check kind_name cmd_name source thy =
     let
       val _ = C11_Comments.reset ()
       val ctxt = Proof_Context.init_global thy
@@ -297,36 +317,49 @@ fun run_c11_kind check kind_name cmd_name full_eval source thy =
       | SOME root =>
           let
             val root = require_kind check kind_name cmd_name root
-          in
-            if full_eval then full_eval_and_store root thy
-            else
-              let
-                val _ = AnaEval.analyse_and_eval root thy
-                val (key, thy'') = store_root root thy
-                val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-              in thy'' end
-          end
+            val _ = AnaEval.analyse_and_eval root thy
+            val (key, thy'') = store_root root thy
+            val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
+          in thy'' end
     end
 
-fun run_c11 source = run_c11_kind is_units "translation unit" "c11" true source
+(* Takes "Context.generic", not plain "theory", as its own incoming state -
+   "Toplevel.generic_theory" (below) needs a function of that shape to lift
+   to "Toplevel.transition -> Toplevel.transition" - extracting "thy" via
+   "Context.theory_of" right away, since parsing/"full_eval_and_store"
+   themselves are still ordinary "theory"-based operations throughout. *)
+fun run_c11 source (context : Context.generic) =
+    let
+      val thy = Context.theory_of context
+      val _ = C11_Comments.reset ()
+      val ctxt = Proof_Context.init_global thy
+      val typedef_snapshot = C11_Typedefs.snapshot ()
+      val res = C11.parse_source ctxt source
+    in
+      case res of
+        NONE => (C11_Typedefs.restore typedef_snapshot; error "c11: no result")
+      | SOME root0 =>
+          let val root = require_kind is_units "translation unit" "c11" root0
+          in full_eval_and_store root thy end
+    end
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
         "Syntax check a C11 translation unit and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
+        (Parse.input Parse.cartouche >> (fn source => Toplevel.generic_theory (run_c11 source)))
 
-fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" false source
+fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_ident"}
         "Syntax check a bare C11 identifier and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident source)))
 
-fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" false source
+fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_expr"}
         "Syntax check a C11 expression and store its AST"
         (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr source)))
 
-fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" false source
+fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
         "Syntax check a C11 statement and store its AST"
@@ -351,14 +384,14 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    mutations into the following command's starting theory the way "thy_decl"
    does. Only the "_reject" variants, which store nothing, stay "diag". Like
    "c11", "c11_file" is reserved for a whole translation unit - and, exactly
-   like "c11", should run under "full_eval = true" semantics: an external
-   file is just as much a genuine compilation unit as an inline "c11 \<open>...\<close>"
-   one, so it needs the same declaration/use hyperlinking and antiquotation
-   handling. This was originally missed here - "run_c11_file" called neither
-   "analyse_and_eval" nor "full_eval_and_store" at all, so a file read via
-   "c11_file" got no hyperlinking whatsoever, unlike every other accepting
-   command - now fixed by routing through the same "full_eval_and_store"
-   helper "run_c11_kind" itself uses.
+   like "c11", should chain its antiquotation actions onto the stored
+   theory: an external file is just as much a genuine compilation unit as an
+   inline "c11 \<open>...\<close>" one, so it needs the same declaration/use hyperlinking
+   and antiquotation handling. This was originally missed here - "run_c11_file"
+   called neither "analyse_and_eval" nor "full_eval_and_store" at all, so a
+   file read via "c11_file" got no hyperlinking whatsoever, unlike every
+   other accepting command - now fixed by routing through the same
+   "full_eval_and_store" "run_c11" (the plain "c11" command) itself uses.
 
    Ported for Isabelle2026: "Resources.provide_file"/"provide_file'" (a
    digest-based "this file has now genuinely been read" bookkeeping step,
@@ -370,8 +403,13 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
    renamed), so this command no longer calls it either. The file dependency
    itself is unaffected - it was always established by the "thy_load"
    command-span scanner (see above), not by this now-removed step. *)
-fun run_c11_file get_file thy =
+(* Takes "Context.generic", not plain "theory", for the same reason "run_c11"
+   above does - "get_file", from "Resources.parse_file", is still plain
+   "theory -> Token.file", so "thy" is extracted via "Context.theory_of"
+   before it is ever called. *)
+fun run_c11_file get_file (context : Context.generic) =
     let
+      val thy = Context.theory_of context
       val _ = C11_Comments.reset ()
       val file = get_file thy
       val source = Token.file_source file
@@ -388,7 +426,7 @@ fun run_c11_file get_file thy =
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
         "Read and syntax-check an external C11 source file, and store its AST"
-        (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
+        (Resources.parse_file >> (fn get_file => Toplevel.generic_theory (run_c11_file get_file)))
 
 (* "c11_predef [header] \<open>decl_list\<close>" gives a real \<^emph>\<open>basic\<close> functionality
    (the user's own word - see the design discussion this responds to): a way

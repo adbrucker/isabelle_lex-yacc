@@ -441,7 +441,8 @@ fun select_ast antiq_pos navi ctx =
 (* The shared antiquotation-dispatch helper: looks up every "Antiquotation" in
    "ni"'s comment list by tag in "cenv"'s "c_antiq", instantiates it with
    (cenv, select_ast tag_pos navi ctx, level), and pairs the resulting
-   "theory -> theory" with its level - "select_ast" (and so "children_of",
+   "Context.generic -> Context.generic" with its level - "select_ast" (and so
+   "children_of",
    which can "error") is only forced when an "Antiquotation" genuinely needs
    it, never for an ordinary "Raw_txt" or an empty comment list. "tag_pos"
    (the antiquotation's own tag position, previously discarded here) is
@@ -461,7 +462,7 @@ fun select_ast antiq_pos navi ctx =
    list: a handler is never itself responsible for interpreting "up"/"Up"/
    "right"/"down". *)
 fun check_antiq cenv (ctx : pos C_Ast.root list) (ni : pos C_Ast.nodeInfo)
-    : (int * (theory -> theory)) list =
+    : (int * (Context.generic -> Context.generic)) list =
   case ni of
     C_Ast.OnlyPos _ => []
   | C_Ast.NodeInfo (cs, _) =>
@@ -754,7 +755,7 @@ fun walk_exprs cenv ctx es acc =
    is what makes a sub-expression nested arbitrarily deep its own closest
    antiquotation context, not just the statement/expression a caller first
    descended from. *)
-and walk_expr cenv ctx (e : pos C_Ast.cExpression) : cenv * (int * (theory -> theory)) list =
+and walk_expr cenv ctx (e : pos C_Ast.cExpression) : cenv * (int * (Context.generic -> Context.generic)) list =
   let
     val ctx' = C_Ast.Expr e :: ctx
     val here = check_antiq cenv ctx' (C_Ast.nodeInfo_of_CExpr e)
@@ -1033,7 +1034,7 @@ and walk_type_decl cenv ctx d = walk_decl "C11 type" Local cenv ctx d
 
 (* Always pushes its own node - "Stmt s :: ctx" - before recursing, exactly
    like "walk_expr" and for the same reason. *)
-and walk_stat cenv ctx (s : pos C_Ast.cStatement) : cenv * (int * (theory -> theory)) list =
+and walk_stat cenv ctx (s : pos C_Ast.cStatement) : cenv * (int * (Context.generic -> Context.generic)) list =
   let
     val ctx' = C_Ast.Stmt s :: ctx
     val here = check_antiq cenv ctx' (C_Ast.nodeInfo_of_CStat s)
@@ -1167,7 +1168,7 @@ and walk_fun_def kind_str mk_kind cenv ctx (C_Ast.CFunDef (specs, declr, _, body
    translation unit "analyse_and_eval" seeded "ctx" with (see the top-of-file
    note) - shared by every top-level declaration in the unit, not just the
    one an antiquotation happens to sit on. *)
-and walk_ext_decl cenv ctx (ed : pos C_Ast.cExternalDeclaration) : cenv * (int * (theory -> theory)) list =
+and walk_ext_decl cenv ctx (ed : pos C_Ast.cExternalDeclaration) : cenv * (int * (Context.generic -> Context.generic)) list =
   case ed of
     C_Ast.CDeclExt d => walk_decl "C11 global variable" Global cenv ctx d
   | C_Ast.CFDefExt f => walk_fun_def "C11 global function" Global cenv ctx f
@@ -1189,7 +1190,7 @@ and synth_decl_of_ident (id as C_Ast.Ident (_, _, ni)) init_opt =
    top-level context, same as "walk_ext_decl": no "ctx" push, resolves to
    "hd ctx"; computed once and reused for all four forms below, since they
    share the one "nodeInfo". *)
-and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int * (theory -> theory)) list =
+and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int * (Context.generic -> Context.generic)) list =
   let
     val ni = C_Ast.nodeInfo_of_CPPDirective d
     val here = check_antiq cenv ctx ni
@@ -1342,7 +1343,7 @@ ML\<open>
 val CENV = Unsynchronized.ref(CEnv.empty_cenv);
 val probe_cenv = let fun probe (cenv, _ , _) (_ : string * Position.T) thy =
                               (CENV := cenv; thy)
-                 in  CEnv.store_antiq ("probe_cenv",  probe) end
+                 in  CEnv.store_antiq ("probe_cenv",  CEnv.lift_theory_antiq probe) end
 
 
 val AST = Unsynchronized.ref((C_Ast.Units []): (Position.T C_Ast.root) )
@@ -1350,13 +1351,13 @@ val probe_ast = let fun probe (_, c_ast , l) (_ : string * Position.T) thy =
                               (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ C_Ast.pp_root c_ast);
                                AST := c_ast; thy)
-                in  CEnv.store_antiq ("probe_ast",  probe) end
+                in  CEnv.store_antiq ("probe_ast",  CEnv.lift_theory_antiq probe) end
 
 
 val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
                               (Position.report (AnaEval.pos_of_root c_ast) Markup.intensify;
                                thy)
-                in  CEnv.store_antiq ("highlight",  probe) end
+                in  CEnv.store_antiq ("highlight",  CEnv.lift_theory_antiq probe) end
 
 (* A "term" antiquotation: parses its cartouche body as a genuine HOL term
    against the theory's *current* context via "Syntax.read_term", so a
@@ -1422,7 +1423,39 @@ val term_antiq =
             else error ("term antiquotation: " ^ Runtime.exn_message exn ^
                          Position.here (AnaEval.pos_of_root c_ast))
       in (TERM_PROBE := t; thy) end
-  in CEnv.store_antiq ("term", probe) end
+  in CEnv.store_antiq ("term", CEnv.lift_theory_antiq probe) end
+
+(* A genuine "ML" antiquotation - unlike every handler above, written directly
+   against "Context.generic -> Context.generic" rather than through
+   "CEnv.lift_theory_antiq": it runs its own cartouche body as real ML source,
+   via the same "ML_Context.exec"/"ML_Context.eval_source" pair the actual
+   top-level "ML\<open>...\<close>" command uses (\<^verbatim>\<open>Pure/ML/ml_file.ML\<close>'s "ML_File.command"),
+   so a definition written inside a C comment becomes a real, later-visible ML
+   binding - exactly the capability "theory -> theory" alone cannot express,
+   and the reason "type_antiq_fun0" was generalized in the first place.
+   Matches the original Isabelle/C's own "C_Isar_Cmd.ML"
+   ("C11-FrontEnd/src/C_Command.thy" in the "Isabelle_C" AFP entry) almost
+   verbatim: "Local_Theory.propagate_ml_env" is a documented no-op outside a
+   local theory context, harmless at this project's own, plain-theory level -
+   included only for consistency with the real command's own pattern, and so
+   this does not silently stop working if C11 commands are ever used inside a
+   local theory later. Reuses "term_antiq"'s own "start_pos"/"end_pos"
+   reconstruction immediately above, for the same reason: a compile error
+   inside the antiquotation's own ML code should be reported at a real
+   position within the C source, not some fallback. *)
+val ml_antiq =
+  let
+    fun probe (_, _, _) (body, body_pos) : Context.generic -> Context.generic =
+      let
+        val start_pos = Position.no_range_position body_pos
+        val end_pos = Position.symbol_explode body start_pos
+        val source = Input.source true body (start_pos, end_pos)
+      in
+        ML_Context.exec (fn () =>
+          ML_Context.eval_source (ML_Compiler.verbose true ML_Compiler.flags) source)
+        #> Local_Theory.propagate_ml_env
+      end
+  in CEnv.store_antiq ("ML", probe) end
 
 \<close>
 
@@ -1430,5 +1463,6 @@ setup\<open>probe_cenv\<close>
 setup\<open>probe_ast\<close>
 setup\<open>highlight\<close>
 setup\<open>term_antiq\<close>
+setup\<open>ml_antiq\<close>
 
 end
