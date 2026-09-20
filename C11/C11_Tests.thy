@@ -518,18 +518,60 @@ text\<open>The header name in a \<open>#include <header>\<close> is itself navig
   token, in \<^verbatim>\<open>C11.thy\<close>), not just the reusable effect - this is what lets
   \<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case hyperlink a later
   \<open>#include <stdio.h>\<close> straight back to where \<open>stdio.h\<close> was predefined,
-  exactly like an ordinary declaration/use pair.\<close>
+  exactly like an ordinary declaration/use pair. Neither \<^ML>\<open>Position.file_of\<close>
+  nor \<^ML>\<open>Position.line_of\<close> is the right check here (both were tried, and
+  both failed under some way of checking this theory - a batch \<open>isabelle
+  build\<close> populates a command token's position with a real \<open>file\<close>/\<open>line\<close>
+  \<^emph>\<open>and\<close> a PIDE command \<open>id\<close> all at once, confirmed by directly inspecting
+  \<^ML>\<open>Position.dest\<close> on it, but interactive/PIDE checking (jEdit) can leave
+  \<open>line\<close> at its own "unset" sentinel, \<open>0\<close>, on the very same position,
+  relying purely on \<open>id\<close> to resolve it - so neither field is reliably
+  populated across \<^emph>\<open>both\<close> ways of checking this theory, only whichever
+  one the specific processing mode happens to fill in). The one check that
+  is robust either way: the position, whatever it carries, is not the
+  empty sentinel \<^ML>\<open>Position.none\<close> - \<^verbatim>\<open>Position.T\<close> is a plain record of
+  \<^verbatim>\<open>int\<close>/\<^verbatim>\<open>string\<close> fields, so \<^verbatim>\<open>=\<close> compares it structurally, with no
+  special library function needed.\<close>
 ML\<open>
 val CEnv.mk {predefined_envs, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
   case Symtab.lookup predefined_envs "stdio.h" of
     NONE => error "FAIL: stdio.h not registered in predefined_envs at all"
   | SOME (pos, _) =>
-      (case Position.file_of pos of
-         SOME file =>
-           if String.isSuffix "C11.thy" file then ()
-           else error ("FAIL: stdio.h's stored position points at " ^ file ^ ", expected C11.thy")
-       | NONE => error "FAIL: stdio.h's stored position carries no file at all")
+      if pos = Position.none
+      then error "FAIL: stdio.h's stored position is the empty Position.none sentinel"
+      else ()
+\<close>
+
+text\<open>The precise \<^emph>\<open>range\<close> highlighted for the header name itself, not just
+  that some position exists: \<open>CPPInclude\<close>'s own header-name \<open>nodeInfo\<close>
+  (\<^verbatim>\<open>C11_Parser.thy\<close>) starts at the token's opening delimiter ("<" or a
+  quote, always exactly one symbol), one symbol \<^emph>\<open>before\<close> the header name
+  itself - \<open>AnaEval.walk_pp_directive\<close> advances past it via
+  \<^ML>\<open>Position.symbol_explode\<close> before computing the reported range,
+  otherwise the highlighted span is one symbol short and shifted left (e.g.
+  \<open>"<stdio."\<close> instead of \<open>"stdio.h"\<close> for \<open>#include <stdio.h>\<close> - a real bug
+  this test catches directly, by reproducing the same adjustment against a
+  genuinely parsed \<open>CPPInclude\<close> node and checking its offset advances by
+  exactly one symbol, not zero.\<close>
+c11\<open>#include <stdio.h>\<close>
+ML\<open>
+val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
+val key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val header_ni =
+  case CEnv.get_ast key @{theory} of
+    SOME (C_Ast.Units [C_Ast.CTranslUnit (C_Ast.CPPExt (C_Ast.CPPInclude (_, "stdio.h", _, header_ni)) :: _, _)]) =>
+      header_ni
+  | _ => error ("FAIL: stored AST under " ^ key ^ " was not the expected single-CPPInclude unit")
+val raw_pos = C_Ast.pos_of_NodeInfo header_ni
+val adjusted_pos = Position.symbol_explode "<" raw_pos
+val _ =
+  case (Position.offset_of raw_pos, Position.offset_of adjusted_pos) of
+    (SOME o1, SOME o2) =>
+      if o2 = o1 + 1 then ()
+      else error ("FAIL: adjusted header-name position offset is " ^ Int.toString o2 ^
+                   ", expected exactly one past the raw token's own offset (" ^ Int.toString o1 ^ ")")
+  | _ => error "FAIL: raw or adjusted header-name position carries no offset at all"
 \<close>
 
 text\<open>Only once each header is actually \<open>#include\<close>d - here, in a single

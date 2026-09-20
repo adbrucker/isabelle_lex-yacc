@@ -1197,7 +1197,18 @@ and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int *
     case d of
       C_Ast.CPPInclude (_, header, _, header_ni) =>
         let
-          val use_range = name_range (header, C_Ast.pos_of_NodeInfo header_ni)
+          (* "header_ni" is the *whole* "HEADER_NAME" token's own position,
+             starting at its opening delimiter ("<" or "\"", always exactly
+             one symbol) - not at "header" itself, one symbol further in.
+             "Position.symbol_explode" only ever counts the symbols in the
+             string it is given, never compares them against the underlying
+             source text, so any single-symbol string advances past exactly
+             that one delimiter character; without this adjustment, a
+             length-"size header" range starting at the delimiter itself
+             would land one symbol short of "header"'s own end (e.g.
+             "<stdio." instead of "stdio.h" for "#include <stdio.h>"). *)
+          val name_pos = Position.symbol_explode "<" (C_Ast.pos_of_NodeInfo header_ni)
+          val use_range = name_range (header, name_pos)
           val mk {predefined_envs, ...} = cenv
         in
           case Symtab.lookup predefined_envs header of
