@@ -296,7 +296,7 @@ text\<open>
 subsection\<open>Standard Antiquotations\<close>
 
 text\<open>
-  \<^verbatim>\<open>AnaEval.thy\<close> registers six demonstration handlers, available to every
+  \<^verbatim>\<open>AnaEval.thy\<close> registers seven demonstration handlers, available to every
   theory that imports \<^verbatim>\<open>C11\<close> (they are not meant as production
   verification-condition generators - each is a small, self-contained example
   of one facility a real handler might use):
@@ -337,6 +337,20 @@ text\<open>
     \<open>Latex.text\<close> is stashed into \<^ML>\<open>TEXT_PROBE\<close>, exactly like \<open>term\<close>'s own
     \<open>TERM_PROBE\<close> above. Unlike \<open>ML\<close>, it does \<^emph>\<open>not\<close> reach the generated
     document/PDF itself - see \<open>\<section>4\<close>.
+  \<^descr> \<open>definition\<close> parses its body with the very same parser combinator the
+    real top-level \<open>definition\<close> command itself uses (\<open>Parse_Spec.constdecl --
+    (Parse_Spec.opt_thm_name ":" -- Parse.prop) -- Parse_Spec.if_assumes --
+    Parse.for_fixes\<close>, \<^verbatim>\<open>Pure/Pure.thy\<close>) via \<^ML>\<open>Parse.read_embedded\<close>, and
+    runs the result through \<^ML>\<open>Specification.definition_cmd\<close>, the same
+    underlying action - opening a target-less local theory with
+    \<^ML>\<open>Named_Target.theory_init\<close> and closing it back down with
+    \<^ML>\<open>Local_Theory.exit_global\<close> so the handler still fits plain
+    \<open>theory -> theory\<close>. A constant defined this way - e.g.\
+    \<open>//@ definition \<open>c :: nat where "c = 42"\<close>\<close> - is a genuine theory constant
+    with a genuine definitional theorem \<open>c_def\<close>, usable by an ordinary
+    \<open>thm\<close>/\<open>term\<close>/proof anywhere later in the theory, exactly as if
+    \<open>definition\<close> had been written outside any C comment. Also present in the
+    original Isabelle/C (\<^verbatim>\<open>C_Isar_Cmd.definition\<close>).
 \<close>
 
 subsection\<open>Predefined Header Declarations\<close>

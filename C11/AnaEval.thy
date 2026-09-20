@@ -1496,6 +1496,65 @@ val text_antiq =
       in (TEXT_PROBE := latex; thy) end
   in CEnv.store_antiq ("text", CEnv.lift_theory_antiq probe) end
 
+(* A "definition" antiquotation for Isabelle's own "definition\<open>...\<close>" command -
+   also present in the original Isabelle/C, whose own version
+   (\<^verbatim>\<open>C_Isar_Cmd.definition\<close>, "C11-FrontEnd/src/C_Command.thy" in the
+   "Isabelle_C" AFP entry) is the model followed here almost verbatim:
+   \<^ML>\<open>fun definition (((decl, spec), prems), params) =
+         #2 oo Specification.definition_cmd decl params prems spec\<close>.
+   Unlike \<open>term\<close>/\<open>text\<close> above, "definition"'s real command is not registered
+   via a simple string/term reader - it is built from a whole *parser
+   combinator* (\<^ML>\<open>Scan.option Parse_Spec.constdecl --
+   (Parse_Spec.opt_thm_name ":" -- Parse.prop) -- Parse_Spec.if_assumes --
+   Parse.for_fixes\<close>, "Pure/Pure.thy") operating on a live \<^ML_type>\<open>Token.T\<close>
+   stream, not on pre-lexed text. The cartouche's raw body is turned back
+   into such a stream, and that very combinator run against it, via
+   \<^ML>\<open>Parse.read_embedded\<close> ("Pure/Isar/parse.ML") - the same utility
+   \<^ML>\<open>Method.read_closure_input\<close> uses to re-parse an embedded method text,
+   including its own idiom of stripping command keywords first
+   (\<^ML>\<open>Keyword.no_major_keywords\<close>) so that only the minor keywords
+   "definition" itself needs (\<^verbatim>\<open>::\<close>, \<^verbatim>\<open>:\<close>, \<^verbatim>\<open>if\<close>, \<^verbatim>\<open>for\<close>, \<^dots>) are
+   recognised, and a stray word inside the cartouche is never mistaken for
+   the start of a new top-level command. \<^ML>\<open>Scan.read\<close> underneath already
+   requires the *entire* token stream to be consumed, so no separate
+   \<open>Scan.ahead Parse.eof\<close> check is needed.
+
+   "the standard theory -> theory operation": \<^ML>\<open>Specification.definition_cmd\<close>
+   itself only operates on a \<^ML_type>\<open>local_theory\<close> (\<open>= Proof.context\<close>), not
+   a bare \<^ML_type>\<open>theory\<close> - so a target-less local theory is opened with
+   \<^ML>\<open>Named_Target.theory_init\<close>, the definition run inside it exactly as
+   the real command does (dropping its returned term/theorem pair via \<open>#2\<close>,
+   matching \<^ML>\<open>C_Isar_Cmd.definition\<close> above), and \<^ML>\<open>Local_Theory.exit_global\<close>
+   closes it back down to a plain \<^ML_type>\<open>theory\<close> - so this handler, like
+   every other one above besides \<open>ML\<close>, still fits plain \<open>theory -> theory\<close>
+   and goes through \<^ML>\<open>CEnv.lift_theory_antiq\<close> unchanged. A definition
+   written inside a C comment is therefore a genuine, later-visible theory
+   constant - checkable with an ordinary \<open>thm ..._def\<close>/\<open>term ...\<close> in a
+   subsequent command, exactly as if \<open>definition\<close> had been written directly
+   at the theory's own top level. *)
+val definition_antiq =
+  let
+    fun probe (_, c_ast, _) (body, body_pos) thy =
+      let
+        val ctxt = Proof_Context.init_global thy
+        val start_pos = Position.no_range_position body_pos
+        val end_pos = Position.symbol_explode body start_pos
+        val source = Input.source true body (start_pos, end_pos)
+        val keywords = Keyword.no_major_keywords (Thy_Header.get_keywords' ctxt)
+        val parser =
+          Scan.option Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name ":" -- Parse.prop) --
+            Parse_Spec.if_assumes -- Parse.for_fixes
+        val (((decl, spec), prems), params) =
+          Parse.read_embedded ctxt keywords parser source
+          handle exn =>
+            if Exn.is_interrupt exn then Exn.reraise exn
+            else error ("definition antiquotation: " ^ Runtime.exn_message exn ^
+                         Position.here (AnaEval.pos_of_root c_ast))
+        val lthy' =
+          #2 (Specification.definition_cmd decl params prems spec false (Named_Target.theory_init thy))
+      in Local_Theory.exit_global lthy' end
+  in CEnv.store_antiq ("definition", CEnv.lift_theory_antiq probe) end
+
 \<close>
 
 setup\<open>probe_cenv\<close>
@@ -1504,5 +1563,6 @@ setup\<open>highlight\<close>
 setup\<open>term_antiq\<close>
 setup\<open>text_antiq\<close>
 setup\<open>ml_antiq\<close>
+setup\<open>definition_antiq\<close>
 
 end

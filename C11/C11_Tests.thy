@@ -1270,6 +1270,26 @@ ML\<open>if null (!TEXT_PROBE)
    then error "FAIL: the text antiquotation above produced no Latex.text at all"
    else ()\<close>
 
+text\<open>The \<open>definition\<close> antiquotation: its cartouche body is parsed with the very
+  same parser combinator the real top-level \<open>definition\<close> command itself
+  uses (\<open>Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name ":" -- Parse.prop)
+  -- Parse_Spec.if_assumes -- Parse.for_fixes\<close>, \<^verbatim>\<open>Pure/Pure.thy\<close>), and the
+  result run through \<^ML>\<open>Specification.definition_cmd\<close>, the same underlying
+  action - so \<open>test_definition_anchor_const\<close> below is a genuine theory
+  constant with a genuine definitional theorem
+  \<open>test_definition_anchor_const_def\<close>, not merely recorded data. The
+  \<^emph>\<open>definitive\<close> check is the lemma right after the \<open>c11\<close> block: it only
+  type-checks and only proves if the constant and its definitional
+  equation both really exist at the real theory level, exactly as if
+  \<open>definition\<close> had been written directly outside any C comment.\<close>
+c11\<open>
+//@ definition \<open>test_definition_anchor_const :: nat where "test_definition_anchor_const = 41 + 1"\<close>
+int test_definition_anchor;
+\<close>
+
+lemma test_definition_anchor_const_check: "test_definition_anchor_const = 42"
+  by (simp add: test_definition_anchor_const_def)
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more
