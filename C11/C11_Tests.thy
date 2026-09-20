@@ -1290,6 +1290,27 @@ int test_definition_anchor;
 lemma test_definition_anchor_const_check: "test_definition_anchor_const = 42"
   by (simp add: test_definition_anchor_const_def)
 
+text\<open>The \<open>lemma\<close> antiquotation: Isabelle/C's "proof-carrying code" - a
+  genuine property about a C-level constant, proved right where the C code
+  motivating it lives. Only the single-shot \<open>statement by method\<close> form is
+  supported - no \<open>apply\<close>/\<open>done\<close> chains, no \<open>sorry\<close> - "check-and-fail" is
+  the whole point: a wrong or missing method genuinely fails the \<open>c11\<close>
+  block, exactly like a real, misproved top-level \<open>lemma\<close> would. The
+  \<^emph>\<open>definitive\<close> check is the bare \<open>thm\<close> command right after the second
+  \<open>c11\<close> block: it only succeeds if \<open>test_lemma_anchor_fact\<close> genuinely
+  exists as a real, later-retrievable fact, not merely stored text.\<close>
+c11\<open>
+//@ definition \<open>test_lemma_anchor_N :: nat where "test_lemma_anchor_N = 5"\<close>
+int test_lemma_anchor_N_decl;
+\<close>
+
+c11\<open>
+//@ lemma \<open>test_lemma_anchor_fact: "test_lemma_anchor_N * test_lemma_anchor_N < 100" by (simp add: test_lemma_anchor_N_def)\<close>
+int test_lemma_anchor;
+\<close>
+
+thm test_lemma_anchor_fact
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more

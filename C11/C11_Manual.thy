@@ -296,7 +296,7 @@ text\<open>
 subsection\<open>Standard Antiquotations\<close>
 
 text\<open>
-  \<^verbatim>\<open>AnaEval.thy\<close> registers seven demonstration handlers, available to every
+  \<^verbatim>\<open>AnaEval.thy\<close> registers eight demonstration handlers, available to every
   theory that imports \<^verbatim>\<open>C11\<close> (they are not meant as production
   verification-condition generators - each is a small, self-contained example
   of one facility a real handler might use):
@@ -351,6 +351,25 @@ text\<open>
     \<open>thm\<close>/\<open>term\<close>/proof anywhere later in the theory, exactly as if
     \<open>definition\<close> had been written outside any C comment. Also present in the
     original Isabelle/C (\<^verbatim>\<open>C_Isar_Cmd.definition\<close>).
+  \<^descr> \<open>lemma\<close> is Isabelle/C's notion of \<^emph>\<open>proof-carrying code\<close>: a genuine
+    property about the C-level environment - typically a \<open>definition\<close>
+    capturing a \<open>#define\<close> or similar constant - proved right where the C
+    code that motivates it lives, e.g.\ that some \<open>N\<close>'s square stays below
+    a semantic \<open>MAXINT\<close>. Deliberately restricted to a single-shot
+    \<open>statement by method\<close> form - no \<open>apply\<close>/\<open>done\<close> chains, no \<open>sorry\<close>; this
+    is not meant to support interactive proof development inside a C
+    comment, only to check-and-fail with a basic error message. The
+    statement is parsed with the very same combinator real \<open>lemma\<close> itself
+    uses (\<open>Parse_Spec.statement -- Parse_Spec.if_statement --
+    Parse.for_fixes\<close>, reconstructed locally exactly as
+    \<^verbatim>\<open>C_Isar_Cmd.theorem\<close> (the original Isabelle/C's own analogous
+    handler) reconstructs its own copy, since Pure's is a private,
+    unexported binding), opened with \<^ML>\<open>Specification.theorem_cmd\<close>
+    and closed with \<^ML>\<open>Proof.global_terminal_proof\<close> - if the method does
+    not genuinely discharge the goal, this raises a real Isabelle proof
+    error, reported at the antiquotation's own position. A successfully
+    proved \<open>lemma\<close> - e.g.\ \<open>//@ lemma \<open>bound: "N * N < 1000" by simp\<close>\<close> -
+    becomes a genuine, later-usable fact \<open>bound\<close>.
 \<close>
 
 subsection\<open>Predefined Header Declarations\<close>

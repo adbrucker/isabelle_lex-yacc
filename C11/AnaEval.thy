@@ -1555,6 +1555,64 @@ val definition_antiq =
       in Local_Theory.exit_global lthy' end
   in CEnv.store_antiq ("definition", CEnv.lift_theory_antiq probe) end
 
+(* A "lemma" antiquotation - Isabelle/C's own notion of "proof-carrying code":
+   a formal property about the C-level environment (typically a
+   \<open>definition\<close>, above, capturing a "#define" or similar constant) that is
+   \<^emph>\<open>actually proved\<close>, not merely stated, right where the C code that
+   motivates it lives. Unlike \<open>definition\<close>, this is deliberately \<^emph>\<open>not\<close>
+   meant to support real interactive proof development inside a C
+   comment - no \<open>apply\<close>/\<open>done\<close> step-by-step chains, no \<open>obtains\<close>-style
+   long statements, no \<open>sorry\<close> - only the single-shot form real code
+   actually wants: a statement plus one terminal \<open>by\<close> proof. Success or
+   failure is exactly what "check-and-fail with a basic error message"
+   asks for: the parser is \<open>Parse_Spec.statement -- Parse_Spec.if_statement
+   -- Parse.for_fixes\<close> (the *same* combinator "short_statement" in
+   \<^verbatim>\<open>Pure/Pure.thy\<close> uses for \<open>lemma\<close> itself, reconstructed locally here
+   exactly as \<^ML>\<open>C_Isar_Cmd.theorem\<close> reconstructs its own copy, since
+   Pure's is a private, unexported \<open>local\<close> binding) followed by
+   \<open>Parse.$$$ "by" |-- Method.parse -- Scan.option Method.parse\<close>; the
+   statement is opened with \<^ML>\<open>Specification.theorem_cmd\<close> (the same
+   action \<open>lemma\<close> itself uses) and immediately closed with
+   \<^ML>\<open>Proof.global_terminal_proof\<close> - if the method(s) do not actually
+   discharge every goal, this raises a genuine Isabelle proof error, caught
+   here and re-raised with the antiquotation's own C-source position
+   attached, exactly like \<open>term\<close>'s and \<open>definition\<close>'s own exception
+   handling above. A successfully proved \<open>lemma\<close> becomes a genuine,
+   later-usable fact - e.g.\ \<open>//@ lemma \<open>N * N < MAXINT\<close> by simp\<close> right
+   after \<open>N\<close>'s own \<open>definition\<close> leaves a real \<open>thm\<close> behind for anything
+   later in the theory, exactly the "verify this concrete semantic
+   instance satisfies this property" reading of proof-carrying code. *)
+val lemma_antiq =
+  let
+    val short_statement =
+      Parse_Spec.statement -- Parse_Spec.if_statement -- Parse.for_fixes
+        >> (fn ((shows, assumes), fixes) =>
+          (Binding.empty_atts, [Element.Fixes fixes, Element.Assumes assumes],
+           Element.Shows shows))
+    val parser =
+      short_statement -- (Parse.$$$ "by" |-- Method.parse -- Scan.option Method.parse)
+    fun probe (_, c_ast, _) (body, body_pos) thy =
+      let
+        val ctxt = Proof_Context.init_global thy
+        val start_pos = Position.no_range_position body_pos
+        val end_pos = Position.symbol_explode body start_pos
+        val source = Input.source true body (start_pos, end_pos)
+        val keywords = Keyword.no_major_keywords (Thy_Header.get_keywords' ctxt)
+        fun fail exn =
+          if Exn.is_interrupt exn then Exn.reraise exn
+          else error ("lemma antiquotation: " ^ Runtime.exn_message exn ^
+                       Position.here (AnaEval.pos_of_root c_ast))
+        val ((binding, elems, concl), (m1, m2)) =
+          Parse.read_embedded ctxt keywords parser source handle exn => fail exn
+        val lthy' =
+          (Specification.theorem_cmd false Thm.theoremK NONE (K I) binding [] elems concl false
+             (Named_Target.theory_init thy)
+           |> tap (fn _ => (Method.report m1; Option.map Method.report m2 |> ignore))
+           |> Proof.global_terminal_proof (m1, m2))
+          handle exn => fail exn
+      in Local_Theory.exit_global lthy' end
+  in CEnv.store_antiq ("lemma", CEnv.lift_theory_antiq probe) end
+
 \<close>
 
 setup\<open>probe_cenv\<close>
@@ -1564,5 +1622,6 @@ setup\<open>term_antiq\<close>
 setup\<open>text_antiq\<close>
 setup\<open>ml_antiq\<close>
 setup\<open>definition_antiq\<close>
+setup\<open>lemma_antiq\<close>
 
 end
