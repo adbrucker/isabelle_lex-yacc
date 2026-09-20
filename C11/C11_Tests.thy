@@ -1305,7 +1305,8 @@ int test_lemma_anchor_N_decl;
 \<close>
 
 c11\<open>
-//@ lemma \<open>test_lemma_anchor_fact: "test_lemma_anchor_N * test_lemma_anchor_N < 100" by (simp add: test_lemma_anchor_N_def)\<close>
+//@ lemma \<open>test_lemma_anchor_fact: "test_lemma_anchor_N * test_lemma_anchor_N < 100" 
+    by (simp add: test_lemma_anchor_N_def)\<close>
 int test_lemma_anchor;
 \<close>
 
