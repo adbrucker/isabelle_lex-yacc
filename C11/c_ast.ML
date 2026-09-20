@@ -552,13 +552,19 @@ structure C_Ast : sig
      "preproc_directive" note in C11_Parser.thy for exactly which forms are
      recognized. "CPPInclude"'s "bool" is true for "<...>" (system), false
      for "\"...\"" (local); its "string" is the bare header name with the
-     delimiters already stripped. "CPPDefine"/"CPPDefineFun" hold this
-     fragment's simplified "#define name = expr"/"#define name(args) = expr"
-     (a single expression, not a replacement-token sequence). "CPPIfdef"'s
-     "bool" is true for "#ifndef", false for "#ifdef"; its two declaration
-     lists are the "#else" branch and the then-branch, the latter empty when
-     there is no "#else". *)
-  datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo
+     delimiters already stripped; its *first* "nodeInfo" is the whole
+     directive's own (used for antiquotation-checking, like every other
+     directive), its *second* one is the header-name token's own, precise
+     position alone - kept separate so a hyperlink back to a matching
+     "c11_predef [header] ..." (AnaEval.thy's "walk_pp_directive") lands
+     exactly on "header" itself, not the whole "#include <header>" span.
+     "CPPDefine"/"CPPDefineFun" hold this fragment's simplified "#define
+     name = expr"/"#define name(args) = expr" (a single expression, not a
+     replacement-token sequence). "CPPIfdef"'s "bool" is true for
+     "#ifndef", false for "#ifdef"; its two declaration lists are the
+     "#else" branch and the then-branch, the latter empty when there is no
+     "#else". *)
+  datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo * 'a nodeInfo
                                  | CPPDefine of 'a ident * 'a cExpression * 'a nodeInfo
                                  | CPPDefineFun of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
                                  | CPPIfdef of bool * 'a ident * 'a cExternalDeclaration list
@@ -719,7 +725,7 @@ and 'a cTypeSpecifier = CVoidType of 'a nodeInfo | CCharType of 'a nodeInfo | CS
 
 datatype clangCVersion = ClangCVersion of string;
 
-datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo
+datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo * 'a nodeInfo
                                | CPPDefine of 'a ident * 'a cExpression * 'a nodeInfo
                                | CPPDefineFun of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
                                | CPPIfdef of bool * 'a ident * 'a cExternalDeclaration list
@@ -939,7 +945,7 @@ fun statement0_case l s =
 fun stringLiteral x = (fn CStrLit (CString (s, _), _) => replace_integersa (fn xa => (if xa = (10 : IntInf.int) then "\092n" else (STa [xa]))) s) x;
 
 fun nodeInfo_of_CPPDirective x = (fn a => (case a of
-    CPPInclude (_, _, ndI) => ndI
+    CPPInclude (_, _, ndI, _) => ndI
   | CPPDefine (_, _, ndI) => ndI
   | CPPDefineFun (_, _, _, ndI) => ndI
   | CPPIfdef (_, _, _, _, ndI) => ndI)) x;
@@ -1192,7 +1198,7 @@ and pp_externalDeclaration (CDeclExt d) = pp_declaration d ^ ";"
   | pp_externalDeclaration (CAsmExt (s, _)) = "__asm__(" ^ pp_stringLiteral s ^ ");"
   | pp_externalDeclaration (CPPExt d) = pp_preprocDirective d
 
-and pp_preprocDirective (CPPInclude (system, name, _)) =
+and pp_preprocDirective (CPPInclude (system, name, _, _)) =
       "#include " ^ (if system then "<" ^ name ^ ">" else "\"" ^ name ^ "\"")
   | pp_preprocDirective (CPPDefine (id, e, _)) =
       "#define " ^ ident id ^ " = " ^ pp_expression e

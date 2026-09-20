@@ -111,23 +111,27 @@ type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) ->  theory
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
                        c_antiq : (cenv type_antiq_fun0) Symtab.table,
-                       predefined_envs : (cenv -> cenv) Symtab.table,
+                       predefined_envs : (pos * (cenv -> cenv)) Symtab.table,
                        units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
 
 type type_antiq_fun = cenv type_antiq_fun0
 
 (* "predefined_envs" holds, per header name (\<^verbatim>\<open>c11_predef\<close>'s own bracketed
-   label, e.g. \<open>"stdio.h"\<close>), the reusable *effect* that header's own
-   declarations have on an arbitrary "cenv" - captured once, when
+   label, e.g. \<open>"stdio.h"\<close>), a pair of the reusable *effect* that header's
+   own declarations have on an arbitrary "cenv" - captured once, when
    \<^verbatim>\<open>c11_predef\<close> itself is walked, as a plain function rather than applied
    there and then discarded, precisely so a *later* \<open>#include <header>\<close>
    (\<^verbatim>\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case) can re-apply the very
    same effect to whatever "cenv" is current at that point - the mechanism
    that actually connects \<open>#include\<close> to something, instead of it staying
-   purely syntactic. \<^verbatim>\<open>c11_predef\<close> itself does *not* also register the
-   declared names directly into "idents"/"types" - only "predefined_envs"
-   changes when it runs; a name it declares is not yet in scope anywhere
-   until some \<open>#include\<close> actually pulls it in, matching real C. *)
+   purely syntactic - together with the position of \<^verbatim>\<open>c11_predef\<close>'s own
+   header-name token, so a later \<open>#include <header>\<close> can hyperlink back to
+   it (matching \<open>report_use\<close>'s own "declared here, used there" style, for
+   the header-name "namespace"). \<^verbatim>\<open>c11_predef\<close> itself does *not* also
+   register the declared names directly into "idents"/"types" - only
+   "predefined_envs" changes when it runs; a name it declares is not yet in
+   scope anywhere until some \<open>#include\<close> actually pulls it in, matching
+   real C. *)
 val empty_cenv = mk{idents  = Symtab.empty,
                   types   = Symtab.empty ,
                   c_antiq = Symtab.empty,
@@ -214,15 +218,17 @@ fun get_antiq name thy =
        val mk {c_antiq, ...} = get (Context.Theory thy)
     in Symtab.lookup c_antiq name end
 
-(* Registers "header"'s own reusable "cenv -> cenv" effect (see the note on
-   "predefined_envs" above) - the "predefined_envs" analogue of
-   "store_antiq"/"get_antiq". Deliberately does *not* touch "idents"/
-   "types"/"c_antiq" at all: registering a header's effect is not the same
-   as applying it - that only happens via a later "#include". *)
-fun store_predefined_env (header, f) thy =
+(* Registers "header"'s own reusable "cenv -> cenv" effect, together with
+   "pos" (the "c11_predef [header] ..." command's own header-name token
+   position - see the note on "predefined_envs" above) - the
+   "predefined_envs" analogue of "store_antiq"/"get_antiq". Deliberately
+   does *not* touch "idents"/"types"/"c_antiq" at all: registering a
+   header's effect is not the same as applying it - that only happens via a
+   later "#include". *)
+fun store_predefined_env (header, pos, f) thy =
     let
        val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
-       val predefined_envs' = Symtab.update (header, f) predefined_envs
+       val predefined_envs' = Symtab.update (header, (pos, f)) predefined_envs
        val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq,
                         predefined_envs = predefined_envs', units = units}
     in thy |> Context.theory_map (put cenv')

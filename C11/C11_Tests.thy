@@ -474,54 +474,62 @@ text\<open>
   case), matching real C: a header's declarations are only in scope once it
   is genuinely included, not merely known about somewhere in the theory.
 
-  Four small, genuinely representative fragments below cover the common,
-  non-\<open>FILE\<close>-taking parts of \<open>stdio.h\<close> (\<open>printf\<close>/\<open>putchar\<close>/\<open>getchar\<close>/
-  \<open>puts\<close> need only built-in types; \<open>fopen\<close>/\<open>fprintf\<close> and friends need
-  \<open>FILE\<close>, out of scope - see below), all of \<open>stdlib.h\<close>'s allocation/exit/
-  conversion functions, \<open>errno.h\<close>'s \<open>errno\<close> plus two error-code constants,
-  and \<open>assert.h\<close>'s \<open>assert\<close> - written here as this fragment's simplified,
-  single-expression \<open>#define\<close> (\<open>\<section>\<close> "The Preprocessor Fragment" above), so
-  it registers and type-checks as a call, not with real assertion-failure
-  semantics (which would need a statement, not an expression).\<close>
-c11_predef [stdio.h] \<open>
-int printf(const char *format, ...);
-int putchar(int c);
-int getchar(void);
-int puts(const char *s);
-\<close>
-
-c11_predef [stdlib.h] \<open>
-void *malloc(unsigned long size);
-void *calloc(unsigned long nmemb, unsigned long size);
-void *realloc(void *ptr, unsigned long size);
-void free(void *ptr);
-void exit(int status);
-void abort(void);
-int atoi(const char *nptr);
-double atof(const char *nptr);
-\<close>
-
-c11_predef [errno.h] \<open>
-extern int errno;
-#define EDOM = 33
-#define ERANGE = 34
-\<close>
-
-c11_predef [assert.h] \<open>
-#define assert(expr) = expr
-\<close>
-
-text\<open>Hard, batch-checkable confirmation that \<open>c11_predef\<close> alone, with no
-  \<open>#include\<close> anywhere yet, really does leave \<open>idents\<close> untouched.\<close>
+  The four representative fragments this exercises - \<open>stdio.h\<close>, \<open>stdlib.h\<close>,
+  \<open>errno.h\<close>, \<open>assert.h\<close> - are no longer declared here: they now live in
+  \<^verbatim>\<open>C11.thy\<close> itself, right after \<open>c11_predef\<close> is defined, followed by
+  \<open>set_cenv_default\<close> - so they are already known before this test suite
+  (or any other theory importing \<^verbatim>\<open>C11.thy\<close>) even starts, as part of the
+  \<^emph>\<open>default\<close> \<open>cenv\<close> baseline. What follows here tests that mechanism, not
+  redeclares it.\<close>
+text\<open>Hard, batch-checkable confirmation that \<open>c11_predef\<close> defers its effect
+  until a genuine \<open>#include\<close> - and, since \<open>stdio.h\<close>/\<open>stdlib.h\<close>/\<open>errno.h\<close>/
+  \<open>assert.h\<close> are now declared once, in \<^verbatim>\<open>C11.thy\<close> itself, as part of the
+  \<^emph>\<open>default\<close> \<open>cenv\<close> baseline (\<open>\<section>\<close> above), \<^emph>\<open>every\<close> \<open>#include\<close> of one of
+  them anywhere in a theory built on \<^verbatim>\<open>C11.thy\<close> now genuinely works - not
+  just ones written after some local \<open>c11_predef\<close> block. \<open>stdio.h\<close>'s own
+  names are, in fact, \<^emph>\<open>already\<close> registered by this point - "A more
+  Comprehensive Program Text" above already wrote \<open>#include <stdio.h>\<close>,
+  long before this subsection, and it already worked, exactly because the
+  effect was known from the very start of this theory; that is direct,
+  positive evidence the default-baseline mechanism works end-to-end, not a
+  test failure. \<open>stdlib.h\<close>/\<open>errno.h\<close>/\<open>assert.h\<close>, never yet \<open>#include\<close>d
+  anywhere in this theory, are still genuinely deferred.\<close>
 ML\<open>
 val CEnv.mk {idents = idents_before_include, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents_before_include name of
+                SOME _ => ()
+              | NONE => error ("FAIL: " ^ name ^ " should already be registered, having been " ^
+                                "included via \"A more Comprehensive Program Text\" above"))
+    ["printf", "putchar", "getchar", "puts"]
+val _ =
+  List.app (fn name =>
+              case Symtab.lookup idents_before_include name of
                 NONE => ()
-              | SOME _ => error ("FAIL: " ^ name ^ " already registered before any #include"))
-    ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc", "free",
-     "exit", "abort", "atoi", "atof", "errno", "EDOM", "ERANGE", "assert"]
+              | SOME _ => error ("FAIL: " ^ name ^ " already registered before any #include of its header"))
+    ["malloc", "calloc", "realloc", "free", "exit", "abort", "atoi", "atof",
+     "errno", "EDOM", "ERANGE", "assert"]
+\<close>
+
+text\<open>The header name in a \<open>#include <header>\<close> is itself navigable - hard,
+  batch-checkable confirmation that \<open>predefined_envs\<close> stores a genuine
+  declaration position for \<open>stdio.h\<close> (its own \<open>c11_predef [stdio.h] ...\<close>
+  token, in \<^verbatim>\<open>C11.thy\<close>), not just the reusable effect - this is what lets
+  \<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case hyperlink a later
+  \<open>#include <stdio.h>\<close> straight back to where \<open>stdio.h\<close> was predefined,
+  exactly like an ordinary declaration/use pair.\<close>
+ML\<open>
+val CEnv.mk {predefined_envs, ...} = CEnv.get (Context.Theory @{theory})
+val _ =
+  case Symtab.lookup predefined_envs "stdio.h" of
+    NONE => error "FAIL: stdio.h not registered in predefined_envs at all"
+  | SOME (pos, _) =>
+      (case Position.file_of pos of
+         SOME file =>
+           if String.isSuffix "C11.thy" file then ()
+           else error ("FAIL: stdio.h's stored position points at " ^ file ^ ", expected C11.thy")
+       | NONE => error "FAIL: stdio.h's stored position carries no file at all")
 \<close>
 
 text\<open>Only once each header is actually \<open>#include\<close>d - here, in a single

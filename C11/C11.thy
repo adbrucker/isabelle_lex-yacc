@@ -441,9 +441,15 @@ fun reject_predef_implementations header (C_Ast.Units us) =
         us
   | reject_predef_implementations _ _ = () (* unreachable: "root" is already known to be "Units" *)
 
-fun run_c11_predef header source thy =
+fun run_c11_predef (header, header_pos) source thy =
     let
       val _ = C11_Comments.reset ()
+      (* Self-referential entity markup at the header-name token's own
+         position, exactly like an ordinary declaration ("report_decl") -
+         gives "c11_predef [stdio.h] ..." itself a hyperlink target for a
+         later "#include <stdio.h>" to resolve to (AnaEval.thy's
+         "walk_pp_directive"). *)
+      val _ = AnaEval.report_decl "C11 predefined header" header header_pos
       val ctxt = Proof_Context.init_global thy
       val typedef_snapshot = C11_Typedefs.snapshot ()
       val res = C11.parse_source ctxt source
@@ -473,7 +479,8 @@ fun run_c11_predef header source thy =
                "cenv" is discarded, matching that "c11_predef" itself never
                changes "idents"/"types". *)
             val _ = effect (CEnv.get (Context.Theory thy))
-            val (key, thy') = store_root root (CEnv.store_predefined_env (header, effect) thy)
+            val (key, thy') =
+              store_root root (CEnv.store_predefined_env (header, header_pos, effect) thy)
             val _ = writeln (string_of_root root ^ "  [predefined as " ^ quote header ^
                               ", stored as " ^ key ^ "]")
           in thy' end
@@ -481,7 +488,7 @@ fun run_c11_predef header source thy =
 
 val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
         "Declare a fragment of predefined C11 global variables/macros/function prototypes"
-        (Parse.$$$ "[" |-- Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
+        (Parse.$$$ "[" |-- Parse.position Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
           >> (fn (header, source) => Toplevel.theory (run_c11_predef header source)))
 
 (* Every "c11"-family command threads "cenv" (CEnv.thy) through the theory
@@ -640,5 +647,51 @@ val _ = Outer_Syntax.command @{command_keyword "c11_statement_reject"}
 
 end (* local open *)
 \<close>
+
+text\<open>Four small, genuinely representative predefined-header fragments
+  (\<open>c11_predef\<close>, above) - the common, non-\<open>FILE\<close>-taking parts of \<open>stdio.h\<close>
+  (\<open>fopen\<close>/\<open>fprintf\<close> and friends need \<open>FILE\<close>, out of scope), all of
+  \<open>stdlib.h\<close>'s allocation/exit/conversion functions, \<open>errno.h\<close>'s \<open>errno\<close>
+  plus two error-code constants, and \<open>assert.h\<close>'s \<open>assert\<close> (written here as
+  this fragment's simplified, single-expression \<open>#define\<close>, so it registers
+  and type-checks as a call, not with real assertion-failure semantics,
+  which would need a statement, not an expression) - declared here, in
+  \<^verbatim>\<open>C11.thy\<close> itself rather than in the test suite, precisely so
+  \<open>set_cenv_default\<close> (also above) can nominate the \<open>cenv\<close> that results -
+  standard antiquotation handlers already registered by \<^verbatim>\<open>AnaEval.thy\<close>,
+  plus these four headers' own reusable \<open>#include\<close> effects, with \<open>idents\<close>/
+  \<open>types\<close> themselves still empty (\<open>c11_predef\<close> never touches those
+  directly - only a later \<open>#include\<close> does) - as \<^emph>\<open>the\<close> default baseline
+  every downstream theory importing \<^verbatim>\<open>C11.thy\<close> gets for free, and that a
+  \<open>reset_cenv\<close> anywhere in such a theory returns to.\<close>
+c11_predef [stdio.h] \<open>
+int printf(const char *format, ...);
+int putchar(int c);
+int getchar(void);
+int puts(const char *s);
+\<close>
+
+c11_predef [stdlib.h] \<open>
+void *malloc(unsigned long size);
+void *calloc(unsigned long nmemb, unsigned long size);
+void *realloc(void *ptr, unsigned long size);
+void free(void *ptr);
+void exit(int status);
+void abort(void);
+int atoi(const char *nptr);
+double atof(const char *nptr);
+\<close>
+
+c11_predef [errno.h] \<open>
+extern int errno;
+#define EDOM = 33
+#define ERANGE = 34
+\<close>
+
+c11_predef [assert.h] \<open>
+#define assert(expr) = expr
+\<close>
+
+set_cenv_default
 
 end

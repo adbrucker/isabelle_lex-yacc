@@ -1195,11 +1195,21 @@ and walk_pp_directive cenv ctx (d : pos C_Ast.cPreprocDirective) : cenv * (int *
     val here = check_antiq cenv ctx ni
   in
     case d of
-      C_Ast.CPPInclude (_, header, _) =>
-        let val mk {predefined_envs, ...} = cenv in
+      C_Ast.CPPInclude (_, header, _, header_ni) =>
+        let
+          val use_range = name_range (header, C_Ast.pos_of_NodeInfo header_ni)
+          val mk {predefined_envs, ...} = cenv
+        in
           case Symtab.lookup predefined_envs header of
-            NONE => (cenv, here) (* no "c11_predef [header] ..." seen anywhere in scope: still purely syntactic *)
-          | SOME effect => (effect cenv, here)
+            NONE =>
+              (* No "c11_predef [header] ..." seen anywhere in scope: still purely
+                 syntactic, but now at least reported as unresolved (like a genuinely
+                 undeclared identifier) rather than silently ignored. *)
+              (Position.report use_range (Markup.bad ()); (cenv, here))
+          | SOME (decl_pos, effect) =>
+              (Position.report use_range
+                 (Position.entity_markup "C11 predefined header" (header, name_range (header, decl_pos)));
+               (effect cenv, here))
         end
     | C_Ast.CPPDefine (id as C_Ast.Ident (name, _, ident_ni), e, _) =>
         let

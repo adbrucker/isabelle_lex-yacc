@@ -1807,7 +1807,7 @@ preproc_directive:
         INCLUDE HEADER_NAME
            (let val system = String.isPrefix "<" HEADER_NAME
                 val name = String.substring (HEADER_NAME, 1, String.size HEADER_NAME - 2)
-            in CPPInclude (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright)) end)
+            in CPPInclude (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright), ndi HEADER_NAMEleft) end)
 |       DEFINE IDENTIFIER ASSIGN constant_expression
            (CPPDefine (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
                         ndi2 (DEFINEleft, constant_expressionright)))

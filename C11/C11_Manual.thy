@@ -326,12 +326,20 @@ text\<open>
   (\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case) - matching real C, where
   a header's declarations are only in scope once it is genuinely included,
   not merely known about somewhere in the theory. \<open>#include <stdio.h>\<close>
-  applies exactly the effect registered under the label \<open>stdio.h\<close>; a
-  header never declared via \<open>c11_predef\<close> anywhere in scope leaves
-  \<open>#include\<close> the no-op it always was. Once applied, a predefined name is
-  indistinguishable in \<open>cenv\<close> from one the theory declared itself: it
-  hyperlinks, participates in scoping, and can be the target of a struct/
-  union/enum tag or member lookup (\<open>\<section>2.2\<close>) exactly the same way.
+  applies exactly the effect registered under the label \<open>stdio.h\<close>, storing
+  the header-name token's own declaration position alongside that effect
+  (\<^verbatim>\<open>CEnv.predefined_envs\<close>) so \<open>stdio.h\<close> \<^emph>\<open>itself\<close>, in the \<open>#include\<close>
+  line, is now navigable - hyperlinking back to where it was predefined,
+  exactly like an ordinary declaration/use pair; a header never declared
+  via \<open>c11_predef\<close> anywhere in scope is instead underlined as unresolved
+  (\<^ML>\<open>Markup.bad ()\<close>), leaving \<open>#include\<close> the no-op it always was, but
+  now visibly so. Once applied, a predefined name is indistinguishable in
+  \<open>cenv\<close> from one the theory declared itself: it hyperlinks, participates
+  in scoping, and can be the target of a struct/union/enum tag or member
+  lookup (\<open>\<section>2.2\<close>) exactly the same way. \<open>stdio.h\<close>, \<open>stdlib.h\<close>,
+  \<open>errno.h\<close>, and \<open>assert.h\<close> are, in fact, predefined once, in
+  \<^verbatim>\<open>C11.thy\<close> itself (immediately followed by \<open>set_cenv_default\<close>, \<open>\<section>3\<close>),
+  so any theory built on it gets them for free.
 
   One thing is deliberately \<^emph>\<open>not\<close> provided, matching the "basic
   functionality" this command is scoped to: \<open>decl_list\<close> may only declare
@@ -411,21 +419,35 @@ c11_reject\<open>
 #define SQUARE(x) x * x
 \<close>
 
-text\<open>A predefined-header fragment, and its effect on a later use of one of
-  its names - once \<open>#include <stdio.h>\<close> actually applies it (a bare
-  \<open>#include\<close> is only meaningful as part of a translation unit, so this
-  needs a whole \<open>c11\<close> block, not a standalone \<open>c11_expr\<close>):\<close>
-c11_predef [stdio.h] \<open>
-int printf(const char *format, ...);
+text\<open>A predefined-header fragment of our own, and its effect on a later use
+  of one of its names - once \<open>#include <mymath.h>\<close> actually applies it (a
+  bare \<open>#include\<close> is only meaningful as part of a translation unit, so
+  this needs a whole \<open>c11\<close> block, not a standalone \<open>c11_expr\<close>).
+  \<open>stdio.h\<close>/\<open>stdlib.h\<close>/\<open>errno.h\<close>/\<open>assert.h\<close> need no such declaration here
+  at all any more - \<^verbatim>\<open>C11.thy\<close> itself already predefines all four, right
+  after \<open>c11_predef\<close> is defined, as part of the \<^emph>\<open>default\<close> \<open>cenv\<close> baseline
+  (\<open>\<section>2.2\<close>) - so \<open>printf\<close> below just works, out of the box.\<close>
+c11_predef [mymath.h] \<open>
+double square_root(double x);
 \<close>
 
 c11\<open>
 #include <stdio.h>
+#include <mymath.h>
 
 int greet(void) {
+  printf("%f\n", square_root(2.0));
   return printf("hello, %d\n", 42);
 }
 \<close>
+
+text\<open>The header name itself, in a \<open>#include\<close>, is navigable - hovering over
+  \<open>stdio.h\<close> above hyperlinks back to the \<open>c11_predef [stdio.h] ...\<close> token
+  in \<^verbatim>\<open>C11.thy\<close> that declared it, exactly like an ordinary declaration/use
+  pair (\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close> case); a header
+  \<open>#include\<close>d with no matching \<open>c11_predef\<close> anywhere in scope is
+  underlined as unresolved, exactly like a genuinely undeclared name,
+  rather than silently ignored.\<close>
 
 text\<open>\<open>set_cenv_default\<close>/\<open>reset_cenv\<close>: the snapshot below already includes
   everything declared above (\<open>max\<close>, \<open>printf\<close>, \<open>greet\<close>, \<open>\<dots>\<close>), so only
