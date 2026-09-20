@@ -146,17 +146,21 @@ text\<open>
   \<^emph>\<open>not\<close> a per-type member namespace in real C - they live in the ordinary
   \<open>idents\<close> table right alongside variables and functions (\<open>Enum\<close>), exactly
   like any other declared name. A struct/union member (\<open>pt.x\<close>, \<open>pp->y\<close>) is
-  resolved only for the common case - a bare variable as the base expression
-  (\<open>report_member_use\<close>, called from \<open>walk_expr\<close>'s \<open>CMember\<close> case): the base
-  variable's own stored declaration is re-scanned for a struct/union tag
-  among its declaration-specifiers (a \<^emph>\<open>direct\<close> \<open>struct point pt;\<close>-style
-  specifier only - a \<open>typedef\<close>'d struct name is not chased, since typedef
-  names are not tracked at all yet), that tag's registered member list is
-  searched for the field name, and the result is hyperlinked exactly like an
-  ordinary use - or left as \<^ML>\<open>Markup.bad ()\<close>, not an \<open>error\<close>, at any step
-  that cannot be resolved (an anonymous struct, a non-variable base
-  expression such as \<open>f().x\<close>, a member genuinely undeclared), matching
-  \<open>report_use\<close>'s own philosophy: unresolved is routine here, not fatal. A
+  resolved by \<open>report_member_use\<close> (called from \<open>walk_expr\<close>'s \<open>CMember\<close>
+  case) via \<open>base_specs_of_expr\<close> - a small, deliberately shallow form of
+  type inference that finds the declaration-specifiers describing the
+  base expression's type, chasing through a bare variable, a function
+  call's return type, an array index/pointer dereference/address-of (all
+  three sharing the indexed/pointed-to/pointee's own specifiers, since
+  derived-declarator shape - how many \<open>*\<close>/\<open>[]\<close> - is never inspected, only
+  ever declaration specifiers), a cast's own target type, or another,
+  chained member access (\<open>a.b.c\<close>, \<open>p->next->field\<close>) - and
+  \<open>member_decls_of_specs\<close> to chase those specifiers through any number of
+  \<open>typedef\<close>s to the real struct/union member list. Only a base expression
+  shape none of these cover (a binary/ternary/assignment expression, a
+  literal, \<open>\<dots>\<close>) falls back to \<^ML>\<open>Markup.bad ()\<close>, not an \<open>error\<close>, matching
+  \<open>report_use\<close>'s own philosophy: unresolved is routine here, not fatal - a
+  member genuinely undeclared on an otherwise-resolved type does too. A
   K&R old-style parameter list still registers each name as \<open>Local\<close> straight
   from the bare identifier, without cross-referencing the trailing old-style
   declaration list for its real type. \<open>analyse_and_eval\<close> itself is not yet
@@ -634,45 +638,111 @@ fun find_member_pos [] (_ : string) = NONE
   | find_member_pos (d :: ds) name =
       (case find_decl_pos d name of SOME p => SOME p | NONE => find_member_pos ds name)
 
+(* Like "find_member_pos", but returns the *declaration specifiers* of the
+   member's own containing "cDeclaration" instead of its position - what
+   "base_specs_of_expr" needs to keep chasing a chained member access
+   ("a.b.c"/"p->next->field") one step further: "b"'s own type (to resolve
+   ".c"/"->field" against) is exactly the specifiers of whichever member
+   declaration among "a"'s struct/union actually names "b". *)
+fun find_member_specs [] (_ : string) = NONE
+  | find_member_specs (C_Ast.CDecl (specs, entries, _) :: ds) name =
+      let
+        fun names_here ((declr_opt, _), _) =
+          case declr_opt of
+            NONE => false
+          | SOME declr => (case decl_name_pos declr of SOME (n, _) => n = name | NONE => false)
+      in if exists names_here entries then SOME specs else find_member_specs ds name end
+  | find_member_specs (C_Ast.CStaticAssert _ :: ds) name = find_member_specs ds name
+
+(* The declaration specifiers describing an arbitrary expression's declared
+   type, if this fragment's shallow view can assign it one at all - lets
+   "report_member_use" resolve a member access through more than just a
+   bare variable base. Deliberately as shallow as "member_decls_of_specs"
+   already is: derived-declarator shape (how many "*"/"[]" a variable's own
+   declarator carries) is never inspected, only ever declaration specifiers -
+   so "arr[0]"/"*p"/"&x" all simply recurse into their own base expression,
+   trusting (not checking) that it really has array/pointer type, exactly
+   matching how a bare "struct point *pp; pp->y;" already resolved before
+   this function existed. No soundness loss specific to this extension, only
+   the same, pre-existing one, now reached from more shapes:
+    - "CVar" (a bare variable) - the base case, exactly what
+      "report_member_use" handled inline before this function existed.
+    - "CCall" (a function call, "f(...).field") - the callee's own declared
+      *return* type is its own declaration specifiers (a function's specs
+      describe what it returns, not what it is - "CFunDeclr", the derived
+      declarator, is what makes it callable at all); recurses into "ef"
+      itself, almost always a bare "CVar" naming the function, so this
+      immediately bottoms out at the "CVar" case above. A function-pointer-
+      typed callee ("fp" dereferenced and called, then ".field") falls
+      through the final wildcard - resolving that would need to chase
+      through a "CFunDeclr" derived declarator, which "member_decls_of_specs"
+      does not do.
+    - "CIndex"/"CUnary (CIndOp, _, _)"/"CUnary (CAdrOp, _, _)" (an array
+      index, a pointer dereference, or address-of - "arr[0].field", "p"
+      dereferenced then ".field", "x"'s address then "->field") - the
+      element/pointee type shares the base's own declaration specifiers (see
+      above); recurses into the indexed/dereferenced/addressed expression
+      itself.
+    - "CCast" (a cast, "x" cast to a struct-point pointer then "->field") -
+      the type is exactly the cast's own target type; "x" itself is never
+      even inspected, matching real C (a cast overrides whatever "x" was).
+    - "CMember" (a chained access, "a.b.c", "p->next->field") - resolves
+      "a"'s own specs first, chases them (through any "typedef", via
+      "member_decls_of_specs") to "a"'s member list, and looks "b" up in
+      *that* via "find_member_specs" - so a following ".c"/"->field" is then
+      resolved against "b"'s own declared type, however deep the chain
+      goes (the recursion driving that is in "report_member_use" calling
+      this function repeatedly, not inside this function itself).
+    - Everything else (a binary/ternary/assignment expression, a literal, a
+      generic selection, \<open>\<dots>\<close>) - "NONE": genuinely not something this
+      fragment's shallow, specifiers-only view can assign a type to. *)
+fun base_specs_of_expr cenv (C_Ast.CVar (C_Ast.Ident (name, _, _), _)) =
+      let val mk {idents, ...} = cenv in
+        case Symtab.lookup idents name of
+          SOME (Global (C_Ast.CDecl (specs, _, _))) => SOME specs
+        | SOME (Local (C_Ast.CDecl (specs, _, _))) => SOME specs
+        | SOME (Parameter (C_Ast.CDecl (specs, _, _))) => SOME specs
+        | _ => NONE
+      end
+  | base_specs_of_expr cenv (C_Ast.CCall (ef, _, _)) = base_specs_of_expr cenv ef
+  | base_specs_of_expr cenv (C_Ast.CIndex (e1, _, _)) = base_specs_of_expr cenv e1
+  | base_specs_of_expr cenv (C_Ast.CUnary (C_Ast.CIndOp, e1, _)) = base_specs_of_expr cenv e1
+  | base_specs_of_expr cenv (C_Ast.CUnary (C_Ast.CAdrOp, e1, _)) = base_specs_of_expr cenv e1
+  | base_specs_of_expr _ (C_Ast.CCast (C_Ast.CDecl (specs, _, _), _, _)) = SOME specs
+  | base_specs_of_expr cenv (C_Ast.CMember (e1, C_Ast.Ident (name, _, _), _, _)) =
+      (case base_specs_of_expr cenv e1 of
+         NONE => NONE
+       | SOME specs =>
+           (case member_decls_of_specs cenv specs of
+              NONE => NONE
+            | SOME decls => find_member_specs decls name))
+  | base_specs_of_expr _ _ = NONE
+
 (* Resolves a "CMember" access ("e1.field"/"e1->field", the "->" vs "."
    distinction is irrelevant here - both name a field of the same underlying
    struct/union type) to the field's own declaration, if possible, and
    hyperlinks "field_pos" to it - the "idents"/"types" analogue of
-   "report_use" for the third, per-type C11 member namespace. Only resolves
-   the common case, "e1" a bare variable: falls back to \<^ML>\<open>Markup.bad ()\<close>
-   (not an \<open>error\<close>, matching "report_use"'s own philosophy) for every other
-   base expression shape (a function call, an array index, another member
-   access, \<open>\<dots>\<close>) - resolving those in general would need real type
-   inference, which this fragment does not have - or a field genuinely not
-   among the resolved type's own members. The base variable's type *is*
-   chased through any number of "typedef"s via "member_decls_of_specs" (a
-   real limitation this fragment used to have here - see its own note). *)
+   "report_use" for the third, per-type C11 member namespace, via
+   "base_specs_of_expr"/"member_decls_of_specs" for "e1"'s own type and
+   "find_member_pos" for "field_name" within it. Falls back to
+   \<^ML>\<open>Markup.bad ()\<close> (not an \<open>error\<close>, matching "report_use"'s own
+   philosophy) at any step that cannot be resolved - a base expression shape
+   "base_specs_of_expr" does not cover, or a field genuinely not among the
+   resolved type's own members. *)
 fun report_member_use cenv e1 (field_name, field_pos) =
   let val use_range = name_range (field_name, field_pos) in
-    case e1 of
-      C_Ast.CVar (C_Ast.Ident (base_name, _, _), _) =>
-        let val mk {idents, ...} = cenv in
-          case Symtab.lookup idents base_name of
-            NONE => Position.report use_range (Markup.bad ())
-          | SOME ik =>
-              (case (case ik of
-                       Global (C_Ast.CDecl (specs, _, _)) => SOME specs
-                     | Local  (C_Ast.CDecl (specs, _, _)) => SOME specs
-                     | Parameter (C_Ast.CDecl (specs, _, _)) => SOME specs
-                     | _ => NONE) of
-                 NONE => Position.report use_range (Markup.bad ())
-               | SOME specs =>
-                   (case member_decls_of_specs cenv specs of
-                      NONE => Position.report use_range (Markup.bad ())
-                    | SOME decls =>
-                        (case find_member_pos decls field_name of
-                           NONE => Position.report use_range (Markup.bad ())
-                         | SOME decl_pos =>
-                             Position.report use_range
-                               (Position.entity_markup "C11 struct/union member"
-                                 (field_name, name_range (field_name, decl_pos))))))
-        end
-    | _ => Position.report use_range (Markup.bad ())
+    case base_specs_of_expr cenv e1 of
+      NONE => Position.report use_range (Markup.bad ())
+    | SOME specs =>
+        (case member_decls_of_specs cenv specs of
+           NONE => Position.report use_range (Markup.bad ())
+         | SOME decls =>
+             (case find_member_pos decls field_name of
+                NONE => Position.report use_range (Markup.bad ())
+              | SOME decl_pos =>
+                  Position.report use_range
+                    (Position.entity_markup "C11 struct/union member"
+                      (field_name, name_range (field_name, decl_pos)))))
   end
 
 fun walk_exprs cenv ctx es acc =

@@ -576,23 +576,33 @@ text\<open>
     optional \<open>#else\<close>) are recognized as real AST nodes; the general \<open>#if\<close>/
     \<open>#elif\<close> constant-expression language, token pasting/stringizing, and
     \<open>_Pragma\<close> are out of scope.
-  \<^item> \<^bold>\<open>Member linking only resolves a bare-variable base.\<close> A struct/union/enum
+  \<^item> \<^bold>\<open>Member linking, and its real remaining bound.\<close> A struct/union/enum
     \<^emph>\<open>tag\<close> is tracked (\<open>type_ident\<close>, \<^verbatim>\<open>CEnv.thy\<close>) and hyperlinked like any
     other declared name, and an enum's own constants are registered into the
     ordinary namespace right alongside variables and functions. Resolving a
     member access \<open>e.field\<close>/\<open>e->field\<close> back to \<open>field\<close>'s own declaration
-    (\<open>AnaEval.report_member_use\<close>) only handles \<open>e\<close> a bare variable - but,
-    for that variable, \<open>AnaEval.member_decls_of_specs\<close> now chases its type
-    through any number of \<open>typedef\<close>s (via \<open>idents\<close>, recursively) to find
+    (\<open>AnaEval.report_member_use\<close>) goes through \<open>AnaEval.base_specs_of_expr\<close>
+    - a small, deliberately shallow form of type inference finding the
+    declaration-specifiers describing \<open>e\<close>'s own type - which now covers a
+    bare variable, a function call's return type (\<open>f().field\<close>), an array
+    index or pointer dereference or address-of (\<open>arr[0].field\<close>,
+    \<open>p->field\<close> via an explicit \<open>*p\<close>, \<open>(&x)->field\<close>), a cast's own target
+    type, and a chained member access itself (\<open>a.b.c\<close>, \<open>p->next->field\<close>) -
+    and, on whatever specifiers it finds, \<open>AnaEval.member_decls_of_specs\<close>
+    chases through any number of \<open>typedef\<close>s (via \<open>idents\<close>, recursively) to
     the real struct/union member list, including an inline, fully anonymous
     struct/union body (\<open>typedef struct { \<dots> } point_t;\<close>) - so
     \<open>report_member_use\<close> genuinely handles the same shapes
     \<open>c11_predef [setjmp.h]\<close>/\<open>c11_predef [stdarg.h]\<close> (\<open>\<section>2.6\<close>) already need
-    \<open>typedef\<close> support for. No other base expression shape is resolved
-    (\<open>f().field\<close>, \<open>arr[0].field\<close>, a chained \<open>a.b.c\<close>): all three still fall
-    back to unresolved markup rather than a hyperlink, exactly like a
-    genuinely undeclared name - resolving those in general would need real
-    type inference, which this fragment does not have.
+    \<open>typedef\<close> support for. What remains genuinely unresolved: a base
+    expression shape neither function covers (a binary/ternary/assignment
+    expression, a literal, a generic selection, \<open>\<dots>\<close> - there is no real type
+    system behind any of this, only specifiers-chasing), and a
+    function-pointer-typed call (\<open>(*fp)(...).field\<close> would need chasing
+    through a \<open>CFunDeclr\<close> derived declarator, which
+    \<open>member_decls_of_specs\<close> does not do) - both still fall back to
+    unresolved markup rather than a hyperlink, exactly like a genuinely
+    undeclared name.
   \<^item> \<^bold>\<open>\<open>typedef\<close> names, with two narrow gaps.\<close> \<open>C11_Typedefs\<close>
     (\<^verbatim>\<open>C11_Parser.thy\<close>) gives the lexer real "lexer hack" feedback: once a
     \<open>typedef\<close> declaration has been reduced, its name is recognized as
@@ -640,9 +650,8 @@ text\<open>
   of C11, suitable as the basis for a verification tool, a documentation
   generator, or a static analysis; what is documented in \<open>\<section>4\<close> as missing is,
   in every case, a scoping decision rather than an accident - room for a later
-  round to resolve member access through base expression shapes other than a
-  bare variable, broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s
-  own \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
+  round to broaden the preprocessor fragment, or grow \<open>select_ast\<close>'s own
+  \<open>children_of\<close> table (\<open>\<section>2.4\<close>) as concrete uses demand it.
 
   \pagebreak
 \<close>
@@ -771,5 +780,6 @@ text\<open>
   AST node's own \<open>nodeInfo\<close> claims them (\<open>\<section>2.3\<close>) after the fact, by
   position, rather than being parsed as part of any one production.
 \<close>
-
+(*>*)
 end
+(*<*)

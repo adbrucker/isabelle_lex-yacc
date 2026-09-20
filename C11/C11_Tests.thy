@@ -327,13 +327,16 @@ val _ =
     ["RED", "GREEN", "BLUE", "FOO", "BAR"]
 \<close>
 
-text\<open>Member linking (\<open>AnaEval.report_member_use\<close>) only resolves the common
-  case - a bare variable as the base expression - and falls back to
-  \<^ML>\<open>Markup.bad ()\<close>, not an \<open>error\<close>, for anything it cannot resolve: a
-  non-variable base (a function call), and a field name genuinely not among
-  the type's own members. Both are expected to succeed exactly like their
-  resolvable counterparts above - only the markup differs, not the
-  outcome.\<close>
+text\<open>Member linking (\<open>AnaEval.report_member_use\<close>) falls back to
+  \<^ML>\<open>Markup.bad ()\<close>, not an \<open>error\<close>, for anything it cannot resolve - a
+  field name genuinely not among the resolved type's own members, or (still,
+  even after the non-bare-variable-base extension below) a base expression
+  shape \<open>AnaEval.base_specs_of_expr\<close> does not cover at all (a binary
+  expression, say). Both are expected to succeed exactly like their
+  resolvable counterparts elsewhere in this theory - only the markup
+  differs, not the outcome. \<open>make_point().x\<close> itself is \<^emph>\<open>not\<close> such a case
+  any more (a function-call base, see the next subsection) - only
+  \<open>pt.not_a_real_field\<close> genuinely is here.\<close>
 c11\<open>
 struct point make_point(void);
 
@@ -398,6 +401,65 @@ val _ = check_members ("p", 2, "named-tag typedef (point_t -> struct point_s)")
 val _ = check_members ("t", 3, "anonymous-struct typedef (triple_t)")
 val _ = check_members ("q", 2, "typedef of a typedef (point_t2 -> point_t -> struct point_s)")
 val _ = check_members ("w", 1, "a direct (non-typedef) anonymous struct variable")
+\<close>
+
+subsection\<open>Member Linking Through Non-Bare-Variable Base Expressions\<close>
+text\<open>
+  \<open>AnaEval.base_specs_of_expr\<close> is what \<open>report_member_use\<close> now calls
+  first, to find the declaration-specifiers describing an arbitrary base
+  expression's type - a bare variable is only its simplest case. As with
+  the \<open>typedef\<close>-chasing tests above, \<open>report_member_use\<close> itself only ever
+  produces PIDE markup, so these tests call \<open>base_specs_of_expr\<close> (and,
+  on its result, the already-tested \<open>member_decls_of_specs\<close>) directly,
+  against small, hand-built expression values exercising each shape it
+  handles - reusing \<open>point_s\<close> (2 members, registered above) as the common
+  struct type throughout, so every check below shares the same expected
+  member count.\<close>
+c11\<open>
+struct point_s make_point2(void);
+struct point_s arr_of_points[5];
+struct point_s *pp_of_point;
+struct point_s plain_point_var;
+struct container_s { struct point_s inner; };
+struct container_s a_container;
+\<close>
+ML\<open>
+val cenv = CEnv.get (Context.Theory @{theory})
+val dummy_ni = C_Ast.OnlyPos Position.none
+fun mkvar name = C_Ast.CVar (C_Ast.Ident (name, 0, dummy_ni), dummy_ni)
+fun check_base_specs (descr, e) =
+  case AnaEval.base_specs_of_expr cenv e of
+    NONE => error ("FAIL: " ^ descr ^ " - base_specs_of_expr returned NONE")
+  | SOME specs =>
+      (case AnaEval.member_decls_of_specs cenv specs of
+         NONE => error ("FAIL: " ^ descr ^ " - member_decls_of_specs did not chase to a member list")
+       | SOME decls =>
+           if length decls = 2 then
+             writeln ("PASS: " ^ descr ^ " chased to the expected 2 member declarations")
+           else
+             error ("FAIL: " ^ descr ^ " chased to " ^ Int.toString (length decls) ^
+                    " member declaration(s), expected 2"))
+
+val _ = check_base_specs ("f().field - CCall, the callee's own return type",
+           C_Ast.CCall (mkvar "make_point2", [], dummy_ni))
+val _ = check_base_specs ("arr[0].field - CIndex, the element type (index expr itself unused)",
+           C_Ast.CIndex (mkvar "arr_of_points", mkvar "arr_of_points", dummy_ni))
+val _ = check_base_specs ("dereferenced-pointer.field - CUnary CIndOp, the pointee type",
+           C_Ast.CUnary (C_Ast.CIndOp, mkvar "pp_of_point", dummy_ni))
+val _ = check_base_specs ("addressed-variable->field - CUnary CAdrOp",
+           C_Ast.CUnary (C_Ast.CAdrOp, mkvar "plain_point_var", dummy_ni))
+val _ = check_base_specs ("cast-target->field - CCast, the cast's own type, not the operand's",
+           C_Ast.CCast
+             (C_Ast.CDecl
+                ([C_Ast.CTypeSpec
+                    (C_Ast.CSUType
+                       (C_Ast.CStruct (C_Ast.CStructTag,
+                          SOME (C_Ast.Ident ("point_s", 0, dummy_ni)), NONE, [], dummy_ni),
+                        dummy_ni))],
+                 [], dummy_ni),
+              mkvar "plain_point_var", dummy_ni))
+val _ = check_base_specs ("a.b.c - chained CMember, \"inner\"'s own declared type",
+           C_Ast.CMember (mkvar "a_container", C_Ast.Ident ("inner", 0, dummy_ni), false, dummy_ni))
 \<close>
 
 subsection\<open>\<open>c11_predef\<close>: a Basic Predefined-Header Mechanism\<close>
