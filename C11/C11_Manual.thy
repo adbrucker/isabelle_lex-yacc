@@ -470,7 +470,15 @@ text\<open>
     are otherwise identical - same lookup, same rendering, only the file
     suffix differs - so it is entirely the caller's own choice which stored
     sections belong in a \<open>.h\<close> versus a \<open>.c\<close>; a key that names nothing
-    currently stored is a checked error, not a silently empty file.
+    currently stored is a checked error, not a silently empty file. An
+    optional \<open>[verbatim]\<close> right after the command name - e.g.\ \<open>c11_export_h
+    [verbatim] \<open>path\<close> exports \<open>key\<close>\<close> - switches from \<^ML>\<open>C_Ast.pp_root\<close>'s
+    own rendering to the section's \<^emph>\<open>original\<close> source text instead, stored
+    alongside its AST for exactly this purpose: this project's
+    pretty-printer is deliberately simple - a fixed two-space indent, no
+    attempt at preserving the author's own layout or comments - so a user
+    who wants their own indentation, or their own comments, to survive into
+    the exported file asks for it back verbatim rather than re-rendered.
 \<close>
 
 text\<open>A whole translation unit, with declaration/use hyperlinking and a

@@ -760,9 +760,9 @@ val _ =
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
 text\<open>
   \<^verbatim>\<open>examples/\<close> vendors three files, unmodified, from the \<^verbatim>\<open>parser_menhir\<close>
-  C11 conformance test suite (via its copy in the Isabelle_C AFP entry, see
+  C11 conformance test suite (via its copy in the \<^verbatim>\<open>Isabelle_C\<close> AFP entry, see
   \<^verbatim>\<open>examples/README.md\<close> for provenance and license), the same files
-  Isabelle_C's own \<open>C0.thy\<close> exercises its lexer/parser against. None of them
+  \<^verbatim>\<open>Isabelle_C\<close>'s own \<open>C0.thy\<close> exercises its lexer/parser against. None of them
   use this fragment's unsupported constructs (real \<open>#define\<close>, \<open>#if\<close>/\<open>#elif\<close>,
   backslash-newline), so all three are expected to succeed here too - genuine,
   non-trivial C11 (compound literals, deeply nested declarators, anonymous
@@ -1008,7 +1008,7 @@ c11_reject\<open>
 int x;
 \<close>
 
-section\<open>Antiquotation-carrying Comments (cf. Isabelle_C's \<^verbatim>\<open>C1.thy\<close>)\<close>
+section\<open>Antiquotation-carrying Comments (cf. \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C1.thy\<close>)\<close>
 
 text\<open>
   \<open>analyse_and_eval\<close> (wired into \<open>run_c11_kind\<close> above) errors on any
@@ -1034,7 +1034,7 @@ setup\<open>dummy_antiq "ensures"\<close>
 
 text\<open>
   A line comment carrying a tag and a properly-nested cartouche, adapted from
-  Isabelle_C's own \<open>#include\<close> example (\<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close>). The
+  \<^verbatim>\<open>Isabelle_C\<close>'s own \<open>#include\<close> example (\<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close>). The
   lexer reports \<open>@setup\<close> and the cartouche as PIDE markup; \<open>analyse_and_eval\<close>
   dispatches it to the dummy handler just above.
 \<close>
@@ -1051,7 +1051,7 @@ int a = 0;
 \<close>
 
 text\<open>
-  A Frama-C/ACSL-style annotation comment (Isabelle_C's other supported style):
+  A Frama-C/ACSL-style annotation comment (\<^verbatim>\<open>Isabelle_C\<close>'s other supported style):
   each line is introduced by ACSL's own \<open>@\<close> continuation marker, followed by
   a bare keyword and a plain double-quoted string. Syntactically this is
   exactly the \<open>@tag "..."\<close> shape from above, so - now that a quoted string is
@@ -1338,6 +1338,40 @@ val _ =
   then () else error ("FAIL: pp_root's own rendering lost the function name:\n" ^ exported_text)
 \<close>
 
+text\<open>The \<open>[verbatim]\<close> export option instead hands back a section's own
+  \<^emph>\<open>original\<close> source text - stored alongside its AST in
+  \<^ML>\<open>CEnv.get_source\<close> for exactly this purpose - rather than
+  \<open>pp_root\<close>'s fixed, simple rendering above. The block below deliberately
+  uses irregular spacing no pretty-printer would ever produce, to confirm
+  \<open>get_source\<close> returns it back byte-for-byte, and that it genuinely
+  differs from \<open>pp_root\<close>'s own output on the very same stored section -
+  otherwise this test would not actually be distinguishing the two.\<close>
+c11\<open>
+int      c11_export_verbatim_test  ( int x )
+{
+        return    x  +   1 ;
+}
+\<close>
+ML\<open>
+val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
+val verbatim_test_key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val original_text =
+  case CEnv.get_source verbatim_test_key @{theory} of
+    SOME text => text
+  | NONE => error ("FAIL: nothing stored under " ^ verbatim_test_key ^ " right after parsing it")
+val _ =
+  if String.isSubstring "int      c11_export_verbatim_test  ( int x )" original_text
+  then () else error ("FAIL: get_source lost the original, irregularly-spaced text:\n" ^ original_text)
+val pretty_text =
+  case CEnv.get_ast verbatim_test_key @{theory} of
+    SOME root => C_Ast.pp_root root
+  | NONE => error "unreachable: get_ast disagrees with get_source about what was stored"
+val _ =
+  if original_text = pretty_text
+  then error "FAIL: verbatim and pretty-printed text unexpectedly coincide"
+  else ()
+\<close>
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more
@@ -1538,10 +1572,10 @@ val _ =
     else error ("leaf-error test: unexpected error message: " ^ msg)
 \<close>
 
-section\<open>Comment Nesting (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+section\<open>Comment Nesting (cf. \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C0.thy\<close>)\<close>
 
 text\<open>
-  Adapted from Isabelle_C's own comment-nesting example, which follows
+  Adapted from\<^verbatim>\<open>Isabelle_C\<close>'s own comment-nesting example, which follows
   \<^url>\<open>https://gcc.gnu.org/onlinedocs/cpp/Initial-processing.html\<close>: a \<open>/* */\<close>
   comment does \<^emph>\<open>not\<close> nest, so the first \<open>*/\<close> closes it - the code after is
   live, not still-commented-out. \<open>c11\<close> succeeding on this is itself the test.
@@ -1558,10 +1592,10 @@ inside
 int d = 4;
 \<close>
 
-section\<open>What Falls Outside This Fragment (cf. Isabelle_C's \<^verbatim>\<open>C0.thy\<close>)\<close>
+section\<open>What Falls Outside This Fragment (cf. \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C0.thy\<close>)\<close>
 
 text\<open>
-  Isabelle_C's directive/macro stress tests use the real C preprocessor's
+  \<^verbatim>\<open>Isabelle_C\<close>'s directive/macro stress tests use the real C preprocessor's
   \<open>#define\<close> (juxtaposed replacement-list, no \<open>=\<close>) and general \<open>#if\<close>/\<open>#elif\<close>,
   neither of which this simplified fragment implements (this theory's own
   \<open>#define name = expr\<close> and \<open>#ifdef\<close>/\<open>#ifndef\<close> only). \<open>c11_reject\<close> documents

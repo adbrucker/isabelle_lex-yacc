@@ -35,7 +35,7 @@ theory C11
   and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
   and      "set_cenv_default" "reset_cenv" :: thy_decl
   and      "c11_export_h" "c11_export_c" :: thy_decl
-  and      "exports"
+  and      "exports" "verbatim"
 begin
 
 text\<open>
@@ -305,13 +305,13 @@ fun require_kind check kind_name cmd_name root =
    of doing real document output - the same wall, confirmed by inspection,
    not merely inferred). The Manual's own Limitations section (\<open>\<section>4\<close>)
    documents this. *)
-fun full_eval_and_store root thy =
+fun full_eval_and_store root text thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
       val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
       val context_for_store = fold (fn (_, f) => f) sorted_evals (Context.Theory thy')
       val thy_for_store = Context.theory_of context_for_store
-      val (key, thy'') = store_root root thy_for_store
+      val (key, thy'') = store_root root text thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
     in thy'' end
 
@@ -338,7 +338,7 @@ fun run_c11_kind check kind_name cmd_name source thy =
           let
             val root = require_kind check kind_name cmd_name root
             val _ = AnaEval.analyse_and_eval root thy
-            val (key, thy'') = store_root root thy
+            val (key, thy'') = store_root root (Input.text_of source) thy
             val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
           in thy'' end
     end
@@ -354,7 +354,7 @@ fun run_c11 source thy =
         NONE => (C11_Typedefs.restore typedef_snapshot; error "c11: no result")
       | SOME root0 =>
           let val root = require_kind is_units "translation unit" "c11" root0
-          in full_eval_and_store root thy end
+          in full_eval_and_store root (Input.text_of source) thy end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
@@ -430,7 +430,7 @@ fun run_c11_file get_file thy =
         NONE => (C11_Typedefs.restore typedef_snapshot; error "c11_file: no result")
       | SOME root =>
           let val root = require_kind is_units "translation unit" "c11_file" root
-          in full_eval_and_store root thy end
+          in full_eval_and_store root (Input.text_of source) thy end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
@@ -527,7 +527,8 @@ fun run_c11_predef (header, header_pos) source thy =
                changes "idents"/"types". *)
             val _ = effect (CEnv.get (Context.Theory thy))
             val (key, thy') =
-              store_root root (CEnv.store_predefined_env (header, header_pos, effect) thy)
+              store_root root (Input.text_of source)
+                (CEnv.store_predefined_env (header, header_pos, effect) thy)
             val _ = writeln (string_of_root root ^ "  [predefined as " ^ quote header ^
                               ", stored as " ^ key ^ "]")
           in thy' end
@@ -626,31 +627,53 @@ val _ = Outer_Syntax.command @{command_keyword "reset_cenv"}
    text for the very same key, the only difference is which of the two
    files it lands in. Matches this project's usual "small, self-contained
    demonstrator" bar (\<open>\<section>2.5\<close>'s own note on the standard antiquotations)
-   rather than attempting a production-grade C project generator. *)
-fun run_c11_export suffix (path, keys) thy =
+   rather than attempting a production-grade C project generator.
+
+   The optional "[verbatim]" modifier switches the rendering from
+   "C_Ast.pp_root" to the section's own original source text, stored
+   alongside its AST for exactly this purpose ("CEnv.get_source",
+   "CEnv.thy"'s own "Source_Store" - written once, in "store_root", from
+   "Input.text_of" at every "c11"/"c11_file"/"c11_ident"/"c11_expr"/
+   "c11_statement"/"c11_predef" call site, so it is always present whenever
+   "get_ast" is): this project's own pretty-printer is admittedly "simple"
+   (\<^verbatim>\<open>c_ast.ML\<close>'s own doc comment on "pp_root") - a fixed two-space
+   indent, no attempt at preserving the author's own layout, comments, or
+   \<open>@tag \<open>...\<close>\<close> antiquotations (those are stripped away during parsing, not
+   part of the AST at all) - so a user who cares about a specific
+   indentation, or wants their own comments to survive into the exported
+   file, asks for their own text back verbatim instead. *)
+fun run_c11_export suffix (verbatim, path, keys) thy =
     let
       val out_path = Path.append (Resources.master_directory thy) (Path.explode (path ^ suffix))
       fun text_of key =
-        case CEnv.get_ast key thy of
-          SOME root => C_Ast.pp_root root
-        | NONE => error ("no stored c11 section named " ^ quote key ^
-                          " (expected one of the \"[stored as ...]\" keys c11/c11_file/\<dots> report)")
+        if verbatim
+        then
+          (case CEnv.get_source key thy of
+             SOME text => text
+           | NONE => error ("no stored c11 section named " ^ quote key ^
+                             " (expected one of the \"[stored as ...]\" keys c11/c11_file/\<dots> report)"))
+        else
+          (case CEnv.get_ast key thy of
+             SOME root => C_Ast.pp_root root
+           | NONE => error ("no stored c11 section named " ^ quote key ^
+                             " (expected one of the \"[stored as ...]\" keys c11/c11_file/\<dots> report)"))
       val _ = File.write out_path (space_implode "\n\n" (map text_of keys) ^ "\n")
       val _ = writeln ("Exported " ^ Int.toString (length keys) ^ " section(s) to " ^
                         Path.print out_path)
     in thy end
 
-val export_keys = Parse.$$$ "exports" |-- Parse.!!! (Scan.repeat1 Parse.string)
+val export_args =
+  Scan.optional (Parse.$$$ "[" |-- Parse.$$$ "verbatim" --| Parse.$$$ "]" >> K true) false --
+    Parse.path -- (Parse.$$$ "exports" |-- Parse.!!! (Scan.repeat1 Parse.string))
+  >> (fn ((verbatim, path), keys) => (verbatim, path, keys))
 
 val _ = Outer_Syntax.command @{command_keyword "c11_export_h"}
         "Export the given stored c11 section(s) as C source text into a .h file"
-        (Parse.path -- export_keys >>
-          (fn args => Toplevel.theory (run_c11_export ".h" args)))
+        (export_args >> (fn args => Toplevel.theory (run_c11_export ".h" args)))
 
 val _ = Outer_Syntax.command @{command_keyword "c11_export_c"}
         "Export the given stored c11 section(s) as C source text into a .c file"
-        (Parse.path -- export_keys >>
-          (fn args => Toplevel.theory (run_c11_export ".c" args)))
+        (export_args >> (fn args => Toplevel.theory (run_c11_export ".c" args)))
 
 (* C11.parse_source (generated by the `linker` template in YaccLib.thy)
    always delegates to Isabelle_lex_yacc.parse_source, which hard-codes

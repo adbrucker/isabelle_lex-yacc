@@ -46,7 +46,12 @@ text\<open>
   unit_number)\<close> - encoded as one \<^verbatim>\<open>Symtab\<close> key, since \<^verbatim>\<open>Symtab.table\<close> is
   string-keyed - to the \<^verbatim>\<open>Position.T root\<close> that one of the \<open>c11\<close>/\<open>c11_file\<close>/
   \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> commands parsed there; see \<open>store_root\<close>,
-  below, for the key format and the counter update. \<^verbatim>\<open>Env\<close> and \<^verbatim>\<open>Ast_Store\<close> are
+  below, for the key format and the counter update. \<^verbatim>\<open>Source_Store\<close>, a
+  sibling table keyed the same way, holds each of those commands' own
+  verbatim source text alongside its AST - written together with
+  \<^verbatim>\<open>Ast_Store\<close> by the very same \<open>store_root\<close> call, so the two never drift
+  out of sync - for \<open>c11_export_h\<close>/\<open>c11_export_c\<close>'s \<open>[verbatim]\<close> option
+  (\<open>\<section>3\<close>) to hand back later. \<^verbatim>\<open>Env\<close> and \<^verbatim>\<open>Ast_Store\<close> are
   declared as \<^emph>\<open>sibling\<close> substructures of \<^verbatim>\<open>CEnv\<close> - not \<^verbatim>\<open>Ast_Store\<close> nested inside
   a structure also named \<^verbatim>\<open>Env\<close> or vice versa, and neither named \<^verbatim>\<open>CEnv\<close> itself -
   which would self-shadow; \<^verbatim>\<open>get\<close>/\<^verbatim>\<open>put\<close> re-export \<^verbatim>\<open>Env\<close>'s own
@@ -203,6 +208,21 @@ structure Ast_Store = Generic_Data
    val  empty = Symtab.empty
    val  merge = Symtab.merge (K true))
 
+(* The verbatim source text of every "c11"-family fragment, keyed by the very
+   same "ast_store_key" as "Ast_Store" itself (updated alongside it, in
+   "store_root", so the two tables never drift apart) - kept as a *separate*
+   sibling table rather than folded into "Ast_Store"'s own value type, so
+   every existing "get_ast" caller (AnaEval.thy's header hyperlink,
+   C11_Tests.thy's own tests) keeps matching on a bare "Position.T C_Ast.root"
+   and does not have to unpack a pair it never wanted. Exists purely for
+   "c11_export_h"/"c11_export_c [verbatim]" (C11.thy): a user may want their
+   own original indentation/formatting back, not this project's own
+   admittedly "simple" pretty-printer's ("C_Ast.pp_root") rendering of it. *)
+structure Source_Store = Generic_Data
+  (type T = string Symtab.table
+   val  empty = Symtab.empty
+   val  merge = Symtab.merge (K true))
+
 (* Deliberately not re-exporting "Env.map" under the bare name "map": every
    caller of this structure via "open CEnv" would then have the ubiquitous
    "List.map"/Basis "map" silently shadowed by "Generic_Data"'s very
@@ -218,9 +238,11 @@ val put = Env.put
 fun ast_store_key thy unit_no =
   Context.theory_name {long = false} thy ^ "#" ^ Int.toString unit_no
 
-(* Stores "root" under a fresh unit number for "thy", bumping CEnv's counter.
+(* Stores "root" - together with its own verbatim source "text", the exact
+   cartouche/file text it was parsed from ("Input.text_of source" at every
+   call site) - under a fresh unit number for "thy", bumping CEnv's counter.
    Returns the store key (for user-facing reporting) and the updated theory. *)
-fun store_root (root : Position.T C_Ast.root) thy =
+fun store_root (root : Position.T C_Ast.root) (text : string) thy =
     let
       val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
       val key = ast_store_key thy units
@@ -229,10 +251,19 @@ fun store_root (root : Position.T C_Ast.root) thy =
       val thy' = thy
         |> Context.theory_map (put cenv')
         |> Context.theory_map (Ast_Store.map (Symtab.update (key, root)))
+        |> Context.theory_map (Source_Store.map (Symtab.update (key, text)))
     in (key, thy') end
 
 fun get_ast key thy =
     let val store = Ast_Store.get (Context.Theory thy)
+    in  Symtab.lookup store key end
+
+(* The verbatim source text stored alongside "key"'s own AST (see
+   "Source_Store" above) - always present exactly when "get_ast key thy" is
+   "SOME _", since "store_root" is the only way either table is ever written
+   and it always writes both under the same key in the same call. *)
+fun get_source key thy =
+    let val store = Source_Store.get (Context.Theory thy)
     in  Symtab.lookup store key end
 
 fun store_antiq (name, antiq_fun) thy =
