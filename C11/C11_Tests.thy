@@ -1312,6 +1312,32 @@ int test_lemma_anchor;
 
 thm test_lemma_anchor_fact
 
+subsection\<open>Exporting Stored Sections\<close>
+text\<open>\<open>c11_export_h\<close>/\<open>c11_export_c\<close> (\<open>\<section>3\<close>) render a stored section's AST back
+  to genuine C source text via \<^ML>\<open>C_Ast.pp_root\<close> and write it to a
+  \<open>.h\<close>/\<open>.c\<close> file - the real, end-to-end command syntax (\<open>c11_export_h
+  \<open>path\<close> exports \<open>key\<close> \<open>\<dots>\<close>\<close>, including its "no such stored section"
+  error) was verified in an isolated probe session, kept out of this
+  regression suite since it writes real files to disk. What \<^emph>\<open>is\<close> checked
+  here, at the ML level and with a dynamically computed store key (exactly
+  like the header-range test above, and for the same reason - a hardcoded
+  unit number would silently go stale the moment an earlier test is added
+  or removed), is the data layer both commands are built from: that
+  \<^ML>\<open>CEnv.get_ast\<close> genuinely retrieves what was just stored, and that
+  \<^ML>\<open>C_Ast.pp_root\<close> renders it back into recognisable C source text.\<close>
+c11\<open>int c11_export_test(int x) { return x + 1; }\<close>
+ML\<open>
+val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
+val export_test_key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val exported_text =
+  case CEnv.get_ast export_test_key @{theory} of
+    SOME root => C_Ast.pp_root root
+  | NONE => error ("FAIL: nothing stored under " ^ export_test_key ^ " right after parsing it")
+val _ =
+  if String.isSubstring "c11_export_test" exported_text
+  then () else error ("FAIL: pp_root's own rendering lost the function name:\n" ^ exported_text)
+\<close>
+
 subsection\<open>Navigation Strings in Antiquotations\<close>
 text\<open>
   An antiquotation may carry a navigation string - zero or more

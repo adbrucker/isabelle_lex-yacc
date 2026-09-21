@@ -460,6 +460,17 @@ text\<open>
     per-\<open>typedef\<close>-name lexer table (\<open>\<section>4\<close>'s \<open>typedef\<close> item) - only the
     symbolic environment used for hyperlinking and member-/type-chasing is
     reset.
+  \<^descr> \<open>c11_export_h \<open>path\<close> exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> and \<open>c11_export_c \<open>path\<close>
+    exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> render one or more previously stored sections
+    - given by the same store keys every accepting command above reports
+    ("[stored as \<open>\<dots>\<close>]") - back to genuine C source text via
+    \<^ML>\<open>C_Ast.pp_root\<close>, and write the concatenated result to \<open>path.h\<close> /
+    \<open>path.c\<close> respectively (\<open>path\<close> resolved relative to the theory's master
+    directory, exactly like \<open>c11_file\<close>'s own argument). The two commands
+    are otherwise identical - same lookup, same rendering, only the file
+    suffix differs - so it is entirely the caller's own choice which stored
+    sections belong in a \<open>.h\<close> versus a \<open>.c\<close>; a key that names nothing
+    currently stored is a checked error, not a silently empty file.
 \<close>
 
 text\<open>A whole translation unit, with declaration/use hyperlinking and a
