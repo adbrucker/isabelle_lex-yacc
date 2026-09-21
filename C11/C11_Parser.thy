@@ -36,7 +36,7 @@ text\<open>
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
   standard. Semantic actions build a real abstract syntax tree, defined in
-  \<^verbatim>\<open>c_ast.ML\<close> (a hand-pruned port of the Isabelle_C AFP entry's own C11 AST) and
+  \<^verbatim>\<open>c_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
   instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
   \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which carries
   not just a position but also, where present, the source comments and \<open>@tag \<open>...\<close>\<close>
@@ -106,24 +106,24 @@ section\<open>Relation to Isabelle/C (AFP)\<close>
 
 text\<open>
   This theory is a small-scale, from-scratch counterpart to the
-  \<^emph>\<open>Isabelle_C\<close> AFP entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
+  \<^verbatim>\<open>Isabelle_C\<close> AFP entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
   which provides a full C11/C18 front-end for Isabelle built around its \<^emph>\<open>own\<close>
   hand-written, PIDE-integrated incremental lexer/parser (\<^verbatim>\<open>C_Lex\<close>, \<^verbatim>\<open>C_Parser\<close>,
-  \<^verbatim>\<open>C_Grammar_Rule\<close>, \<open>\<dots>\<close>). This theory deliberately does \<^emph>\<open>not\<close> depend on Isabelle_C
+  \<^verbatim>\<open>C_Grammar_Rule\<close>, \<open>\<dots>\<close>). This theory deliberately does \<^emph>\<open>not\<close> depend on \<^verbatim>\<open>Isabelle_C\<close>
   or its machinery; the point is to see how far the same \<^emph>\<open>user-facing shape\<close> can be
   reproduced on top of the generic, off-the-shelf \<^verbatim>\<open>ml_lex_yacc\<close> command of this
   \<^verbatim>\<open>Isabelle_Lex-Yacc\<close> framework instead - i.e. plain ml-lex/ml-yacc, not a bespoke
-  parser combinator. Three aspects of Isabelle_C's interface are mirrored here, each
+  parser combinator. Three aspects of \<^verbatim>\<open>Isabelle_C\<close>'s interface are mirrored here, each
   necessarily only a syntactic sliver of the original:
 
-  \<^enum> \<^bold>\<open>Inline and file-based entry points.\<close> Isabelle_C's \<^verbatim>\<open>C \<open>...\<close>\<close> command (inline
+  \<^enum> \<^bold>\<open>Inline and file-based entry points.\<close> \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C \<open>...\<close>\<close> command (inline
     source) and \<^verbatim>\<open>C_file \<open>path\<close>\<close> command (external \<open>.c\<close> file, read relative to the
     theory's master directory) correspond here to \<open>c11 \<open>...\<close>\<close> and \<open>c11_file \<open>path\<close>\<close>
     below - the latter built directly on \<^verbatim>\<open>Resources.parse_file\<close> /
     \<^verbatim>\<open>Token.file_source\<close>, the same Isabelle/Pure machinery used by the built-in
     \<^verbatim>\<open>ML_file\<close>/\<^verbatim>\<open>SML_file\<close> commands, so that file positions and build-dependency
     tracking come for free.
-  \<^enum> \<^bold>\<open>Antiquotation-carrying comments.\<close> Isabelle_C lets \<open>/*@ \<dots> */\<close> and \<open>//@ \<dots>\<close>
+  \<^enum> \<^bold>\<open>Antiquotation-carrying comments.\<close> \<^verbatim>\<open>Isabelle_C\<close> lets \<open>/*@ \<dots> */\<close> and \<open>//@ \<dots>\<close>
     comments carry Isar-level \<^emph>\<open>annotation commands\<close> (\<open>ensures\<close>, \<open>invariant\<close>, a
     user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax tree
     and executed as the file is processed. Here, the lexer instead \<^emph>\<open>lexically\<close>
@@ -173,7 +173,7 @@ text\<open>
     pattern silently compiled to matching the six-character angle-bracketed name alone,
     missing its leading backslash - invisible before now because the antiquotation content
     it should have captured was simply discarded either way.
-  \<^enum> \<^bold>\<open>The lexer test suite.\<close> Isabelle_C's own lexer/parser stress tests live in
+  \<^enum> \<^bold>\<open>The lexer test suite.\<close> \<^verbatim>\<open>Isabelle_C\<close>'s own lexer/parser stress tests live in
     \<^verbatim>\<open>C11-FrontEnd/examples/C0.thy\<close> (obfuscated/adversarial C, comment nesting,
     preprocessor directives, and a battery of real-world \<open>.c\<close> files borrowed from the
     \<^verbatim>\<open>parser_menhir\<close> C11 conformance suite) and \<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close> (AST

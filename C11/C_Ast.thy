@@ -32,7 +32,7 @@ begin
 
 text\<open>
   Just the C11 abstract syntax tree (structure \<^verbatim>\<open>C_Ast\<close>, a hand-pruned port of
-  the Isabelle_C AFP entry's own C11 AST - see \<^verbatim>\<open>c_ast.ML\<close> itself for the full
+  the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST - see \<^verbatim>\<open>c_ast.ML\<close> itself for the full
   provenance/pruning notes), with none of the lex/yacc grammar that builds it.
   Kept as its own theory, importing nothing beyond \<^verbatim>\<open>Main\<close>, so that anything
   which only needs the \<^emph>\<open>types\<close> - \<^verbatim>\<open>CEnv.thy\<close>, in particular, which stores
