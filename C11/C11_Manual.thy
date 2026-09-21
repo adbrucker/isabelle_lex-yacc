@@ -127,15 +127,19 @@ text\<open>
 subsection\<open>The C-Environment, and Declaration/Use Navigation\<close>
 
 text\<open>
-  \<^verbatim>\<open>CEnv.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table (\<open>idents\<close>,
-  currently variables/functions/parameters/preprocessor constants/macros/enum
-  constants; \<open>types\<close>, the separate struct/union/enum \<^emph>\<open>tag\<close> namespace,
-  \<open>\<section>2.6\<close> is not the only reader of it - \<open>\<section>4\<close>'s member-linking item also
-  depends on it directly; a registry of antiquotation handlers, \<open>c_antiq\<close>,
-  \<open>\<section>2.3\<close>; \<open>predefined_envs\<close>, \<open>\<section>2.6\<close>'s reusable per-header effects; and a
-  per-theory AST unit counter) - stored as ordinary \<^verbatim>\<open>Generic_Data\<close>, so it
-  persists across commands within one theory and merges correctly under
-  Isabelle's parallel, incremental checking.
+  \<^verbatim>\<open>CEnv.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table stored as ordinary
+  \<^verbatim>\<open>Generic_Data\<close>, so it persists across commands within one theory and merges 
+  correctly under Isabelle's parallel, incremental checking. The \<open>cenv\<close> keeps track of:
+
+   \<^enum> \<open>idents\<close>, currently variables/functions/parameters/preprocessor constants/macros/enum  
+     constants; 
+   \<^enum> \<open>types\<close>, the separate struct/union/enum \<^emph>\<open>tag\<close> namespace,
+     \<open>\<section>2.6\<close> is not the only reader of it - \<open>\<section>4\<close>'s member-linking item also
+  depends on it directly;
+   \<^enum> a registry of antiquotation handlers, \<open>c_antiq\<close>, \<open>\<section>2.3\<close>; \<open>predefined_envs\<close>, 
+     \<open>\<section>2.6\<close>'s reusable per-header effects; and 
+   \<^enum> a per-theory AST unit counter) used for generic names of c-sections 
+     processed by a c11-command.  
 
   \<^verbatim>\<open>AnaEval.thy\<close>'s \<open>analyse_and_eval\<close> is a single, purely functional, scoped
   walk over a parsed root that populates \<open>cenv\<close> as it goes: entering a function
