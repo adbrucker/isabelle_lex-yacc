@@ -1,3 +1,8 @@
 *#
 *~
 output
+
+# c11_export_h/c11_export_c output (C11/*.thy worked examples regenerate
+# these on every build) - not C11/examples/*.c, which are genuine fixtures
+/C11/*.c
+/C11/*.h
