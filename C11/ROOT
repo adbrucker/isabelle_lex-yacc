@@ -17,6 +17,7 @@ session "C11" (AFP) = HOL +
     SelectionSort (* imports AntiqProbe, not just C11 - see its own header comment *)
     BinarySearch (* imports SelectionSort, not just C11 - see its own header comment *)
   theories
+    C11 (global)
     C11_Manual
   document_files
     "root.tex"

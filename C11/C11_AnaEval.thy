@@ -1551,7 +1551,8 @@ val definition_antiq =
             else error ("definition antiquotation: " ^ Runtime.exn_message exn ^
                          Position.here (AnaEval.pos_of_root c_ast))
         val lthy' =
-          #2 (Specification.definition_cmd decl params prems spec false (Named_Target.theory_init thy))
+          #2 (Specification.definition_cmd {verbose = false} decl params prems spec
+                (Named_Target.theory_init thy))
       in Local_Theory.exit_global lthy' end
   in CEnv.store_antiq ("definition", CEnv.lift_theory_antiq probe) end
 
@@ -1605,7 +1606,8 @@ val lemma_antiq =
         val ((binding, elems, concl), (m1, m2)) =
           Parse.read_embedded ctxt keywords parser source handle exn => fail exn
         val lthy' =
-          (Specification.theorem_cmd false Thm.theoremK NONE (K I) binding [] elems concl false
+          (Specification.theorem_cmd {verbose = false, long = false, kind = Thm.theoremK}
+             NONE (K I) binding [] elems concl
              (Named_Target.theory_init thy)
            |> tap (fn _ => (Method.report m1; Option.map Method.report m2 |> ignore))
            |> Proof.global_terminal_proof (m1, m2))

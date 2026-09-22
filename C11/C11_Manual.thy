@@ -924,6 +924,6 @@ text\<open>
   AST node's own \<open>nodeInfo\<close> claims them (\<open>\<section>2.3\<close>) after the fact, by
   position, rather than being parsed as part of any one production.
 \<close>
-(*>*)
-end
 (*<*)
+end
+(*>*)
