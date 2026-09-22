@@ -16,6 +16,7 @@ session "C11" (AFP) = HOL +
     AntiqProbe
     SelectionSort (* imports AntiqProbe, not just C11 - see its own header comment *)
     BinarySearch (* imports SelectionSort, not just C11 - see its own header comment *)
+    MergeSort (* imports BinarySearch, not just C11 - see its own header comment *)
   theories
     C11 (global)
     C11_Manual
