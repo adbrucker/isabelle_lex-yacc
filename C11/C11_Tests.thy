@@ -75,8 +75,8 @@ c11\<open>
 #include <stdio.h>
 #include "local_header.h"
 
-#define MAX_SIZE = 100
-#define SQUARE(x) = x * x
+#define MAX_SIZE 100
+#define SQUARE(x) x * x
 
 #ifdef MAX_SIZE
 int buffer[MAX_SIZE];
@@ -194,8 +194,8 @@ text\<open>
   \<^ML>\<open>Markup.bad ()\<close> instead of a hyperlink.
 \<close>
 c11\<open>
-#define ANSWER = 42
-#define DOUBLE(x) = x * 2
+#define ANSWER 42
+#define DOUBLE(x) x * 2
 
 int use_constant(void) {
   return ANSWER + 1;
@@ -1596,13 +1596,18 @@ section\<open>What Falls Outside This Fragment (cf. \<^verbatim>\<open>Isabelle_
 
 text\<open>
   \<^verbatim>\<open>Isabelle_C\<close>'s directive/macro stress tests use the real C preprocessor's
-  \<open>#define\<close> (juxtaposed replacement-list, no \<open>=\<close>) and general \<open>#if\<close>/\<open>#elif\<close>,
+  arbitrary replacement-\<^emph>\<open>token\<close> \<open>#define\<close> list and general \<open>#if\<close>/\<open>#elif\<close>,
   neither of which this simplified fragment implements (this theory's own
-  \<open>#define name = expr\<close> and \<open>#ifdef\<close>/\<open>#ifndef\<close> only). \<open>c11_reject\<close> documents
-  the boundary instead of silently skipping it.
+  \<open>#define name expr\<close> takes a single \<open>constant_expression\<close> only - juxtaposed,
+  matching the real preprocessor's own syntax, but not its arbitrary token
+  sequence - and only \<open>#ifdef\<close>/\<open>#ifndef\<close>, not general \<open>#if\<close>/\<open>#elif\<close>).
+  \<open>c11_reject\<close> documents the boundary instead of silently skipping it: a
+  comma-separated pair of expressions is not a single \<open>constant_expression\<close>
+  (the comma here is the comma \<^emph>\<open>operator\<close>, inside the replacement body, not
+  a macro-argument separator at a call site).
 \<close>
 c11_reject\<open>
-#define a zz
+#define a zz, zz
 \<close>
 c11_reject\<open>
 #ifdef a

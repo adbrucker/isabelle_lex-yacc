@@ -86,10 +86,17 @@ text\<open>
   \<^item> \<open>#include <file>\<close> and \<open>#include "file"\<close>. The lexer switches into a dedicated
     \<open>INCLUDE\<close> start state right after \<open>#include\<close> so that the header name's \<open>< >\<close>
     delimiters are not confused with the relational/shift operators.
-  \<^item> \<open>#define name = expr\<close> and \<open>#define name(arg1, \<dots>, argn) = expr\<close>, a simplified
-    object-like/function-like macro definition (using \<open>=\<close> rather than the C standard's
-    juxtaposed replacement-list, and a syntactic constant expression as the body rather
-    than an arbitrary preprocessing-token sequence).
+  \<^item> \<open>#define name expr\<close> and \<open>#define name(arg1, \<dots>, argn) expr\<close>, a simplified
+    object-like/function-like macro definition: matching the C standard's own
+    juxtaposed replacement-list syntax, including its whitespace-sensitive
+    disambiguation (no space before \<open>(\<close> means function-like; any space means
+    object-like, the \<open>(\<close> then just starting an ordinary parenthesized
+    sub-expression of the replacement) - a dedicated \<open>DEFINE\<close> lexer start
+    state decides this the moment the macro's own name is lexed, reporting a
+    fused \<open>DEFINE_LPAREN\<close> token when the two are genuinely adjacent, so the
+    grammar itself never has to resolve the ambiguity a bare one-token
+    lookahead could not - but with a syntactic constant expression as the
+    replacement body rather than an arbitrary preprocessing-token sequence.
   \<^item> \<open>#ifdef name \<dots> #endif\<close>, \<open>#ifndef name \<dots> #endif\<close>, and their \<open>#else\<close> variants,
     bracketing a (possibly empty) sequence of external declarations. Since \<open>#else\<close>
     would otherwise clash with the \<open>ELSE\<close> keyword of \<open>if\<dots>else\<close>, it is lexed as the
@@ -812,12 +819,12 @@ double atof(const char *nptr);
 
 c11_predef [errno.h] \<open>
 extern int errno;
-#define EDOM = 33
-#define ERANGE = 34
+#define EDOM 33
+#define ERANGE 34
 \<close>
 
 c11_predef [assert.h] \<open>
-#define assert(expr) = expr
+#define assert(expr) expr
 \<close>
 
 set_cenv_default

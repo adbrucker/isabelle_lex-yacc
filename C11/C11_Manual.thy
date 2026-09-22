@@ -502,11 +502,15 @@ int main(void) {
 text\<open>A bare expression, syntax-checked on its own:\<close>
 c11_expr\<open>max(1, 2) + 3\<close>
 
-text\<open>Documenting, rather than silently accepting, an out-of-scope construct
-  (this fragment's simplified \<open>#define\<close> takes a single expression, not the
-  real preprocessor's replacement-token list):\<close>
+text\<open>Documenting, rather than silently accepting, an out-of-scope construct:
+  this fragment's simplified \<open>#define\<close> takes a single \<open>constant_expression\<close>
+  as its replacement (\<open>\<section>4\<close>) - juxtaposed, exactly like the real
+  preprocessor's own syntax, but not the real preprocessor's arbitrary
+  replacement-\<^emph>\<open>token\<close> list, so a comma-separated pair of expressions (the
+  comma \<^emph>\<open>operator\<close>, not a macro-argument separator - this is inside the
+  replacement body, not a call site) is still rejected:\<close>
 c11_reject\<open>
-#define SQUARE(x) x * x
+#define TWICE(x) x, x
 \<close>
 
 text\<open>A predefined-header fragment of our own, and its effect on a later use
@@ -682,8 +686,8 @@ text\<open>
     all); this fragment's lexer, having no such pass, simply sees two
     unrelated identifiers instead and rejects the input - a real gap, not a
     standards-correct rejection, and documented as such where it is tested.
-  \<^item> \<^bold>\<open>A simplified preprocessor fragment.\<close> Only \<open>#define name = expr\<close>,
-    \<open>#define name(a, \<dots>) = expr\<close> (a single expression, not a general
+  \<^item> \<^bold>\<open>A simplified preprocessor fragment.\<close> Only \<open>#define name expr\<close>,
+    \<open>#define name(a, \<dots>) expr\<close> (a single expression, not a general
     replacement-token sequence), \<open>#include\<close>, and \<open>#ifdef\<close>/\<open>#ifndef\<close> (with an
     optional \<open>#else\<close>) are recognized as real AST nodes; the general \<open>#if\<close>/
     \<open>#elif\<close> constant-expression language, token pasting/stringizing, and

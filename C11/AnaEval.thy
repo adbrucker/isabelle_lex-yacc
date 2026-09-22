@@ -116,8 +116,8 @@ text\<open>
   \<open>error\<close>, since this fragment has no cross-file symbol table and "undeclared
   here" routinely just means "declared somewhere this parse never saw".
 
-  The two preprocessor-macro forms this fragment recognizes (\<open>#define name =
-  expr\<close> and \<open>#define name(a, \<dots>) = expr\<close>, see \<open>cPreprocDirective\<close> in
+  The two preprocessor-macro forms this fragment recognizes (\<open>#define name
+  expr\<close> and \<open>#define name(a, \<dots>) expr\<close>, see \<open>cPreprocDirective\<close> in
   \<^verbatim>\<open>c_ast.ML\<close>) register into \<open>cenv\<close> exactly like an ordinary declaration -
   \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> wrap a \<^emph>\<open>synthetic\<close> \<open>cDeclaration\<close> (the macro's own
   name as its declarator, its replacement expression as a pseudo-initializer),

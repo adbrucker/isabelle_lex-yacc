@@ -1002,9 +1002,39 @@ fun pp_assignOp CAssignOp = "=" | pp_assignOp CMulAssOp = "*="
 
 fun pp_integer (CInteger (n, _, _)) = IntInf.toString n;
 fun pp_float (CFloat s) = s;
-fun pp_char (CChar (c, _)) = "'" ^ Char.toString c ^ "'"
-  | pp_char (CChars (cs, _)) = "'" ^ String.implode cs ^ "'";
-fun pp_string (CString (s, _)) = "\"" ^ s ^ "\"";
+
+(* The lexer's own "unescape_c" (C11_Parser.thy) turns a source char/string
+   literal's escape sequences into the *real* characters they denote before
+   ever building the AST - "s"/"c" here are already that unescaped value,
+   not the original source spelling. Re-serializing it "pp_string (CString
+   (s, _)) = \"\\\"\" ^ s ^ \"\\\"\"" (as this used to read) is therefore
+   only correct for a string with no backslash, quote, or control character
+   in it at all: a genuine "\n" character written back out *literally*,
+   between the two double quotes, is not escaped C source any more - it is
+   an actual embedded newline, and the ".c"/".h" file "c11_export_c"/
+   "c11_export_h" write (\<^verbatim>\<open>C11.thy\<close>) ends up with an unterminated string
+   literal, invalid C. "pp_escape_char"/"pp_escape_string" re-escape every
+   character a C string/char literal needs escaped - backslash, the
+   literal's own quote character, and the common single-letter escapes,
+   with a "\xHH" fallback for anything else non-printable-ASCII - so this
+   pretty-printer's own round trip (parse, then "pp_root") is genuinely
+   valid C again, not just correct-looking for the common case with no
+   special characters at all. *)
+fun pp_escape_char quote c =
+  if c = #"\\" then "\\\\"
+  else if c = #"\n" then "\\n"
+  else if c = #"\t" then "\\t"
+  else if c = #"\r" then "\\r"
+  else if c = quote then "\\" ^ String.str c
+  else if Char.isPrint c andalso Char.ord c < 128 then String.str c
+  else "\\x" ^ (let val h = Int.fmt StringCvt.HEX (Char.ord c)
+                in if size h < 2 then "0" ^ h else h end);
+
+fun pp_escape_string s = String.translate (pp_escape_char #"\"") s;
+
+fun pp_char (CChar (c, _)) = "'" ^ pp_escape_char #"'" c ^ "'"
+  | pp_char (CChars (cs, _)) = "'" ^ String.concat (map (pp_escape_char #"'") cs) ^ "'";
+fun pp_string (CString (s, _)) = "\"" ^ pp_escape_string s ^ "\"";
 
 fun pp_constant (CIntConst (i, _)) = pp_integer i
   | pp_constant (CCharConst (c, _)) = pp_char c
@@ -1201,9 +1231,9 @@ and pp_externalDeclaration (CDeclExt d) = pp_declaration d ^ ";"
 and pp_preprocDirective (CPPInclude (system, name, _, _)) =
       "#include " ^ (if system then "<" ^ name ^ ">" else "\"" ^ name ^ "\"")
   | pp_preprocDirective (CPPDefine (id, e, _)) =
-      "#define " ^ ident id ^ " = " ^ pp_expression e
+      "#define " ^ ident id ^ " " ^ pp_expression e
   | pp_preprocDirective (CPPDefineFun (id, params, e, _)) =
-      "#define " ^ ident id ^ "(" ^ pp_join ", " ident params ^ ") = " ^ pp_expression e
+      "#define " ^ ident id ^ "(" ^ pp_join ", " ident params ^ ") " ^ pp_expression e
   | pp_preprocDirective (CPPIfdef (negate, id, thn, els, _)) =
       "#" ^ (if negate then "ifndef " else "ifdef ") ^ ident id ^ "\n" ^
       pp_join "\n" pp_externalDeclaration thn ^

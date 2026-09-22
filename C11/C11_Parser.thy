@@ -87,10 +87,17 @@ text\<open>
   \<^item> \<open>#include <file>\<close> and \<open>#include "file"\<close>. The lexer switches into a dedicated
     \<open>INCLUDE\<close> start state right after \<open>#include\<close> so that the header name's \<open>< >\<close>
     delimiters are not confused with the relational/shift operators.
-  \<^item> \<open>#define name = expr\<close> and \<open>#define name(arg1, \<dots>, argn) = expr\<close>, a simplified
-    object-like/function-like macro definition (using \<open>=\<close> rather than the C standard's
-    juxtaposed replacement-list, and a syntactic constant expression as the body rather
-    than an arbitrary preprocessing-token sequence).
+  \<^item> \<open>#define name expr\<close> and \<open>#define name(arg1, \<dots>, argn) expr\<close>, a simplified
+    object-like/function-like macro definition: matching the C standard's own
+    juxtaposed replacement-list syntax, including its whitespace-sensitive
+    disambiguation (no space before \<open>(\<close> means function-like; any space means
+    object-like, the \<open>(\<close> then just starting an ordinary parenthesized
+    sub-expression of the replacement) - a dedicated \<open>DEFINE\<close> lexer start
+    state decides this the moment the macro's own name is lexed, reporting a
+    fused \<open>DEFINE_LPAREN\<close> token when the two are genuinely adjacent, so the
+    grammar itself never has to resolve the ambiguity a bare one-token
+    lookahead could not - but with a syntactic constant expression as the
+    replacement body rather than an arbitrary preprocessing-token sequence.
   \<^item> \<open>#ifdef name \<dots> #endif\<close>, \<open>#ifndef name \<dots> #endif\<close>, and their \<open>#else\<close> variants,
     bracketing a (possibly empty) sequence of external declarations. Since \<open>#else\<close>
     would otherwise clash with the \<open>ELSE\<close> keyword of \<open>if\<dots>else\<close>, it is lexed as the
@@ -668,7 +675,7 @@ HWS=[\ \t\011\012];
 NAVI=[uUrd];
 OPENCART=\\\<open>;
 CLOSECART=\\\<close>;
-%s COMMENT INCLUDE LCOMMENT ANTIQ;
+%s COMMENT INCLUDE LCOMMENT ANTIQ DEFINE;
 \<close>
 lex_rules\<open>
 <INITIAL>"/*"                            => (YYBEGIN COMMENT; lex());
@@ -681,7 +688,18 @@ lex_rules\<open>
 <INCLUDE>\n                              => (YYBEGIN INITIAL; lex());
 <INCLUDE>.                               => (YYBEGIN INITIAL; lex());
 
-<INITIAL>"#"{HWS}*"define"               => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
+<INITIAL>"#"{HWS}*"define"               => (YYBEGIN DEFINE; c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
+
+<DEFINE>{HWS}+                           => (lex());
+<DEFINE>{L}{A}*"("                       => (YYBEGIN INITIAL;
+                                              let val name = String.substring (yytext, 0, String.size yytext - 1)
+                                              in c11_tok_val (yypos, name, Markup.free, "IDENTIFIER", "",
+                                                               Tokens.DEFINE_LPAREN, name) end);
+<DEFINE>{L}{A}*                          => (YYBEGIN INITIAL;
+                                              if C11_Typedefs.is_typedef yytext
+                                              then c11_tok_val (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
+                                              else c11_tok_val (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
+
 <INITIAL>"#"{HWS}*"ifndef"               => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFNDEF));
 <INITIAL>"#"{HWS}*"ifdef"                => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFDEF));
 <INITIAL>"#"{HWS}*"else"                 => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.PP_ELSE));
@@ -974,7 +992,7 @@ yacc_definitions\<open>
 
 %term
         IDENTIFIER of string | I_CONSTANT of string | F_CONSTANT of string | STRING_LITERAL of string | FUNC_NAME | SIZEOF |
-        INCLUDE | HEADER_NAME of string | DEFINE | IFDEF | IFNDEF | PP_ELSE | ENDIF |
+        INCLUDE | HEADER_NAME of string | DEFINE | DEFINE_LPAREN of string | IFDEF | IFNDEF | PP_ELSE | ENDIF |
         PTR_OP | INC_OP | DEC_OP | LEFT_OP | RIGHT_OP | LE_OP | GE_OP | EQ_OP | NE_OP |
         AND_OP | OR_OP | MUL_ASSIGN | DIV_ASSIGN | MOD_ASSIGN | ADD_ASSIGN |
         SUB_ASSIGN | LEFT_ASSIGN | RIGHT_ASSIGN | AND_ASSIGN |
@@ -1808,14 +1826,14 @@ preproc_directive:
            (let val system = String.isPrefix "<" HEADER_NAME
                 val name = String.substring (HEADER_NAME, 1, String.size HEADER_NAME - 2)
             in CPPInclude (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright), ndi HEADER_NAMEleft) end)
-|       DEFINE IDENTIFIER ASSIGN constant_expression
+|       DEFINE IDENTIFIER constant_expression
            (CPPDefine (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
                         ndi2 (DEFINEleft, constant_expressionright)))
-|       DEFINE IDENTIFIER LPAREN RPAREN ASSIGN constant_expression
-           (CPPDefineFun (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), [], constant_expression,
+|       DEFINE DEFINE_LPAREN RPAREN constant_expression
+           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi DEFINE_LPARENleft), [], constant_expression,
                            ndi2 (DEFINEleft, constant_expressionright)))
-|       DEFINE IDENTIFIER LPAREN identifier_list RPAREN ASSIGN constant_expression
-           (CPPDefineFun (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), identifier_list, constant_expression,
+|       DEFINE DEFINE_LPAREN identifier_list RPAREN constant_expression
+           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi DEFINE_LPARENleft), identifier_list, constant_expression,
                            ndi2 (DEFINEleft, constant_expressionright)))
 |       IFDEF IDENTIFIER external_declaration_list ENDIF
            (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
