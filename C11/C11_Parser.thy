@@ -27,7 +27,7 @@
  ***********************************************************************************)
 
 theory C11_Parser
-  imports "../LexYacc" "C_Ast"
+  imports "../LexYacc" "C11_Ast"
 begin
 
 text\<open>
@@ -36,12 +36,12 @@ text\<open>
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
   standard. Semantic actions build a real abstract syntax tree, defined in
-  \<^verbatim>\<open>c_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
+  \<^verbatim>\<open>c11_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
   instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
   \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which carries
   not just a position but also, where present, the source comments and \<open>@tag \<open>...\<close>\<close>
   antiquotations attached to that node (see \<^verbatim>\<open>C11_Comments\<close>, below, and the
-  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c_ast.ML\<close> itself). The grammar's
+  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c11_ast.ML\<close> itself). The grammar's
   own start symbol accepts a bare identifier, a standalone expression, a standalone
   statement, or a whole translation unit, wrapping whichever one actually matched into
   \<^verbatim>\<open>root\<close>'s \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close> case respectively - a bare identifier
@@ -54,11 +54,11 @@ text\<open>
   \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully correct
   suffix-binding precedence (the classic C "declarator inversion" problem, needing a
   genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
-  \<open>CComplexType\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
+  \<open>CComplexType\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
   language-c - has no separate case for it; and a small fragment of the C preprocessor is
   recognized directly and kept as genuine AST nodes rather than being silently discarded -
   see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
-  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt\<close> represent them. Constant-literal
+  how \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
   below. Following the reference grammar's own note, an identifier is lexed as
@@ -71,7 +71,7 @@ text\<open>
   (\<^verbatim>\<open>C11.thy\<close>) at all. \<open>ENUMERATION_CONSTANT\<close> remains unproduced - an enum
   constant's own use is syntactically indistinguishable from an ordinary
   identifier's (both reduce through \<open>IDENTIFIER\<close>/\<open>CVar\<close>), so recognizing it
-  lexically was never actually needed for \<open>AnaEval.thy\<close>'s own enum-constant
+  lexically was never actually needed for \<open>C11_AnaEval.thy\<close>'s own enum-constant
   declaration/use hyperlinking (\<open>walk_decl_specs\<close>), unlike \<open>TYPEDEF_NAME\<close>, which
   is needed just to \<^emph>\<open>parse\<close> a later use of the name as a type at all.
   The grammar has two known shift/reduce conflicts (the dangling \<open>ELSE\<close> and the
@@ -292,20 +292,20 @@ structure C11_Comments = struct
      the most deeply nested grammar rule sharing a leftmost position always
      claims first. That was tried and reverted: this grammar's leaf-level
      rules build their *own* nodeInfo too, for constructors the walk in
-     AnaEval.thy never inspects for antiquotations at all - e.g. "INT (CIntType
+     C11_AnaEval.thy never inspects for antiquotations at all - e.g. "INT (CIntType
      (ndi INTleft))" in the "type_specifier" rule, which reduces (and so
      "claim"s) before the enclosing "declaration" rule's own "ndi2" call for
      the very same "CDecl" a "@tag ..." comment on a plain "int x;" is
      actually attached to. A destructive claim there means "CIntType" (never
      walked) silently steals and loses the comment, before the "CDecl" node
-     that the whole antiquotation-evaluation redesign (see AnaEval.thy) relies
+     that the whole antiquotation-evaluation redesign (see C11_AnaEval.thy) relies
      on ever sees it - not a rare case, but every ordinary declaration. More
      than one grammar action can legitimately want the exact same leftmost
      position, and LALR's bottom-up reduction order fixes which one runs
      first, not which one actually gets *walked* later - keeping this
      non-destructive means every node genuinely starting at "p" still sees
      the comment, whether or not the walk ever inspects it. "Exactly once
-     dispatched" is instead enforced downstream, in AnaEval.thy's
+     dispatched" is instead enforced downstream, in C11_AnaEval.thy's
      "check_antiq", which tracks already-dispatched antiquotation values by
      equality (comments are built from strings/positions, both "eqtype"s) and
      skips a repeat - safe regardless of how many *walked* nodes end up
@@ -888,7 +888,7 @@ fun parse_c_int_repr (core : string) : int * cIntRepr =
   else (opt_int (Int.fromString core), DecRepr)
 
 (* Bit-encoding of cIntFlag into "cIntFlag flags" (= "Flags of int"): no
-   encoder survived c_ast.ML's own pruning of the generic HOL flag-set
+   encoder survived c11_ast.ML's own pruning of the generic HOL flag-set
    machinery, so this is a fresh, self-contained convention (bit 0
    unsigned, bit 1 long, bit 2 long long, bit 3 imaginary) - nothing
    downstream currently decodes these bits, so any consistent convention
@@ -972,7 +972,7 @@ fun mk_declarator (ident_opt, derived, str_lit_opt, attrs, ndI) =
 
 (* type_name / parameter_declaration / struct member: wrap a
    specifier-qualifier list plus an optional declarator/abstract-declarator
-   into the "cDeclaration" shape everywhere else in c_ast.ML already
+   into the "cDeclaration" shape everywhere else in c11_ast.ML already
    expects for this ("val cSizeofType : ... -> 'a cExpression" etc. all
    take a plain "'a cDeclaration"). *)
 fun mk_type_decl (specs, declr_opt, ndI) =

@@ -556,10 +556,10 @@ structure C_Ast : sig
      directive's own (used for antiquotation-checking, like every other
      directive), its *second* one is the header-name token's own, precise
      position alone - kept separate so a hyperlink back to a matching
-     "c11_predef [header] ..." (AnaEval.thy's "walk_pp_directive") lands
+     "c11_predef [header] ..." (C11_AnaEval.thy's "walk_pp_directive") lands
      exactly on "header" itself, not the whole "#include <header>" span.
      "CPPDefine"/"CPPDefineFun" hold this fragment's simplified "#define
-     name = expr"/"#define name(args) = expr" (a single expression, not a
+     name expr"/"#define name(args) expr" (a single expression, not a
      replacement-token sequence). "CPPIfdef"'s "bool" is true for
      "#ifndef", false for "#ifdef"; its two declaration lists are the
      "#else" branch and the then-branch, the latter empty when there is no

@@ -135,7 +135,7 @@ c11_statement\<open>{ int local_var = 0; local_var = yet_another_undeclared; }\<
 subsection\<open>Declaration/Use Highlighting for Functions and Their Calls\<close>
 text\<open>
   A function name is registered into the very same flat \<open>idents\<close> namespace
-  a variable is (see \<open>ident_kind\<close> in \<^verbatim>\<open>CEnv.thy\<close> - functions and variables
+  a variable is (see \<open>ident_kind\<close> in \<^verbatim>\<open>C11_Env.thy\<close> - functions and variables
   share one \<open>Global\<close> bucket, no separate function/data distinction), and a
   call's own callee (\<open>ef\<close> in \<open>CCall (ef, args, _)\<close>) is walked exactly like
   any other expression, going through the very same \<open>CVar\<close>/\<open>report_use\<close>
@@ -146,7 +146,7 @@ text\<open>
   declaration, a caller sitting textually \<^emph>\<open>between\<close> the declaration and
   the real definition, and the definition itself - exercising that the
   walk's sequential, scope-respecting threading of \<open>cenv\<close> (see the notes at
-  the top of \<^verbatim>\<open>AnaEval.thy\<close>) resolves such a call against whatever is in
+  the top of \<^verbatim>\<open>C11_AnaEval.thy\<close>) resolves such a call against whatever is in
   scope \<^emph>\<open>at that point in the source\<close>, not against whatever the same name
   is last registered as by the time the whole file has been walked.
 \<close>
@@ -177,7 +177,7 @@ subsection\<open>Declaration/Use Highlighting for Preprocessor Constants and Mac
 text\<open>
   \<open>#define\<close> constants and function-like macros register into \<open>cenv\<close> exactly
   like an ordinary declaration (see \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> in
-  \<^verbatim>\<open>CEnv.thy\<close>, and the note above \<open>walk_pp_directive\<close> in \<^verbatim>\<open>AnaEval.thy\<close>),
+  \<^verbatim>\<open>C11_Env.thy\<close>, and the note above \<open>walk_pp_directive\<close> in \<^verbatim>\<open>C11_AnaEval.thy\<close>),
   so a later \<open>CVar\<close>/\<open>CCall\<close> reference to the macro's name hyperlinks to its
   \<open>#define\<close> the same way a reference to an ordinary global does - this
   fragment never expands macros, so such a reference is, syntactically, just
@@ -238,7 +238,7 @@ subsection\<open>Struct/Union/Enum Tags, and Struct/Union Member Linking\<close>
 text\<open>
   A struct/union/enum \<^emph>\<open>tag\<close> is registered into \<open>cenv\<close>'s \<open>types\<close> table (the
   tag namespace, shared by all three - see \<open>walk_decl_specs\<close> in
-  \<^verbatim>\<open>AnaEval.thy\<close>) the first time its defining occurrence (one carrying a
+  \<^verbatim>\<open>C11_AnaEval.thy\<close>) the first time its defining occurrence (one carrying a
   member/constant list) is walked; a later, bare mention of the same tag
   hyperlinks back to it instead of registering again. An enum's own
   constants are \<^emph>\<open>not\<close> a per-type namespace - they are registered into the
@@ -467,7 +467,7 @@ text\<open>
   \<open>c11_predef [header] \<open>decl_list\<close>\<close> does \<^emph>\<open>not\<close> itself register any
   declared name into \<open>cenv\<close>'s \<open>idents\<close>/\<open>types\<close> - it only captures walking
   \<open>decl_list\<close> as a reusable \<open>cenv -> cenv\<close> effect and registers \<^emph>\<open>that\<close>
-  under \<open>header\<close> in \<open>cenv\<close>'s \<open>predefined_envs\<close> (\<^verbatim>\<open>CEnv.thy\<close>). A later
+  under \<open>header\<close> in \<open>cenv\<close>'s \<open>predefined_envs\<close> (\<^verbatim>\<open>C11_Env.thy\<close>). A later
   \<open>#include <header>\<close> - genuinely \<^emph>\<open>connected\<close> to \<open>c11_predef\<close> now, unlike
   every other recognized preprocessor form, which stays purely syntactic -
   is what actually applies it (\<open>AnaEval.walk_pp_directive\<close>'s \<open>CPPInclude\<close>
@@ -1112,7 +1112,7 @@ int a = 0;
 subsection\<open>Exactly-Once Dispatch, an Always-Defined Context, and \<open>term\<close>\<close>
 text\<open>
   \<open>analyse_and_eval\<close> threads a second, downward-only \<open>ctx\<close> parameter through
-  every walk function (see the design note at the top of \<^verbatim>\<open>AnaEval.thy\<close>):
+  every walk function (see the design note at the top of \<^verbatim>\<open>C11_AnaEval.thy\<close>):
   \<open>walk_expr\<close>/\<open>walk_stat\<close> always push their own node, at every level of
   nesting, so a comment resolves to the \<^emph>\<open>closest\<close> enclosing expression/
   statement/unit rather than only to a whole top-level declaration or
@@ -1383,7 +1383,7 @@ text\<open>
   syntax, is now genuinely *interpreted*: \<open>AnaEval.check_antiq\<close> resolves it
   against the closest-surrounding-context stack via \<open>AnaEval.select_ast\<close>
   \<^emph>\<open>before\<close> calling the handler, so a handler only ever sees the resulting
-  AST node (\<open>type_antiq_fun\<close> in \<^verbatim>\<open>CEnv.thy\<close> has no navi-list parameter at
+  AST node (\<open>type_antiq_fun\<close> in \<^verbatim>\<open>C11_Env.thy\<close> has no navi-list parameter at
   all any more) - the tests below therefore check the resolved \<open>!AST\<close>
   (via \<open>probe_ast\<close>), not a stashed navi list.
 

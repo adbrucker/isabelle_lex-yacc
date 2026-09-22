@@ -110,7 +110,7 @@ text\<open>
   grammar) covers ISO C11's expression, statement, and declaration syntax -
   see the annex (\<open>\<section>6\<close>) for the lexical structure and a representative subset
   of the grammar as railroad diagrams. Every AST node's own annotation field
-  (\<open>'a nodeInfo\<close>, \<^verbatim>\<open>c_ast.ML\<close>) carries a genuine \<^verbatim>\<open>Position.T\<close> together with
+  (\<open>'a nodeInfo\<close>, \<^verbatim>\<open>c11_ast.ML\<close>) carries a genuine \<^verbatim>\<open>Position.T\<close> together with
   any comments/antiquotations attached to that node, so PIDE markup - hovering,
   hyperlinking, error underlining - is available at every level of the tree, not
   only at the top. Four entry points parse a fragment of a given shape and store
@@ -127,7 +127,7 @@ text\<open>
 subsection\<open>The C-Environment, and Declaration/Use Navigation\<close>
 
 text\<open>
-  \<^verbatim>\<open>CEnv.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table stored as ordinary
+  \<^verbatim>\<open>C11_Env.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table stored as ordinary
   \<^verbatim>\<open>Generic_Data\<close>, so it persists across commands within one theory and merges 
   correctly under Isabelle's parallel, incremental checking. The \<open>cenv\<close> keeps track of:
 
@@ -141,7 +141,7 @@ text\<open>
    \<^enum> a per-theory AST unit counter) used for generic names of c-sections 
      processed by a c11-command.  
 
-  \<^verbatim>\<open>AnaEval.thy\<close>'s \<open>analyse_and_eval\<close> is a single, purely functional, scoped
+  \<^verbatim>\<open>C11_AnaEval.thy\<close>'s \<open>analyse_and_eval\<close> is a single, purely functional, scoped
   walk over a parsed root that populates \<open>cenv\<close> as it goes: entering a function
   body, a compound-statement block, or a \<open>for\<close>-loop's own declaration clause
   remembers the incoming symbol table and restores exactly that once that
@@ -300,7 +300,7 @@ text\<open>
 subsection\<open>Standard Antiquotations\<close>
 
 text\<open>
-  \<^verbatim>\<open>AnaEval.thy\<close> registers eight demonstration handlers, available to every
+  \<^verbatim>\<open>C11_AnaEval.thy\<close> registers eight demonstration handlers, available to every
   theory that imports \<^verbatim>\<open>C11\<close> (they are not meant as production
   verification-condition generators - each is a small, self-contained example
   of one facility a real handler might use):
@@ -693,7 +693,7 @@ text\<open>
     \<open>#elif\<close> constant-expression language, token pasting/stringizing, and
     \<open>_Pragma\<close> are out of scope.
   \<^item> \<^bold>\<open>Member linking, and its real remaining bound.\<close> A struct/union/enum
-    \<^emph>\<open>tag\<close> is tracked (\<open>type_ident\<close>, \<^verbatim>\<open>CEnv.thy\<close>) and hyperlinked like any
+    \<^emph>\<open>tag\<close> is tracked (\<open>type_ident\<close>, \<^verbatim>\<open>C11_Env.thy\<close>) and hyperlinked like any
     other declared name, and an enum's own constants are registered into the
     ordinary namespace right alongside variables and functions. Resolving a
     member access \<open>e.field\<close>/\<open>e->field\<close> back to \<open>field\<close>'s own declaration

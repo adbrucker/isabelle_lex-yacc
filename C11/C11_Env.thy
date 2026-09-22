@@ -26,8 +26,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  ***********************************************************************************)
 
-theory CEnv
-  imports "C_Ast"
+theory C11_Env
+  imports "C11_Ast"
 begin
 
 section\<open>The CEnv Environment: storing Ast's and Environments\<close>
@@ -92,17 +92,17 @@ datatype type_ident = Struct_tag of pos * pos C_Ast.cDeclaration list
 (* The cartouche/string body handed to a handler now carries its own source
    position alongside its text ("pos", the antiquotation's "cartouche"
    payload's own position - see C11_Parser.thy's "antiq_body_finish"/
-   "antiq_tag_and_string_seen" and the "comment" datatype in c_ast.ML) -
+   "antiq_tag_and_string_seen" and the "comment" datatype in c11_ast.ML) -
    previously only the bare "string" reached the handler, discarding this
    position entirely (it existed in the AST, just never threaded past
    "check_antiq"). A handler that only cares about the text can still ignore
-   it; "term" (AnaEval.thy) needs it to build a genuinely position-carrying
+   it; "term" (C11_AnaEval.thy) needs it to build a genuinely position-carrying
    "Input.source" for Isabelle's own term parser, so hovering over a symbol
    *inside* the parsed term links back to *that* symbol's own place in the
    C source, not to some unrelated fallback position.
 
    The "root" a handler receives is already the antiquotation's *resolved*
-   context: "check_antiq" (AnaEval.thy) interprets the antiquotation's own
+   context: "check_antiq" (C11_AnaEval.thy) interprets the antiquotation's own
    "navi list" - the "up"/"Up"/"right"/"down" steps written as an optional
    bracketed "@tag[navi] ..." right after the tag (see "C_Ast.navi",
    "parse_tag_navi_level" in C11_Parser.thy for the syntax, and
@@ -183,7 +183,7 @@ val empty_cenv = mk{idents  = Symtab.empty,
    which is why it was invisible to every build-based regression test in
    this session - still a real, separate bug worth fixing here even though
    it turned out not to be the cause of the point-vs-range hyperlinking bug
-   diagnosed in "AnaEval.thy" ("report_use"/"report_decl"/"name_range").
+   diagnosed in "C11_AnaEval.thy" ("report_use"/"report_decl"/"name_range").
    "Symtab.merge (K true)" takes the left side's entry on a key collision
    (both sides originate from the same walk of the same source text in
    practice, so a genuine conflict would mean a real bug elsewhere, not a
@@ -212,7 +212,7 @@ structure Ast_Store = Generic_Data
    same "ast_store_key" as "Ast_Store" itself (updated alongside it, in
    "store_root", so the two tables never drift apart) - kept as a *separate*
    sibling table rather than folded into "Ast_Store"'s own value type, so
-   every existing "get_ast" caller (AnaEval.thy's header hyperlink,
+   every existing "get_ast" caller (C11_AnaEval.thy's header hyperlink,
    C11_Tests.thy's own tests) keeps matching on a bare "Position.T C_Ast.root"
    and does not have to unpack a pair it never wanted. Exists purely for
    "c11_export_h"/"c11_export_c [verbatim]" (C11.thy): a user may want their
@@ -305,7 +305,7 @@ fun get_predefined_env header thy =
    theory nominate its own "cenv" snapshot, at whatever point in the
    document it chooses, as the value "reset_cenv" later restores - e.g.
    right after the standard antiquotation handlers are registered
-   (AnaEval.thy's own "setup"s), or later still, once a downstream theory
+   (C11_AnaEval.thy's own "setup"s), or later still, once a downstream theory
    has also predefined the headers it wants known by default. A genuinely
    separate "Generic_Data" registry, not a field folded into "cenv" itself
    (which would make every snapshot recursively carry a copy of itself) -

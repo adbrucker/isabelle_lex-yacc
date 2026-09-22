@@ -26,22 +26,22 @@
  * SPDX-License-Identifier: BSD-2-Clause
  ***********************************************************************************)
 
-theory C_Ast
+theory C11_Ast
   imports Main
 begin
 
 text\<open>
   Just the C11 abstract syntax tree (structure \<^verbatim>\<open>C_Ast\<close>, a hand-pruned port of
-  the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST - see \<^verbatim>\<open>c_ast.ML\<close> itself for the full
+  the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST - see \<^verbatim>\<open>c11_ast.ML\<close> itself for the full
   provenance/pruning notes), with none of the lex/yacc grammar that builds it.
   Kept as its own theory, importing nothing beyond \<^verbatim>\<open>Main\<close>, so that anything
-  which only needs the \<^emph>\<open>types\<close> - \<^verbatim>\<open>CEnv.thy\<close>, in particular, which stores
+  which only needs the \<^emph>\<open>types\<close> - \<^verbatim>\<open>C11_Env.thy\<close>, in particular, which stores
   \<^verbatim>\<open>C_Ast\<close> values but neither parses nor lexes anything - does not have to pull
   in \<^verbatim>\<open>C11_Parser.thy\<close>'s much heavier \<^verbatim>\<open>ml_lex_yacc\<close> machinery just to see them.
   \<^verbatim>\<open>C11_Parser.thy\<close> imports this theory in turn, rather than loading
-  \<^verbatim>\<open>c_ast.ML\<close> itself, so the AST is defined in exactly one place.
+  \<^verbatim>\<open>c11_ast.ML\<close> itself, so the AST is defined in exactly one place.
 \<close>
 
-ML_file\<open>c_ast.ML\<close>
+ML_file\<open>c11_ast.ML\<close>
 
 end

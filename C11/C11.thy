@@ -29,7 +29,7 @@
  ***********************************************************************************)
 
 theory C11
-  imports  "C11_Parser" "AnaEval" 
+  imports  "C11_Parser" "C11_AnaEval"
   keywords "c11" "c11_ident" "c11_expr" "c11_statement" "c11_predef" :: thy_decl
   and      "c11_file" :: thy_load
   and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
@@ -44,12 +44,12 @@ text\<open>
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
   standard. Semantic actions build a real abstract syntax tree, defined in
-  \<^verbatim>\<open>c_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
+  \<^verbatim>\<open>c11_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
   instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
   \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which carries
   not just a position but also, where present, the source comments and \<open>@tag \<open>...\<close>\<close>
   antiquotations attached to that node (see \<^verbatim>\<open>C11_Comments\<close>, below, and the
-  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c_ast.ML\<close> itself). The grammar's
+  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c11_ast.ML\<close> itself). The grammar's
   own start symbol accepts a bare identifier, a standalone expression, a standalone
   statement, or a whole translation unit, wrapping whichever one actually matched into
   \<^verbatim>\<open>c_ast_root\<close>'s \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close> case respectively - a bare identifier
@@ -62,11 +62,11 @@ text\<open>
   \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully correct
   suffix-binding precedence (the classic C "declarator inversion" problem, needing a
   genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
-  \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
+  \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
   language-c - has no separate case for it; and a small fragment of the C preprocessor is
   recognized directly and kept as genuine AST nodes rather than being silently discarded -
   see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
-  how \<^verbatim>\<open>c_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
+  how \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
   parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
   than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
   below. Following the reference grammar's own note, identifiers are never lexed as
@@ -205,8 +205,8 @@ text\<open>
   \<open>c11\<close>/\<open>c11_file\<close> are reserved for a whole translation unit (\<open>Units\<close>) and error
   if the input parses as anything else, while \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close>
   each similarly require \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>. Every successful parse is stored into
-  \<^verbatim>\<open>CEnv\<close>'s AST store (\<^verbatim>\<open>CEnv.Ast_Store\<close>, in its own \<^verbatim>\<open>CEnv.thy\<close>, imported
-  here transitively via \<^verbatim>\<open>AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close>
+  \<^verbatim>\<open>CEnv\<close>'s AST store (\<^verbatim>\<open>CEnv.Ast_Store\<close>, in its own \<^verbatim>\<open>C11_Env.thy\<close>, imported
+  here transitively via \<^verbatim>\<open>C11_AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close>
   key - \<^verbatim>\<open>open CEnv\<close> below makes \<open>store_root\<close>/\<open>get_ast\<close>/\<open>\<dots>\<close> usable unqualified
   throughout the rest of this theory. \<open>AnaEval.analyse_and_eval\<close> also runs on
   every successful parse, \<open>c11\<close> included, but only \<open>c11\<close>/\<open>c11_file\<close>'s own
@@ -288,7 +288,7 @@ fun require_kind check kind_name cmd_name root =
    "c11_file" cannot again silently drift apart the way they already once
    did (see "run_c11_file"'s own note). *)
 (* The antiquotation actions chained below are "Context.generic ->
-   Context.generic" (CEnv.thy's own note on "type_antiq_fun0" explains why),
+   Context.generic" (C11_Env.thy's own note on "type_antiq_fun0" explains why),
    so folding them must happen at that level, not plain "theory" - but the
    final result here is unwrapped straight back to plain "theory" via
    "Context.theory_of": "store_root"'s own state lives entirely inside the
@@ -324,7 +324,7 @@ fun full_eval_and_store root text thy =
 
 (* "full_eval_and_store" (above) and this no longer share one function under
    a boolean flag the way they once did: after the antiquotation-handler
-   generalization (CEnv.thy), the two paths genuinely differ in what they
+   generalization (C11_Env.thy), the two paths genuinely differ in what they
    return ("Context.generic" vs plain "theory"), not just in whether they
    chain antiquotation actions - "run_c11"/"run_c11_file" (below) call
    "full_eval_and_store" directly instead. This keeps exactly its own former
@@ -452,7 +452,7 @@ val _ = Outer_Syntax.command @{command_keyword "c11_file"}
    itself register any declared name into "cenv"'s "idents"/"types" - it
    only captures the walk's own effect (a plain "cenv -> cenv" function) and
    registers \<^emph>\<open>that\<close> under "header" in "cenv"'s "predefined_envs"
-   (\<^verbatim>\<open>CEnv.thy\<close>). A later \<open>#include <header>\<close>, anywhere this "cenv" is in
+   (\<^verbatim>\<open>C11_Env.thy\<close>). A later \<open>#include <header>\<close>, anywhere this "cenv" is in
    scope, is what actually applies it (\<open>AnaEval.walk_pp_directive\<close>'s
    \<open>CPPInclude\<close> case) - matching real C, where a header's declarations are
    only in scope once it is genuinely included, not merely known about
@@ -501,7 +501,7 @@ fun run_c11_predef (header, header_pos) source thy =
       (* Self-referential entity markup at the header-name token's own
          position, exactly like an ordinary declaration ("report_decl") -
          gives "c11_predef [stdio.h] ..." itself a hyperlink target for a
-         later "#include <stdio.h>" to resolve to (AnaEval.thy's
+         later "#include <stdio.h>" to resolve to (C11_AnaEval.thy's
          "walk_pp_directive"). *)
       val _ = AnaEval.report_decl "C11 predefined header" header header_pos
       val ctxt = Proof_Context.init_global thy
@@ -546,7 +546,7 @@ val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
         (Parse.$$$ "[" |-- Parse.position Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
           >> (fn (header, source) => Toplevel.theory (run_c11_predef header source)))
 
-(* Every "c11"-family command threads "cenv" (CEnv.thy) through the theory
+(* Every "c11"-family command threads "cenv" (C11_Env.thy) through the theory
    exactly like any other persistent, per-theory Isabelle state - the same
    idiom a simp-set or a Named_Theorems collection uses - which is what
    lets "c11"/"c11_file"/... be freely interleaved with arbitrary Isar
@@ -557,7 +557,7 @@ val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
    with no built-in notion of "start this section fresh". "set_cenv_default"/
    "reset_cenv" give a theory explicit control over that: "set_cenv_default"
    nominates whatever "cenv" holds right now as the snapshot a later
-   "reset_cenv" restores - called once, early (e.g. right after AnaEval.thy's
+   "reset_cenv" restores - called once, early (e.g. right after C11_AnaEval.thy's
    own antiquotation handlers are registered, so \<open>@setup\<close>/\<open>@requires\<close>/
    \<open>\<dots>\<close>-style tags still resolve after a reset), it marks "this is what a
    fresh start looks like here"; called again later (e.g. once a theory has
@@ -611,7 +611,7 @@ val _ = Outer_Syntax.command @{command_keyword "reset_cenv"}
    more of those store keys, they look each one up via "CEnv.get_ast",
    render it back to C source text with "C_Ast.pp_root" (the same
    pretty-printer this theory's own \<open>string_of_root\<close>, above, deliberately
-   does *not* attempt to be - "pp_root" is the real one, in "c_ast.ML"), and
+   does *not* attempt to be - "pp_root" is the real one, in "c11_ast.ML"), and
    concatenate the results into a single ".h"/".c" file - "c11_export_h" and
    "c11_export_c" share one implementation ("run_c11_export"), differing
    only in the file suffix appended to the given path, exactly mirroring how
@@ -639,11 +639,11 @@ val _ = Outer_Syntax.command @{command_keyword "reset_cenv"}
    The optional "[verbatim]" modifier switches the rendering from
    "C_Ast.pp_root" to the section's own original source text, stored
    alongside its AST for exactly this purpose ("CEnv.get_source",
-   "CEnv.thy"'s own "Source_Store" - written once, in "store_root", from
+   "C11_Env.thy"'s own "Source_Store" - written once, in "store_root", from
    "Input.text_of" at every "c11"/"c11_file"/"c11_ident"/"c11_expr"/
    "c11_statement"/"c11_predef" call site, so it is always present whenever
    "get_ast" is): this project's own pretty-printer is admittedly "simple"
-   (\<^verbatim>\<open>c_ast.ML\<close>'s own doc comment on "pp_root") - a fixed two-space
+   (\<^verbatim>\<open>c11_ast.ML\<close>'s own doc comment on "pp_root") - a fixed two-space
    indent, no attempt at preserving the author's own layout, comments, or
    \<open>@tag \<open>...\<close>\<close> antiquotations (those are stripped away during parsing, not
    part of the AST at all) - so a user who cares about a specific
@@ -793,7 +793,7 @@ text\<open>Four small, genuinely representative predefined-header fragments
   which would need a statement, not an expression) - declared here, in
   \<^verbatim>\<open>C11.thy\<close> itself rather than in the test suite, precisely so
   \<open>set_cenv_default\<close> (also above) can nominate the \<open>cenv\<close> that results -
-  standard antiquotation handlers already registered by \<^verbatim>\<open>AnaEval.thy\<close>,
+  standard antiquotation handlers already registered by \<^verbatim>\<open>C11_AnaEval.thy\<close>,
   plus these four headers' own reusable \<open>#include\<close> effects, with \<open>idents\<close>/
   \<open>types\<close> themselves still empty (\<open>c11_predef\<close> never touches those
   directly - only a later \<open>#include\<close> does) - as \<^emph>\<open>the\<close> default baseline

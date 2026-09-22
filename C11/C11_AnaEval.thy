@@ -26,8 +26,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  ***********************************************************************************)
 
-theory AnaEval
-  imports "CEnv"
+theory C11_AnaEval
+  imports "C11_Env"
 begin
 
 section\<open>Analyse and Eval\<close>
@@ -118,7 +118,7 @@ text\<open>
 
   The two preprocessor-macro forms this fragment recognizes (\<open>#define name
   expr\<close> and \<open>#define name(a, \<dots>) expr\<close>, see \<open>cPreprocDirective\<close> in
-  \<^verbatim>\<open>c_ast.ML\<close>) register into \<open>cenv\<close> exactly like an ordinary declaration -
+  \<^verbatim>\<open>c11_ast.ML\<close>) register into \<open>cenv\<close> exactly like an ordinary declaration -
   \<open>Cpp_const\<close>/\<open>Cpp_macro\<close> wrap a \<^emph>\<open>synthetic\<close> \<open>cDeclaration\<close> (the macro's own
   name as its declarator, its replacement expression as a pseudo-initializer),
   purely so \<open>find_decl_pos\<close>/\<open>report_use\<close> need no macro-specific case: a later
@@ -456,7 +456,7 @@ fun select_ast antiq_pos navi ctx =
    antiquotations before recursing into its children, is always the
    outermost of any nodes genuinely tied at one position) is the one that
    wins. The handler receives "(body, body_pos)", not just "body" - see
-   "type_antiq_fun" in CEnv.thy for why the cartouche's own position now
+   "type_antiq_fun" in C11_Env.thy for why the cartouche's own position now
    travels all the way to the handler instead of being discarded here - and
    the *resolved* AST node ("select_ast tag_pos navi ctx"), not the raw navi
    list: a handler is never itself responsible for interpreting "up"/"Up"/
@@ -1381,7 +1381,7 @@ val highlight = let fun probe (_, c_ast , _) (_ : string * Position.T) thy =
    locations, since every symbol in the term ended up sharing that one
    ambient position rather than each having its own. \<open>body_pos\<close> - now
    threaded all the way from \<open>check_antiq\<close> (see \<open>type_antiq_fun\<close> in
-   \<^verbatim>\<open>CEnv.thy\<close>, previously discarded there) - is the cartouche's own real
+   \<^verbatim>\<open>C11_Env.thy\<close>, previously discarded there) - is the cartouche's own real
    source range, so \<^ML>\<open>Syntax.implode_input\<close> can encode it as YXML position
    markup that \<^ML>\<open>Syntax.read_term\<close> decodes back into a genuine per-symbol
    position for every token of the term, exactly as if the term had been
