@@ -196,17 +196,20 @@ section\<open>Exporting\<close>
 text\<open>
   \<open>selectionSort\<close>'s own two stored sections - the interface and the
   implementation above - become \<open>selectionSort.h\<close> and \<open>selectionSort.c\<close>;
-  the driver's single stored section becomes \<open>driver.c\<close>. The store keys
-  below are this theory's own three (\<open>SelectionSort#79\<close>, \<open>#80\<close>, \<open>#81\<close> -
-  everything before that already belongs to the \<^verbatim>\<open>c11\<close>-family commands
-  this theory's own import chain runs first: \<^verbatim>\<open>C11.thy\<close>'s own four
-  \<open>c11_predef\<close> declarations (\<open>\<section>3\<close>), then \<^verbatim>\<open>C11_Tests.thy\<close>'s and
-  \<^verbatim>\<open>AntiqProbe.thy\<close>'s own, both inherited via this theory's own
-  \<open>imports\<close>, chosen precisely to force that sequencing - see this theory's
-  own header comment), exactly as \<open>c11\<close>'s own "[stored as ...]" output
-  reports them.\<close>
+  the driver's single stored section becomes \<open>selectionSortDriver.c\<close> -
+  named for this theory specifically, not just \<open>driver.c\<close>, since
+  \<^verbatim>\<open>BinarySearch.thy\<close> (\<open>\<section>3\<close> there) exports a driver of its own into
+  this same directory, and a bare \<open>driver.c\<close> would have the two silently
+  overwrite one another. The store keys below are this theory's own three
+  (\<open>SelectionSort#79\<close>, \<open>#80\<close>, \<open>#81\<close> - everything before that already
+  belongs to the \<^verbatim>\<open>c11\<close>-family commands this theory's own import chain
+  runs first: \<^verbatim>\<open>C11.thy\<close>'s own four \<open>c11_predef\<close> declarations (\<open>\<section>3\<close>),
+  then \<^verbatim>\<open>C11_Tests.thy\<close>'s and \<^verbatim>\<open>AntiqProbe.thy\<close>'s own, both inherited
+  via this theory's own \<open>imports\<close>, chosen precisely to force that
+  sequencing - see this theory's own header comment), exactly as \<open>c11\<close>'s
+  own "[stored as ...]" output reports them.\<close>
 c11_export_h "selectionSort" exports "SelectionSort#79"
 c11_export_c "selectionSort" exports "SelectionSort#80"
-c11_export_c "driver" exports "SelectionSort#81"
+c11_export_c "selectionSortDriver" exports "SelectionSort#81"
 
 end
