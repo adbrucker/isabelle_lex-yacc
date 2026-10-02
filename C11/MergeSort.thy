@@ -196,8 +196,8 @@ text\<open>
   \<^verbatim>\<open>C11_Tests.thy\<close>'s, \<^verbatim>\<open>AntiqProbe.thy\<close>'s, \<^verbatim>\<open>SelectionSort.thy\<close>'s, and
   \<^verbatim>\<open>BinarySearch.thy\<close>'s own three each), exactly as \<open>c11\<close>'s own
   "[stored as ...]" output reports them.\<close>
-c11_export_h "mergeSort" exports "MergeSort#85"
-c11_export_c "mergeSort" exports "MergeSort#86"
-c11_export_c "mergeSortDriver" exports "MergeSort#87"
+c11_export_h "mergeSort" exports "MergeSort#10"
+c11_export_c "mergeSort" exports "MergeSort#11"
+c11_export_c "mergeSortDriver" exports "MergeSort#12"
 
 end
