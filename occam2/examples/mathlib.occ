@@ -1,0 +1,19 @@
+-- A small library of occam 2 specifications, loaded with occam2_file:
+-- a unit of specifications only, whose names stay in scope for later units.
+
+VAL INT max.items IS 64:
+
+INT FUNCTION square (VAL INT n)
+  INT r:
+  VALOF
+    r := n * n
+  RESULT r
+:
+
+PROC swap (INT a, b)
+  INT t:
+  SEQ
+    t := a
+    a := b
+    b := t
+:

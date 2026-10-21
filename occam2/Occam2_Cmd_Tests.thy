@@ -221,4 +221,66 @@ val exported = File.read (Path.append (Resources.master_directory @{theory}) (Pa
 val _ = check "exported text is the pretty-printed unit" (exported = "INT x:\nx := 1\n")
 \<close>
 
+subsection\<open>\<open>occam2_file\<close> on external sources\<close>
+
+text\<open>Two real files, read relative to this theory's master directory. The first
+  (\<^verbatim>\<open>examples/mathlib.occ\<close>) is a library unit of specifications only, so its names stay in
+  the environment; the second (\<^verbatim>\<open>examples/pipeline.occ\<close>) is a program that uses them, and
+  carries two antiquotation comments of its own.\<close>
+
+occam2_file \<open>examples/mathlib.occ\<close>
+
+ML\<open>
+val thy_lib = @{theory}
+val key_lib = (case OEnv.get (Context.Theory thy_lib) of
+                 OEnv.mk {units, ...} => OEnv.ast_store_key thy_lib (units - 1))
+val path_lib = Path.append (Resources.master_directory thy_lib) (Path.explode "examples/mathlib.occ")
+val idents_lib = (case OEnv.get (Context.Theory thy_lib) of OEnv.mk {idents, ...} => idents)
+val _ = check "mathlib: the file's specifications are stored as a Specs unit"
+  (case OEnv.get_ast key_lib thy_lib of SOME (Occam2_Ast.Specs ss) => length ss = 3 | _ => false)
+val _ = check "mathlib: the source text stored is the file's own"
+  (OEnv.get_source key_lib thy_lib = SOME (File.read path_lib))
+val _ = check "mathlib: its names stay in the environment"
+  (forall (Symtab.defined idents_lib) ["max.items", "square", "swap"])
+\<close>
+
+occam2_file \<open>examples/pipeline.occ\<close>
+
+ML\<open>
+val thy_pipe = @{theory}
+val key_pipe = (case OEnv.get (Context.Theory thy_pipe) of
+                  OEnv.mk {units, ...} => OEnv.ast_store_key thy_pipe (units - 1))
+val idents_pipe = (case OEnv.get (Context.Theory thy_pipe) of OEnv.mk {idents, ...} => idents)
+val _ = check "pipeline: stored as a process"
+  (case OEnv.get_ast key_pipe thy_pipe of SOME (Occam2_Ast.Proc _) => true | _ => false)
+val _ = check "pipeline: its own specifications are scoped to the program"
+  (not (Symtab.defined idents_pipe "generate") andalso not (Symtab.defined idents_pipe "answer"))
+val _ = check "pipeline: the probe_ast comment was dispatched on the first specification"
+  (String.isPrefix "PROTOCOL num" (Occam2_Ast.pp_root (!OCCAM_AST)))
+val _ = check "pipeline: the stored AST pretty-prints to a parsable program (idempotent)"
+  (case OEnv.get_ast key_pipe thy_pipe of
+     SOME root =>
+       let val text = Occam2_Ast.pp_root root
+           val again = Occam2_Parse.parse_quiet Occam2_Parse.Entry_Unit @{context} (Input.string text)
+       in (case again of SOME r => Occam2_Ast.pp_root r = text | NONE => false) end
+   | NONE => false)
+
+fun reports_in thy text =
+  let
+    val pos = Position.id "4712"
+    val source = Input.source false text (pos, pos)
+    val collected = Unsynchronized.ref ([] : string list)
+    val root = the (Occam2_Parse.parse_quiet Occam2_Parse.Entry_Unit (Proof_Context.init_global thy) source)
+    val _ = Unsynchronized.setmp Private_Output.report_fn
+              (fn outs => collected := String.concat outs :: !collected)
+              (fn () => AnaEval.analyse_and_eval root thy) ()
+  in String.concat (!collected) end
+
+val pipeline_text = File.read (Path.append (Resources.master_directory thy_pipe) (Path.explode "examples/pipeline.occ"))
+val _ = check "pipeline: with the library loaded, no name is reported as undeclared"
+  (count "bad" (reports_in thy_pipe pipeline_text) = 0)
+val _ = check "pipeline: without the library, square and max.items are reported as undeclared"
+  (count "bad" (reports_in (OEnv.reset_oenv @{theory Occam2}) pipeline_text) >= 2)
+\<close>
+
 end
