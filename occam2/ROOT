@@ -15,3 +15,4 @@ session "Occam2" (AFP) = HOL +
     Occam2 (global)
     Occam2_Tests
     Occam2_Cmd_Tests
+    Occam2_Example (* imports Occam2_Cmd_Tests, see its own header comment *)
