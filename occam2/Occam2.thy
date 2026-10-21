@@ -81,9 +81,10 @@ text\<open>
   \<^item> The first token of a fragment fixes the base indentation, so a cartouche may be
     indented as a whole.
   \<^item> The grammar has four benign ml-yacc conflicts (one reduce/reduce, three
-    shift/reduce) resolved in the intended way: they all concern the textual overlap of a
-    declaration \<open>INT x:\<close> and a conversion \<open>INT x\<close> at the start of a choice, option or
-    alternative, and of \<open>(\<close> as expression parenthesis versus the start of a value process.
+    shift/reduce), each resolved in the intended way: a declaration \<open>INT x, y:\<close> wins over
+    a type conversion \<open>INT x\<close> followed by a comma; \<open>[e]\<close> is read as an array type rather than a
+    one-element table; \<open>INT::[]BYTE\<close> is a counted-array protocol rather than \<open>INT\<close> followed
+    by something else; and \<open>;\<close> continues a sequential protocol rather than ending it.
   \<^item> Compiler directives (\<open>#USE\<close>, \<open>#INCLUDE\<close>, \<open>#OPTION\<close>, ...), which are not part of
     the language proper in the manual, are not recognised; consequently there is no
     analogue of C11's \<open>c11_predef\<close>. A library-style unit of specifications (parsed by
@@ -263,5 +264,10 @@ val _ = Outer_Syntax.command @{command_keyword "occam2_expr_reject"}
 
 end (* local open *)
 \<close>
+
+text\<open>The environment as it stands now - the standard antiquotation handlers of
+  \<^verbatim>\<open>Occam2_AnaEval.thy\<close> registered, nothing declared - is what \<open>reset_oenv\<close> restores
+  unless a later theory nominates another snapshot.\<close>
+set_oenv_default
 
 end

@@ -5,11 +5,13 @@ chapter AFP
    "LexYacc.thy"/"YaccLib.thy" for "Occam2_Parser.thy"'s own relative import,
    which makes the sessions unable to share one build graph. Build with
    "isabelle build -d occam2 Occam2" - never together with the other two in
-   the same invocation, and no "ROOTS" file here for the same reason. *)
+   the same invocation. The manual is a sub-session of this one ("manual/ROOT",
+   found through "ROOTS"); see there for how to produce the PDF. *)
 session "Occam2" (AFP) = HOL +
   options [timeout = 1200]
   directories
     ".."
-  theories [document = false]
+  theories
+    Occam2 (global)
     Occam2_Tests
     Occam2_Cmd_Tests

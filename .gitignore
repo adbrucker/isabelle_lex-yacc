@@ -9,3 +9,4 @@ output
 
 # occam2_export output of Occam2_Cmd_Tests.thy (regenerated on every build)
 /occam2/*.occ
+/occam2/manual/*.occ
