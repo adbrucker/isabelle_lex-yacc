@@ -28,8 +28,13 @@
 
 (*<*)
 theory Occam2_Manual
-  imports "Occam2"
+  imports "Occam2.Occam2_Example"
 begin
+
+(* The example theory leaves its own declarations and a unit counter behind; start from the
+   environment holding exactly the standard handlers, so the numbering of the store keys below
+   is this theory's own. *)
+reset_oenv
 (*>*)
 
 section\<open>What is Isabelle/occam\<close>
@@ -527,6 +532,117 @@ occam2_export "mux" exports "Occam2_Manual#7"
 ML\<open>
 val exported = File.read (Path.append (Resources.master_directory @{theory}) (Path.explode "mux.occ"))
 val _ = writeln exported
+\<close>
+
+subsection\<open>Contracts and Concurrency: The Example Theory\<close>
+
+text\<open>
+  The session's own worked example, \<^verbatim>\<open>Occam2_Example.thy\<close>, is the occam analogue of the C11
+  project's \<^verbatim>\<open>SelectionSort.thy\<close>: two small programs whose annotations are \<^emph>\<open>mockups\<close>, in
+  the sense that they check their HOL content and keep it for a later semantic backend, but
+  assign no meaning to it. It is condensed here; the theory itself also exports both
+  programs back to occam text (\<^verbatim>\<open>euclid.occ\<close>, \<^verbatim>\<open>buffer.occ\<close>). The four mockups
+  \<open>requires\<close>, \<open>ensures\<close>, \<open>inv\<close> and \<open>measure\<close> are the contract-style annotations of the C11
+  examples (which took them from the why3 suite); they are produced by one ML function of the
+  example theory, \<open>mockup_annotation_antiq\<close>, and registered with \<open>setup\<close>:
+\<close>
+
+setup\<open>mockup_annotation_antiq "requires"\<close>
+setup\<open>mockup_annotation_antiq "ensures"\<close>
+setup\<open>mockup_annotation_antiq "inv"\<close>
+setup\<open>mockup_annotation_antiq "measure"\<close>
+
+text\<open>
+  \<^bold>\<open>A sequential program.\<close> Euclid's algorithm as an occam \<open>FUNCTION\<close>, a value process whose
+  \<open>VALOF\<close> contains the loop. The contract sits in front of the function, the invariant and
+  the termination measure in front of the \<open>WHILE\<close>. The annotation of level \<open>1\<close> is not a
+  mockup but the standard \<open>lemma\<close> antiquotation: it proves, once, the HOL fact that makes the
+  invariant preserved by the loop body (\<open>\<section>2.5\<close>), so it runs after the level-\<open>0\<close> mockups.
+  An annotation's cartouche may span several lines. \<open>REM\<close> is occam's remainder, equal to
+  HOL's \<open>mod\<close> on non-negative operands; \<open>INT\<close> is read as \<^typ>\<open>int\<close>, a small gap that a
+  semantic backend would have to close.
+\<close>
+
+occam2\<open>
+--@ requires \<open>(0::int) \<le> a \<and> 0 \<le> b\<close>
+--@ ensures \<open>(x::int) = gcd a b\<close>
+--@ lemma(1) \<open>gcd_loop_step: "(y::int) \<noteq> 0 \<Longrightarrow> gcd y (x mod y) = gcd x y"
+             by (metis gcd_red_int)\<close>
+INT FUNCTION gcd (VAL INT a, b)
+  INT x, y:
+  VALOF
+    SEQ
+      x := a
+      y := b
+      --@ inv \<open>(gcd (x::int) y) = gcd a b\<close>
+      --@ measure \<open>nat (y::int)\<close>
+      WHILE y <> 0
+        INT t:
+        SEQ
+          t := x REM y
+          x := y
+          y := t
+  RESULT x
+:
+\<close>
+
+thm gcd_loop_step
+
+text\<open>
+  \<^bold>\<open>A concurrent program.\<close> A one-place buffer between a source and a sink. The two channels
+  are synchronous and unbuffered: \<open>c ! v\<close> does not complete before the partner's \<open>c ? x\<close>
+  does, so it is the buffer process that lets the source run ahead of the sink by one value. The
+  sink's contract is what a semantic backend would have to prove, whatever the interleaving of
+  the three processes: it ends with the Gauss sum. (The accumulator is \<open>acc\<close>, not
+  \<open>total\<close>: a mockup reads an occam name as a free HOL variable, and \<open>total\<close> is a HOL constant
+  - the same trap as \<open>min\<close> in the C11 \<^verbatim>\<open>SelectionSort.thy\<close>. The processes are called
+  \<open>source\<close>, \<open>cell\<close> and \<open>sink\<close> here only because \<open>producer\<close> and \<open>consumer\<close> are taken by the
+  previous section's example; the theory itself uses those two names.)
+\<close>
+
+occam2\<open>
+PROC source (VAL INT n, CHAN OF INT out)
+  SEQ i = 1 FOR n
+    out ! i
+:
+
+PROC cell (CHAN OF INT in, out)
+  INT x:
+  WHILE TRUE
+    SEQ
+      in ? x
+      out ! x
+:
+
+--@ requires \<open>(0::nat) \<le> n\<close>
+--@ ensures \<open>(acc::nat) = n * (n + 1) div 2\<close>
+PROC sink (VAL INT n, CHAN OF INT in, INT acc)
+  INT x:
+  SEQ
+    acc := 0
+    SEQ i = 1 FOR n
+      SEQ
+        in ? x
+        acc := acc + x
+:
+\<close>
+
+text\<open>
+  The system itself. The comment above the \<open>PAR\<close> uses navigation: attached to the \<open>PAR\<close> as a
+  whole, \<open>[rrrd]\<close> makes it point at the third of its three branches, the sink (the children
+  are the three processes, and the first \<open>r\<close> only starts the cursor).
+\<close>
+
+occam2\<open>
+CHAN OF INT a, b:
+INT sum:
+SEQ
+  --@ highlight[rrrd]
+  PAR
+    source (10, a)
+    cell (a, b)
+    sink (10, b, sum)
+  SKIP
 \<close>
 
 section\<open>The Abstract Syntax\<close>
