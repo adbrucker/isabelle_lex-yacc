@@ -15,13 +15,13 @@
    AntiqProbe - pre-existing, not introduced here - left alone rather than
    restructured as part of this fix. *)
 theory SelectionSort
-  imports AntiqProbe
+  imports C11
 begin
 
 section\<open>The Problem\<close>
 
-text\<open>We re-formulate the SelectionSort Example from the Suite of the why-tool \<^url>\<open>https://why3.org/\<close>.
-In its specific language WhyML, it reads as follows:
+text\<open>We re-formulate the SelectionSort Example from the Suite of the 
+why-tool \<^url>\<open>https://why3.org/\<close>. In its specific language WhyML, it reads as follows:
 @{verbatim \<open>
 module SelectionSort
 
@@ -52,10 +52,10 @@ let selectionsort (t : array int) =
   done
 end\<close>}
 
-  In this example demonstrating syntactic issues, no semantic interpretation 
+  This example demonstrates syntactic issues; no semantic interpretation 
   and therefore no formal verification is intended.
 
-  As a consequence, the WhyML front- end's own \<open>requires\<close>/\<open>ensures\<close>/\<open>invariant\<close> specification 
+  As a consequence, the WhyML front-end's own \<open>requires\<close>/\<open>ensures\<close>/\<open>invariant\<close> specification 
   language, kept for reference in the genuine \<open>C11\<close> example below, is realized by mockups.
   This concerns the four WhyML annotation kinds - \<open>requires\<close>, \<open>ensures\<close>, loop \<open>invariant\<close>,
   and the implicit termination argument every WhyML \<open>for\<close> loop carries, which become
@@ -137,13 +137,13 @@ void swap(int *t, int n, int i, int j) {
 
 void selectionSort(int *t, int n) {
   for (/*@ inv \<open>\<forall>k l::nat. 0 \<le> k \<and> k \<le> l \<and> l < i \<longrightarrow> t k \<le> t l\<close>
-        @ inv \<open>\<forall>k l::nat. 0 \<le> k \<and> k < i \<and> i \<le> l \<and> l < n \<longrightarrow> t k \<le> t l\<close>
-        @ measure \<open>n - i\<close> */
+         @ inv \<open>\<forall>k l::nat. 0 \<le> k \<and> k < i \<and> i \<le> l \<and> l < n \<longrightarrow> t k \<le> t l\<close>
+         @ measure \<open>n - i\<close> */
        int i = 0; i < n; i = i + 1) {
     int min = i;
     for (/*@ inv \<open>i \<le> m \<and> m < j\<close>
-          @ inv \<open>\<forall>k::nat. i \<le> k \<and> k < j \<longrightarrow> t m \<le> t k\<close>
-          @ measure \<open>n - j\<close> */
+           @ inv \<open>\<forall>k::nat. i \<le> k \<and> k < j \<longrightarrow> t m \<le> t k\<close>
+           @ measure \<open>n - j\<close> */
          int j = i + 1; j < n; j = j + 1) {
       if (t[j] < t[min]) {
         min = j;
@@ -208,8 +208,10 @@ text\<open>
   via this theory's own \<open>imports\<close>, chosen precisely to force that
   sequencing - see this theory's own header comment), exactly as \<open>c11\<close>'s
   own "[stored as ...]" output reports them.\<close>
-c11_export_h "selectionSort" exports "SelectionSort#79"
-c11_export_c "selectionSort" exports "SelectionSort#80"
-c11_export_c "selectionSortDriver" exports "SelectionSort#81"
+c11_export_h "selectionSort" exports "SelectionSort#4"
+c11_export_c "selectionSort" exports "SelectionSort#5"
+c11_export_c "selectionSortDriver" exports "SelectionSort#6"
+
+
 
 end

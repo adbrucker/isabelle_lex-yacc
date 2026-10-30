@@ -176,8 +176,8 @@ text\<open>
   \<open>c11_predef\<close> declarations, then \<^verbatim>\<open>C11_Tests.thy\<close>'s,
   \<^verbatim>\<open>AntiqProbe.thy\<close>'s, and \<^verbatim>\<open>SelectionSort.thy\<close>'s own three), exactly
   as \<open>c11\<close>'s own "[stored as ...]" output reports them.\<close>
-c11_export_h "binarySearch" exports "BinarySearch#82"
-c11_export_c "binarySearch" exports "BinarySearch#83"
-c11_export_c "binarySearchDriver" exports "BinarySearch#84"
+c11_export_h "binarySearch" exports "BinarySearch#7"
+c11_export_c "binarySearch" exports "BinarySearch#8"
+c11_export_c "binarySearchDriver" exports "BinarySearch#9"
 
 end

@@ -6,3 +6,7 @@ output
 # these on every build) - not C11/examples/*.c, which are genuine fixtures
 /C11/*.c
 /C11/*.h
+
+# occam2_export output of Occam2_Cmd_Tests.thy (regenerated on every build)
+/occam2/*.occ
+/occam2/manual/*.occ

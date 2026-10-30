@@ -1,0 +1,58 @@
+-- A three-stage pipeline: generate the numbers 1 .. n, square them, add them up.
+-- It uses `square' and `max.items' from mathlib.occ, loaded before it.
+
+--@ probe_ast
+PROTOCOL num
+  CASE
+    value; INT
+    done
+:
+
+PROC generate (VAL INT n, CHAN OF num out)
+  SEQ
+    SEQ i = 1 FOR n
+      out ! value; i
+    out ! done
+:
+
+PROC squarer (CHAN OF num in, out)
+  BOOL going:
+  INT x:
+  SEQ
+    going := TRUE
+    WHILE going
+      in ? CASE
+        value; x
+          out ! value; square (x)
+        done
+          SEQ
+            out ! done
+            going := FALSE
+:
+
+PROC total (CHAN OF num in, CHAN OF INT result)
+  INT sum, x:
+  BOOL going:
+  SEQ
+    sum := 0
+    going := TRUE
+    WHILE going
+      in ? CASE
+        value; x
+          sum := sum + x
+        done
+          going := FALSE
+    result ! sum
+:
+
+CHAN OF num raw, squared:
+CHAN OF INT result:
+INT answer:
+SEQ
+  PAR
+    generate (max.items, raw)
+    squarer (raw, squared)
+    total (squared, result)
+    result ? answer
+  --@ highlight
+  SKIP
