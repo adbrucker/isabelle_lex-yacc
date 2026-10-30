@@ -310,12 +310,11 @@ section\<open>Defining Lex/Yacc Specifications\<close>text\<open>\label{sec:comm
 
 text \<open>
 
-  The theory @{verbatim "Isabelle_Lex-Yacc.LexYacc"} (which also is the main entry point for the 
-  Isabelle Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, 
-  Isar-level interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc 
-  directly within Isabelle theories. It processes lexical and grammatical specifications, compiles 
-  them into SML structures, and loads them into the current Isabelle theory context. Its general 
-  syntax is as follows:
+  The theory @{theory "Isabelle_Lex-Yacc.LexYacc"} (which also is the main entry point for the Isabelle 
+  Lex/Yacc framework) provides @{command "ml_lex_yacc"} command provides an integrated, Isar-level 
+  interface for defining and generating Standard ML parsers using ML-Lex and ML-Yacc directly within 
+  Isabelle theories. It processes lexical and grammatical specifications, compiles them into SML 
+  structures, and loads them into the current Isabelle theory context. Its general syntax is as follows:
 
   @{rail \<open>
     @@{command ml_lex_yacc} ('[' options ']')? name \<newline> 'where'
