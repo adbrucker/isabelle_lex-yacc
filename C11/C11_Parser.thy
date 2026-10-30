@@ -27,7 +27,7 @@
  ***********************************************************************************)
 
 theory C11_Parser
-  imports "../LexYacc" "C11_Ast"
+  imports "../Isabelle_Lex-Yacc/LexYacc" "C11_Ast"
 begin
 
 text\<open>

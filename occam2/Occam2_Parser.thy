@@ -1,5 +1,5 @@
 theory Occam2_Parser
-  imports "../LexYacc" "Occam2_Ast"
+  imports "../Isabelle_Lex-Yacc/LexYacc" "Occam2_Ast"
 begin
 
 section\<open>Lexer and Parser for occam 2\<close>
