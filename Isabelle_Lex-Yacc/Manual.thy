@@ -320,7 +320,7 @@ text \<open>
     @@{command ml_lex_yacc} ('[' options ']')? name \<newline> 'where'
       lex_spec 'and' yacc_spec
     ;
-    options: ('verbose' | 'lex_only' | 'yacc_only' | 'expert' | 'no_linking' | 'no_reflect') + ','
+    options: ('verbose' | 'lex_only' | 'yacc_only' | 'expert' | 'state' | 'no_linking' | 'no_reflect') + ','
     ;
     lex_spec: ('lex_user_declarations' text)?
               'lex_definitions'  \<newline> text
@@ -348,6 +348,16 @@ text \<open>
     \<^item> \<open>expert\<close>: Enables advanced/expert mode where the specified lex and yacc specifications are 
                 passed unmodified to ML-Lex and ML-Yacc (except adding the \<open>%%\<close> separators between the three blocks 
                 of each specification). Furthermore, automated linking is disabled in expert mode. 
+    \<^item> \<open>state\<close>: Generates a \<^emph>\<open>re-entrant\<close> lexer/parser pair. Without this option the helpers
+                (\<open>tok\<close>, \<open>tok_val\<close>, \<open>get_pos\<close>, \<open>\<dots>\<close>) use one process-wide state, so two parses running at
+                the same time (Isabelle runs commands and theories in parallel) disturb each other. With
+                \<open>state\<close>, each call of \<open>parse_source\<close> creates its own state object
+                (\<^ML>\<open>Lex_yacc_state.init\<close>) and passes it to the lexer (ML-Lex's \<open>%arg\<close>, as the variable
+                \<open>st\<close>) and to the parser (ML-Yacc's \<open>%arg\<close>, also \<open>st\<close>). The helpers then take the state first
+                (\<open>tok st (\<dots>)\<close>), and rules that skip input use \<open>continue ()\<close> instead of \<open>lex ()\<close>. A language
+                that needs state of its own redefines \<open>arg\<close>, \<open>init\<close> and \<open>base\<close> in \<open>lex_user_declarations\<close> and
+                states its type in a \<open>%arg\<close> of \<open>yacc_definitions\<close>; see \<^verbatim>\<open>CalcState.thy\<close>. Cannot be combined
+                with \<open>expert\<close>.
     \<^item> \<open>no_linking\<close>: Skips the automatic generation of the boilerplate "linking" structure 
                 (the code that normally joins the Lexer, ParserData, and LrVals together). This is useful 
                 if you intend to manually wire the generated ML functor blocks together later.

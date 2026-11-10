@@ -394,10 +394,13 @@ end
 ML\<open>
 structure MlLexYacc = struct
 
-  fun generate verbose expert no_reflect no_linking yacc_only lex_only name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
+  fun generate verbose expert state no_reflect no_linking yacc_only lex_only name lex_decl lex_defs lex_rules yacc_decl yacc_defs yacc_rules thy = 
       let
         
         fun trace s = if verbose then writeln s else ()
+        val _ = if state andalso expert
+                then error "ml_lex_yacc: the options [state] and [expert] cannot be combined (an expert supplies their own lexer header and linking)"
+                else ()
         val no_linking = if no_reflect orelse yacc_only orelse lex_only then true else no_linking 
         fun store show_msg ext data  =
           let
@@ -424,10 +427,11 @@ structure MlLexYacc = struct
                             (Input.source_explode lex_defs)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Input.source_explode lex_rules)
-                       else (Symbol_Pos.explode(Isabelle_lex_yacc.header()^"\n", Position.none))@
+                       else (Symbol_Pos.explode((if state then Lex_yacc_state.header () else Isabelle_lex_yacc.header ())^"\n", Position.none))@
                             (lex_decl_syms)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Symbol_Pos.explode("%header (functor "^name^"LexFun(structure Tokens: "^name^"_TOKENS));\n", Position.none))@
+                            (Symbol_Pos.explode(if state then "%arg (st : UserDeclarations.arg);\n" else "", Position.none))@
                             (Input.source_explode lex_defs)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Input.source_explode lex_rules)
@@ -460,6 +464,8 @@ structure MlLexYacc = struct
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Symbol_Pos.explode("%name "^name^"\n", Position.none))@
                             (Symbol_Pos.explode("%pos Position.T\n", Position.none))@
+                            (Symbol_Pos.explode(if state andalso not (String.isSubstring "%arg" (Input.string_of yacc_defs))
+                                                then "%arg (st) : Lex_yacc_state.T\n" else "", Position.none))@
                             (Input.source_explode yacc_defs)@
                             (Symbol_Pos.explode("\n%%\n", Position.none))@
                             (Input.source_explode yacc_rules)
@@ -512,7 +518,7 @@ structure MlLexYacc = struct
         val thy'' = if expert orelse no_linking 
                     then let val _ = trace "Skipping linking ... " in thy' end
                     else let 
-                      val link_sml = Isabelle_lex_yacc.linker name
+                      val link_sml = if state then Lex_yacc_state.linker name else Isabelle_lex_yacc.linker name
                       val _ = if verbose then store false "link.sml" link_sml else ()
                       val _ = trace "Linking ... "
                       val toks =
@@ -564,6 +570,7 @@ in
             let
               val is_verbose = member (op =) opts "verbose"
               val is_expert = member (op =) opts "expert" 
+              val is_state = member (op =) opts "state" 
               val no_linking = member (op =) opts "no_linking" 
               val no_reflect = member (op =) opts "no_reflect" 
               val yacc_only = member (op =) opts "yacc_only" 
@@ -571,7 +578,7 @@ in
             in
               Toplevel.theory (fn thy => 
                Multithreading.synchronized "Lex/Yacc generation." global_lex_yacc_lock (fn () =>
-                MlLexYacc.generate is_verbose is_expert no_reflect no_linking lex_only yacc_only name 
+                MlLexYacc.generate is_verbose is_expert is_state no_reflect no_linking lex_only yacc_only name 
                   lex_user lex_defs lex_rules 
                   yacc_user yacc_defs yacc_rules thy))
             end)

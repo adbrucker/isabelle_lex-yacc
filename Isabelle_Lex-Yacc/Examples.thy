@@ -32,5 +32,7 @@ imports
   CalcExpert
   Pascal
   Datalog
+  CalcState
+  StateTests
 begin 
 end
