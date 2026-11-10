@@ -99,13 +99,20 @@ fun pos_of_root (A.Id id) = A.pos_of_ident id
 
 (* Exactly-once dispatch of every physical antiquotation, whatever number of AST
    nodes share its leftmost source position - the same design, for the same
-   reason, as C11's "Dispatched_Antiqs" (see C11_AnaEval.thy). *)
+   reason, as C11's "Dispatched_Antiqs" (see C11_AnaEval.thy). The set of comments
+   already dispatched belongs to one walk ("analyse_and_eval" below installs a fresh one
+   for its dynamic extent) and is kept per thread: a walk is plain, synchronous recursion
+   on a single thread, so two walks running at the same time (in different threads) cannot
+   see each other's set - a process-wide variable, as before, made them interfere. *)
 structure Dispatched_Antiqs = struct
-  val state : Position.T A.comment list Synchronized.var =
-    Synchronized.var "Occam2.AnaEval.Dispatched_Antiqs.state" []
-  fun reset () = Synchronized.change state (fn _ => [])
-  fun already_dispatched c = member (op =) (Synchronized.value state) c
-  fun mark c = Synchronized.change state (fn cs => c :: cs)
+  val state : Position.T A.comment list Unsynchronized.ref Thread_Data.var = Thread_Data.var ()
+  fun current () =
+    (case Thread_Data.get state of
+       SOME r => r
+     | NONE => raise Fail "Dispatched_Antiqs: outside of analyse_and_eval")
+  fun with_fresh f = Thread_Data.setmp state (SOME (Unsynchronized.ref [])) f ()
+  fun already_dispatched c = member (op =) (!(current ())) c
+  fun mark c = let val r = current () in r := c :: !r end
 end
 
 (* A navigation step's coarse target category, ignoring the constructor within. *)
@@ -802,13 +809,12 @@ and walk_proc oenv ctx (p : pos A.oProcess) : oenv * acts =
         in plus (o2, a1 @ a2) end
   end
 
-fun analyse_and_eval (root : pos A.root) thy =
+fun analyse_and_eval0 (root : pos A.root) thy =
   let
     val oenv0 = get (Context.Theory thy)
     (* The bottom frame is always the top-level root itself: the one thing
        every antiquotation can fall back to, so "ctx" is never empty. *)
     val ctx0 = [root]
-    val _ = Dispatched_Antiqs.reset ()
     fun finish (oenv1, acts) = (Context.theory_map (put oenv1) thy, acts)
   in
     case root of
@@ -822,6 +828,9 @@ fun analyse_and_eval (root : pos A.root) thy =
     | A.Spec s => finish (walk_spec oenv0 ctx0 s)
     | A.Specs ss => finish (seq (fn oenv => fn s => walk_spec oenv ctx0 s) oenv0 ss)
   end
+
+fun analyse_and_eval root thy =
+  Dispatched_Antiqs.with_fresh (fn () => analyse_and_eval0 root thy)
 
 end
 \<close>

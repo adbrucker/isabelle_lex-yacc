@@ -30,7 +30,7 @@ theory Occam2
   imports "Occam2_Parser" "Occam2_AnaEval"
   keywords "occam2" "occam2_ident" "occam2_expr" :: thy_decl
   and      "occam2_file" :: thy_load
-  and      "occam2_reject" "occam2_ident_reject" "occam2_expr_reject" :: thy_decl
+  and      "occam2_reject" "occam2_ident_reject" "occam2_expr_reject" :: diag
   and      "set_oenv_default" "reset_oenv" :: thy_decl
   and      "setup_backend" :: thy_decl
   and      "occam2_export" :: thy_decl
@@ -255,13 +255,11 @@ val _ = Outer_Syntax.command @{command_keyword "occam2_export"}
         "Export the given stored occam2 section(s) as occam 2 source text into a .occ file"
         (export_args >> (fn args => Toplevel.theory (run_occam2_export args)))
 
-(* The _reject commands are "thy_decl" although they store nothing (and so could be
-   "diag", as C11's are): Isabelle runs a diag command asynchronously, in parallel with the
-   commands after it (Pure/PIDE/command.ML, "Toplevel.diag"), and the lexer and layout
-   state of the parser is process-wide - a reject running while the next "occam2" command
-   parses made that command fail now and then, with a spurious syntax error. A thy_decl
-   command is evaluated in sequence. Correct rejection means a parse failure under the
-   silent, locally-raising error callback (see "Occam2_Parse.parse_quiet"). *)
+(* The _reject commands store nothing, so they are "diag"; Isabelle evaluates a diag command
+   asynchronously, in parallel with the commands after it (Pure/PIDE/command.ML,
+   "Toplevel.diag") - harmless here, as every parse has its own state. Correct rejection
+   means a parse failure under the silent, locally-raising error callback (see
+   "Occam2_Parse.parse_quiet"). *)
 fun run_reject entry kind_name source thy =
     let
       val ctxt = Proof_Context.init_global thy

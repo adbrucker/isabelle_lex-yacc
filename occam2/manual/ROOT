@@ -2,9 +2,8 @@ chapter AFP
 
 (* The Isabelle/occam manual, a sub-session of "Occam2" (../ROOT): it imports
    the global theory "Occam2" and runs its live examples against the real
-   commands. Being a session of its own, it also needs no import edge to the
-   test theories to be kept apart from them (the lexer state is process-wide,
-   see the Limitations section of the manual).
+   commands. Being a session of its own, it needs no import edge to the test
+   theories.
 
    Generate the PDF with
 

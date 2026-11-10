@@ -94,9 +94,9 @@ Everything described above builds and passes its tests. Deliberate gaps,
 documented in the manual's *Limitations* section: indentation is checked for
 consistency, not for exact width; compiler directives (`#USE`, `#INCLUDE`, ...)
 are not recognised; there is no type or usage checking; four benign yacc
-conflicts are resolved in the intended way; and, as in C11, the lexer state is
-process-wide, so the parser is not re-entrant (which is why theories of this
-session that run parser commands are chained by imports).
+conflicts are resolved in the intended way. The parser is re-entrant: it is built
+with `ml_lex_yacc [state]`, so every parse has its own state object and any number
+of parses may run at the same time.
 
 ## License
 

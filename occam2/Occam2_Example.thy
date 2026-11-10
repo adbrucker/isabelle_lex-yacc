@@ -1,10 +1,7 @@
-(* Imports "Occam2_Cmd_Tests" - not plain "Occam2" - purely to force a
-   sequential build order: the lexer's comment/layout state (Occam2_Comments,
-   Occam2_Layout in Occam2_Parser.thy) is process-wide, so two theories of
-   one session that both run "occam2"-family commands with no import edge
-   between them can be scheduled in parallel and race on it (the same reason
-   SelectionSort.thy imports AntiqProbe in the C11 session). The environment
-   the test theories leave behind is thrown away again right below. *)
+(* Imports "Occam2_Cmd_Tests" - not plain "Occam2" - only to keep the theories of this
+   session in one sequential chain (the parser is re-entrant, every parse has its own
+   state, so nothing depends on it). The environment the test theories leave behind is
+   thrown away again right below. *)
 theory Occam2_Example
   imports Occam2_Cmd_Tests
 begin

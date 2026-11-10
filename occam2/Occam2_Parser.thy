@@ -53,50 +53,70 @@ text\<open>
 \<close>
 
 ML\<open>
+(* Everything the lexer and the grammar actions need to remember during one parse lives in
+   one state object, created per parse ("init") and handed to the lexer (ML-Lex %arg) and
+   the parser (ML-Yacc %arg) by the "[state]" mode of ml_lex_yacc - nothing is shared
+   between parses, so any number can run at once. (The previous versions of this theory kept
+   the same data in process-wide variables, which two simultaneous parses corrupted.)
+     base        - the library's own part: source, context, position table
+     pending     - comments lexed since the previous real token
+     attached    - the comments that have been attached to a token position
+     layout      - the layout recorder, see "Occam2_Layout"
+     antiq_*     - the antiquotation scanner (see the lexer below): nesting depth of the
+                   cartouche being skipped, the most recent tag, the body text so far and
+                   its start position *)
+structure Occam2_State = struct
+  type comments = Position.T Occam2_Ast.comment list
+  type layout = {nl_seen: bool, indent: int, start: int, stop: int, cont: bool}
+  val layout_init : layout = {nl_seen = false, indent = 0, start = 0, stop = 0, cont = false}
+
+  type T = {base : Lex_yacc_state.T,
+            pending : comments Unsynchronized.ref,
+            attached : (Position.T * comments) list Unsynchronized.ref,
+            layout : layout Unsynchronized.ref,
+            antiq_depth : int Unsynchronized.ref,
+            antiq_tag : (string * Occam2_Ast.navi list * int * Position.T) Unsynchronized.ref,
+            antiq_buf : string list Unsynchronized.ref,
+            antiq_start : Position.T Unsynchronized.ref}
+
+  fun init ctxt source : T =
+    {base = Lex_yacc_state.init ctxt source,
+     pending = Unsynchronized.ref [],
+     attached = Unsynchronized.ref [],
+     layout = Unsynchronized.ref layout_init,
+     antiq_depth = Unsynchronized.ref 0,
+     antiq_tag = Unsynchronized.ref ("", [], 0, Position.none),
+     antiq_buf = Unsynchronized.ref [],
+     antiq_start = Unsynchronized.ref Position.none}
+end
+
 (* The comments/antiquotations collected while lexing, attached to whichever
-   real token follows (mirrors C11_Comments - see its long rationale in
-   C11_Parser.thy; the one design point worth restating here is that this is a
-   process-wide Synchronized.var, not a Thread_Data cell: the generated lexer's
-   token production does not reliably stay on one OS thread between tokens, so a
-   per-thread cell silently drops state that must survive from one token to the
-   next within a single parse - confirmed empirically in the C11 work). *)
+   real token follows (mirrors C11_Comments - see its rationale in C11_Parser.thy). *)
 structure Occam2_Comments = struct
-  type state = {pending: Position.T Occam2_Ast.comment list,
-                attached: (Position.T * Position.T Occam2_Ast.comment list) list}
-  val state : state Synchronized.var =
-    Synchronized.var "Occam2_Comments.state" {pending = [], attached = []}
+  fun push (st : Occam2_State.T) c = #pending st := !(#pending st) @ [c]
 
-  fun push c =
-    Synchronized.change state (fn {pending, attached} =>
-      {pending = pending @ [c], attached = attached})
-
-  fun push_raw (text, pos) =
+  fun push_raw st (text, pos) =
     if List.all Char.isSpace (String.explode text) then ()
-    else push (Occam2_Ast.Raw_txt [(text, pos)])
+    else push st (Occam2_Ast.Raw_txt [(text, pos)])
 
-  fun push_antiquotation tag navi level cartouche =
-    push (Occam2_Ast.Antiquotation (tag, navi, level, cartouche))
+  fun push_antiquotation st tag navi level cartouche =
+    push st (Occam2_Ast.Antiquotation (tag, navi, level, cartouche))
 
-  fun attach_pending (p : Position.T) =
-    Synchronized.change state (fn {pending, attached} =>
-      case pending of
-        [] => {pending = pending, attached = attached}
-      | cs => {pending = [], attached = (p, cs) :: attached})
+  fun attach_pending (st : Occam2_State.T) (p : Position.T) =
+    (case !(#pending st) of
+       [] => ()
+     | cs => (#pending st := []; #attached st := (p, cs) :: !(#attached st)))
 
   (* Non-destructive on purpose, for the same reason as in C11: several grammar
      rules build a nodeInfo for the same leftmost token, and only some of those
      nodes are ever walked for antiquotations. *)
-  fun claim (p : Position.T) : Position.T Occam2_Ast.comment list =
-    case AList.lookup (op =) (#attached (Synchronized.value state)) p of
-      NONE => []
-    | SOME cs => cs
+  fun claim (st : Occam2_State.T) (p : Position.T) : Position.T Occam2_Ast.comment list =
+    (case AList.lookup (op =) (!(#attached st)) p of NONE => [] | SOME cs => cs)
 
-  fun mk_nodeInfo (claimed_at : Position.T) (report_pos : Position.T) : Position.T Occam2_Ast.nodeInfo =
-    case claim claimed_at of
-      [] => Occam2_Ast.OnlyPos report_pos
-    | cs => Occam2_Ast.NodeInfo (cs, report_pos)
-
-  fun reset () = Synchronized.change state (fn _ => {pending = [], attached = []})
+  fun mk_nodeInfo st (claimed_at : Position.T) (report_pos : Position.T) : Position.T Occam2_Ast.nodeInfo =
+    (case claim st claimed_at of
+       [] => Occam2_Ast.OnlyPos report_pos
+     | cs => Occam2_Ast.NodeInfo (cs, report_pos))
 end
 
 (* Layout bookkeeping shared between the lexer actions and the stream wrapper.
@@ -108,76 +128,77 @@ end
      start/stop - character offsets of the newest real token
      cont     - whether that token is one a statement may be broken after *)
 structure Occam2_Layout = struct
-  type state = {nl_seen: bool, indent: int, start: int, stop: int, cont: bool}
-  val init : state = {nl_seen = false, indent = 0, start = 0, stop = 0, cont = false}
-  val state : state Synchronized.var = Synchronized.var "Occam2_Layout.state" init
+  fun get (st : Occam2_State.T) = !(#layout st)
 
-  fun reset () = Synchronized.change state (fn _ => init)
-  fun get () = Synchronized.value state
+  fun newline (st : Occam2_State.T) indent =
+    let val {start, stop, cont, ...} = get st
+    in #layout st := {nl_seen = true, indent = indent, start = start, stop = stop, cont = cont} end
 
-  fun newline indent =
-    Synchronized.change state (fn {start, stop, cont, ...} =>
-      {nl_seen = true, indent = indent, start = start, stop = stop, cont = cont})
+  fun token (st : Occam2_State.T) (start, stop, cont) =
+    let val {nl_seen, indent, ...} = get st
+    in #layout st := {nl_seen = nl_seen, indent = indent, start = start, stop = stop, cont = cont} end
 
-  fun token (start, stop, cont) =
-    Synchronized.change state (fn {nl_seen, indent, ...} =>
-      {nl_seen = nl_seen, indent = indent, start = start, stop = stop, cont = cont})
-
-  fun clear_newline () =
-    Synchronized.change state (fn {indent, start, stop, cont, ...} =>
-      {nl_seen = false, indent = indent, start = start, stop = stop, cont = cont})
+  fun clear_newline (st : Occam2_State.T) =
+    let val {indent, start, stop, cont, ...} = get st
+    in #layout st := {nl_seen = false, indent = indent, start = start, stop = stop, cont = cont} end
 end
 \<close>
+SML_import \<open>structure Occam2_State = struct open Occam2_State end\<close>
 SML_import \<open>structure Occam2_Ast = struct open Occam2_Ast end\<close>
 SML_import \<open>structure Occam2_Comments = struct open Occam2_Comments end\<close>
 SML_import \<open>structure Occam2_Layout = struct open Occam2_Layout end\<close>
 
-ml_lex_yacc [verbose] "Occam2" where
+ml_lex_yacc [verbose, state] "Occam2" where
 lex_user_declarations\<open>
-(* State for lexically recognizing "@tag \<open>...\<close>" antiquotations inside "--"
-   comments (see the ANTIQ state below): the nesting depth of the cartouche
-   currently being skipped. A comment is always a line comment in occam, so, unlike
-   C11, there is no block-comment state to remember to return to. *)
-val antiq_depth = ref 0
+(* The lexer's and the parser's argument is the per-parse state of "Occam2_State" (the lexer
+   rules and the grammar actions call it "st"); "init" creates it, "base" is its part the
+   library functions work on. *)
+type arg = Occam2_State.T
+fun init ctxt source : arg = Occam2_State.init ctxt source
+fun base (st : arg) : Lex_yacc_state.T = #base st
+
+fun gp (st : arg) yypos = Lex_yacc_state.get_pos (base st) yypos
+fun report (st : arg) x = Lex_yacc_state.report_token (base st) x
+
+(* The antiquotation scanner's state (see the ANTIQ state below): the nesting depth of the
+   cartouche currently being skipped (a comment is always a line comment in occam, so,
+   unlike C11, there is no block-comment state to remember to return to), the most recently
+   seen tag, the text of the cartouche body being scanned (accumulated fragment by
+   fragment across nested cartouches), and that body's start position. *)
+fun antiq_depth (st : arg) = #antiq_depth st
+fun antiq_tag (st : arg) = #antiq_tag st
+fun antiq_buf (st : arg) = #antiq_buf st
+fun antiq_start (st : arg) = #antiq_start st
 
 (* Every token goes through one of the three constructors below, which, before
-   handing over to YaccLib's tok/tok_val (positions, PIDE markup), (1) let the
+   handing over to the library's tok/tok_val (positions, PIDE markup), (1) let the
    comments gathered since the previous token attach themselves to this one,
    and (2) tell the layout recorder where this token starts and stops and
    whether a statement may be broken after it. Unlike C11's lexer, value-carrying
    tokens get their true start/end span as position too (not a zero-width
    point), so that "Xright" in a grammar action is really the end of X. *)
-fun otok cont (yypos, yytext, markup, typ, sort, cons) =
-    (Occam2_Comments.attach_pending (get_pos yypos);
-     Occam2_Layout.token (yypos, yypos + String.size yytext, cont);
-     tok (yypos, yytext, markup, typ, sort, cons))
+fun otok st cont (yypos, yytext, markup, typ, sort, cons) =
+    (Occam2_Comments.attach_pending st (gp st yypos);
+     Occam2_Layout.token st (yypos, yypos + String.size yytext, cont);
+     tok (base st) (yypos, yytext, markup, typ, sort, cons))
 
-fun otok_val cont (yypos, yytext, markup, typ, sort, cons, value) =
+fun otok_val st cont (yypos, yytext, markup, typ, sort, cons, value) =
     let
-      val _ = Occam2_Comments.attach_pending (get_pos yypos)
-      val _ = Occam2_Layout.token (yypos, yypos + String.size yytext, cont)
-      val p = get_pos yypos
-      val p' = get_pos (yypos + String.size yytext)
-      val _ = report_token (yypos, String.size yytext, markup, typ, sort)
+      val _ = Occam2_Comments.attach_pending st (gp st yypos)
+      val _ = Occam2_Layout.token st (yypos, yypos + String.size yytext, cont)
+      val p = gp st yypos
+      val p' = gp st (yypos + String.size yytext)
+      val _ = report st (yypos, String.size yytext, markup, typ, sort)
     in cons (value, p, p') end
 
-fun okw cont markup (yypos, yytext, cons) =
-    (Occam2_Comments.attach_pending (get_pos yypos);
-     Occam2_Layout.token (yypos, yypos + String.size yytext, cont);
-     tok (yypos, yytext, markup, yytext, "", cons))
+fun okw st cont markup (yypos, yytext, cons) =
+    (Occam2_Comments.attach_pending st (gp st yypos);
+     Occam2_Layout.token st (yypos, yypos + String.size yytext, cont);
+     tok (base st) (yypos, yytext, markup, yytext, "", cons))
 
 (* Accumulate one fragment of raw comment text, tagged with its own span. *)
-fun push_raw_fragment (yypos, yytext) =
-    Occam2_Comments.push_raw (yytext, Position.range_position (get_pos yypos, get_pos (yypos + String.size yytext)))
-
-(* Antiquotation state - exactly C11's, see "C11_Parser.thy" for the long form of
-   every note below: the most recently seen tag, the text of the cartouche body
-   being scanned (accumulated fragment by fragment across nested cartouches), and
-   that body's start position. *)
-val antiq_tag : (string * Occam2_Ast.navi list * int * Position.T) ref =
-  ref ("", [], 0, Position.none)
-val antiq_buf : string list ref = ref []
-val antiq_start : Position.T ref = ref Position.none
+fun push_raw_fragment st (yypos, yytext) =
+    Occam2_Comments.push_raw st (yytext, Position.range_position (gp st yypos, gp st (yypos + String.size yytext)))
 
 fun char_to_navi #"u" = Occam2_Ast.up
   | char_to_navi #"U" = Occam2_Ast.Up
@@ -211,36 +232,36 @@ fun parse_tag_navi_level text =
 
 (* A bodyless tag is a complete antiquotation with the empty body; see the
    corresponding note in C11_Parser.thy. *)
-fun antiq_flush_pending_tag () =
-    let val (name, navi, level, pos) = !antiq_tag in
+fun antiq_flush_pending_tag st =
+    let val (name, navi, level, pos) = !(antiq_tag st) in
       if name = "" then ()
       else
-        (antiq_tag := ("", [], 0, Position.none);
-         Occam2_Comments.push_antiquotation {tag = (name, pos)} navi {level = level} {cartouche = ("", pos)})
+        (antiq_tag st := ("", [], 0, Position.none);
+         Occam2_Comments.push_antiquotation st {tag = (name, pos)} navi {level = level} {cartouche = ("", pos)})
     end
 
-fun antiq_tag_seen (yypos, yytext) =
+fun antiq_tag_seen st (yypos, yytext) =
     let val (name, navi, level) = parse_tag_navi_level yytext
-    in antiq_flush_pending_tag (); antiq_tag := (name, navi, level, get_pos yypos) end
+    in antiq_flush_pending_tag st; antiq_tag st := (name, navi, level, gp st yypos) end
 
-fun antiq_body_start yypos = antiq_start := get_pos yypos
+fun antiq_body_start st yypos = antiq_start st := gp st yypos
 
-fun antiq_body_push text = antiq_buf := text :: !antiq_buf
+fun antiq_body_push st text = antiq_buf st := text :: !(antiq_buf st)
 
-fun antiq_body_finish yypos =
+fun antiq_body_finish st yypos =
     let
-      val body_text = String.concat (rev (!antiq_buf))
-      val body_pos = Position.range_position (!antiq_start, get_pos yypos)
-      val (tag_text, navi, level, tag_pos) = !antiq_tag
+      val body_text = String.concat (rev (!(antiq_buf st)))
+      val body_pos = Position.range_position (!(antiq_start st), gp st yypos)
+      val (tag_text, navi, level, tag_pos) = !(antiq_tag st)
     in
-      antiq_buf := [];
-      antiq_tag := ("", [], 0, Position.none);
-      Occam2_Comments.push_antiquotation {tag = (tag_text, tag_pos)} navi {level = level} {cartouche = (body_text, body_pos)}
+      antiq_buf st := [];
+      antiq_tag st := ("", [], 0, Position.none);
+      Occam2_Comments.push_antiquotation st {tag = (tag_text, tag_pos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* The quoted-string alternative to a cartouche body: unlike a cartouche, it
    cannot nest, so tag, level and body are matched by one single rule. *)
-fun antiq_tag_and_string_seen (yypos, yytext) =
+fun antiq_tag_and_string_seen st (yypos, yytext) =
     let
       fun find_quote i = if String.sub (yytext, i) = #"\"" then i else find_quote (i + 1)
       val qpos = find_quote 0
@@ -248,28 +269,29 @@ fun antiq_tag_and_string_seen (yypos, yytext) =
       val body_len = String.size yytext - qpos - 2
       val body_text = String.substring (yytext, qpos + 1, body_len)
       val body_start = yypos + qpos + 1
-      val body_pos = Position.range_position (get_pos body_start, get_pos (body_start + body_len))
+      val body_pos = Position.range_position (gp st body_start, gp st (body_start + body_len))
     in
-      Occam2_Comments.push_antiquotation {tag = (name, get_pos yypos)} navi {level = level} {cartouche = (body_text, body_pos)}
+      Occam2_Comments.push_antiquotation st {tag = (name, gp st yypos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* A newline: the number of blanks following it (tabs count as one blank each -
    the manual's two-space convention is about spaces, and a tab has no defined
    width in occam) is the indentation of the line that starts here. *)
-fun layout_newline yytext = Occam2_Layout.newline (String.size yytext - 1)
+fun layout_newline st yytext = Occam2_Layout.newline st (String.size yytext - 1)
 
-(* Shadows the default "eof" of "Isabelle_lex_yacc.header ()": an antiquotation
+(* Shadows the default "eof" of the "[state]" header: an antiquotation
    cartouche still open at the end of the input is a genuine error, reported at
    the cartouche's own start, not silently swallowed; otherwise a bodyless tag
    still pending at the end of the last comment is flushed. *)
-fun eof () =
+fun eof (st : arg) =
     let
       val _ =
-        if !antiq_depth > 0
-        then (antiq_depth := 0;
-              print_error ("Unterminated antiquotation body: no matching closing cartouche before the end of input",
-                           !antiq_start, !antiq_start))
-        else antiq_flush_pending_tag ()
+        if !(antiq_depth st) > 0
+        then (antiq_depth st := 0;
+              print_error (base st)
+                ("Unterminated antiquotation body: no matching closing cartouche before the end of input",
+                 !(antiq_start st), !(antiq_start st)))
+        else antiq_flush_pending_tag st
     in Tokens.EOF (Position.none, Position.none) end
 \<close>
 lex_definitions\<open>
@@ -287,140 +309,140 @@ CLOSECART=\\\<close>;
 %s LCOMMENT ANTIQ;
 \<close>
 lex_rules\<open>
-<INITIAL>"--"                            => (YYBEGIN LCOMMENT; lex());
-<INITIAL>\n{HWS}*                        => (layout_newline yytext; lex());
-<INITIAL>[\ \t\r]+                       => (lex());
+<INITIAL>"--"                            => (YYBEGIN LCOMMENT; continue ());
+<INITIAL>\n{HWS}*                        => (layout_newline st yytext; continue ());
+<INITIAL>[\ \t\r]+                       => (continue ());
 
-<INITIAL>"AFTER"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.AFTER));
-<INITIAL>"AND"         => (okw true Markup.keyword1 (yypos, yytext, Tokens.AND));
-<INITIAL>"ALT"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.ALT));
-<INITIAL>"ANY"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.ANY));
-<INITIAL>"AT"          => (okw false Markup.keyword1 (yypos, yytext, Tokens.AT));
-<INITIAL>"BITAND"      => (okw true Markup.keyword1 (yypos, yytext, Tokens.BITAND));
-<INITIAL>"BITNOT"      => (okw true Markup.keyword1 (yypos, yytext, Tokens.BITNOT));
-<INITIAL>"BITOR"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.BITOR));
-<INITIAL>"BOOL"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.BOOL));
-<INITIAL>"BYTE"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.BYTE));
-<INITIAL>"CASE"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.CASE));
-<INITIAL>"CHAN"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.CHAN));
-<INITIAL>"ELSE"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.ELSE));
-<INITIAL>"FALSE"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.FALSE));
-<INITIAL>"FOR"         => (okw true Markup.keyword1 (yypos, yytext, Tokens.FOR));
-<INITIAL>"FROM"        => (okw true Markup.keyword1 (yypos, yytext, Tokens.FROM));
-<INITIAL>"FUNCTION"    => (okw false Markup.keyword1 (yypos, yytext, Tokens.FUNCTION));
-<INITIAL>"IF"          => (okw false Markup.keyword1 (yypos, yytext, Tokens.IF));
-<INITIAL>"IS"          => (okw true Markup.keyword1 (yypos, yytext, Tokens.IS));
-<INITIAL>"INT"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.INT));
-<INITIAL>"INT16"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.INT16));
-<INITIAL>"INT32"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.INT32));
-<INITIAL>"INT64"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.INT64));
-<INITIAL>"MINUS"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.MINUS));
-<INITIAL>"MOSTNEG"     => (okw false Markup.keyword1 (yypos, yytext, Tokens.MOSTNEG));
-<INITIAL>"MOSTPOS"     => (okw false Markup.keyword1 (yypos, yytext, Tokens.MOSTPOS));
-<INITIAL>"NOT"         => (okw true Markup.keyword1 (yypos, yytext, Tokens.NOT));
-<INITIAL>"OF"          => (okw false Markup.keyword1 (yypos, yytext, Tokens.OF));
-<INITIAL>"OR"          => (okw true Markup.keyword1 (yypos, yytext, Tokens.OR));
-<INITIAL>"PAR"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.PAR));
-<INITIAL>"PLACE"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.PLACE));
-<INITIAL>"PLACED"      => (okw false Markup.keyword1 (yypos, yytext, Tokens.PLACED));
-<INITIAL>"PLUS"        => (okw true Markup.keyword1 (yypos, yytext, Tokens.PLUS));
-<INITIAL>"PORT"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.PORT));
-<INITIAL>"PRI"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.PRI));
-<INITIAL>"PROC"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.PROC));
-<INITIAL>"PROCESSOR"   => (okw false Markup.keyword1 (yypos, yytext, Tokens.PROCESSOR));
-<INITIAL>"PROTOCOL"    => (okw false Markup.keyword1 (yypos, yytext, Tokens.PROTOCOL));
-<INITIAL>"REAL32"      => (okw false Markup.keyword1 (yypos, yytext, Tokens.REAL32));
-<INITIAL>"REAL64"      => (okw false Markup.keyword1 (yypos, yytext, Tokens.REAL64));
-<INITIAL>"REM"         => (okw true Markup.keyword1 (yypos, yytext, Tokens.REM));
-<INITIAL>"RESULT"      => (okw false Markup.keyword1 (yypos, yytext, Tokens.RESULT));
-<INITIAL>"RETYPES"     => (okw false Markup.keyword1 (yypos, yytext, Tokens.RETYPES));
-<INITIAL>"ROUND"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.ROUND));
-<INITIAL>"SEQ"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.SEQ));
-<INITIAL>"SIZE"        => (okw true Markup.keyword1 (yypos, yytext, Tokens.SIZE));
-<INITIAL>"SKIP"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.SKIP));
-<INITIAL>"STOP"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.STOP));
-<INITIAL>"TIMER"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.TIMER));
-<INITIAL>"TIMES"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.TIMES));
-<INITIAL>"TRUE"        => (okw false Markup.keyword1 (yypos, yytext, Tokens.TRUE));
-<INITIAL>"TRUNC"       => (okw true Markup.keyword1 (yypos, yytext, Tokens.TRUNC));
-<INITIAL>"VAL"         => (okw false Markup.keyword1 (yypos, yytext, Tokens.VAL));
-<INITIAL>"VALOF"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.VALOF));
-<INITIAL>"WHILE"       => (okw false Markup.keyword1 (yypos, yytext, Tokens.WHILE));
+<INITIAL>"AFTER"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.AFTER));
+<INITIAL>"AND"         => (okw st true Markup.keyword1 (yypos, yytext, Tokens.AND));
+<INITIAL>"ALT"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.ALT));
+<INITIAL>"ANY"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.ANY));
+<INITIAL>"AT"          => (okw st false Markup.keyword1 (yypos, yytext, Tokens.AT));
+<INITIAL>"BITAND"      => (okw st true Markup.keyword1 (yypos, yytext, Tokens.BITAND));
+<INITIAL>"BITNOT"      => (okw st true Markup.keyword1 (yypos, yytext, Tokens.BITNOT));
+<INITIAL>"BITOR"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.BITOR));
+<INITIAL>"BOOL"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.BOOL));
+<INITIAL>"BYTE"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.BYTE));
+<INITIAL>"CASE"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.CASE));
+<INITIAL>"CHAN"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.CHAN));
+<INITIAL>"ELSE"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.ELSE));
+<INITIAL>"FALSE"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.FALSE));
+<INITIAL>"FOR"         => (okw st true Markup.keyword1 (yypos, yytext, Tokens.FOR));
+<INITIAL>"FROM"        => (okw st true Markup.keyword1 (yypos, yytext, Tokens.FROM));
+<INITIAL>"FUNCTION"    => (okw st false Markup.keyword1 (yypos, yytext, Tokens.FUNCTION));
+<INITIAL>"IF"          => (okw st false Markup.keyword1 (yypos, yytext, Tokens.IF));
+<INITIAL>"IS"          => (okw st true Markup.keyword1 (yypos, yytext, Tokens.IS));
+<INITIAL>"INT"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.INT));
+<INITIAL>"INT16"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.INT16));
+<INITIAL>"INT32"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.INT32));
+<INITIAL>"INT64"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.INT64));
+<INITIAL>"MINUS"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.MINUS));
+<INITIAL>"MOSTNEG"     => (okw st false Markup.keyword1 (yypos, yytext, Tokens.MOSTNEG));
+<INITIAL>"MOSTPOS"     => (okw st false Markup.keyword1 (yypos, yytext, Tokens.MOSTPOS));
+<INITIAL>"NOT"         => (okw st true Markup.keyword1 (yypos, yytext, Tokens.NOT));
+<INITIAL>"OF"          => (okw st false Markup.keyword1 (yypos, yytext, Tokens.OF));
+<INITIAL>"OR"          => (okw st true Markup.keyword1 (yypos, yytext, Tokens.OR));
+<INITIAL>"PAR"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PAR));
+<INITIAL>"PLACE"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PLACE));
+<INITIAL>"PLACED"      => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PLACED));
+<INITIAL>"PLUS"        => (okw st true Markup.keyword1 (yypos, yytext, Tokens.PLUS));
+<INITIAL>"PORT"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PORT));
+<INITIAL>"PRI"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PRI));
+<INITIAL>"PROC"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PROC));
+<INITIAL>"PROCESSOR"   => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PROCESSOR));
+<INITIAL>"PROTOCOL"    => (okw st false Markup.keyword1 (yypos, yytext, Tokens.PROTOCOL));
+<INITIAL>"REAL32"      => (okw st false Markup.keyword1 (yypos, yytext, Tokens.REAL32));
+<INITIAL>"REAL64"      => (okw st false Markup.keyword1 (yypos, yytext, Tokens.REAL64));
+<INITIAL>"REM"         => (okw st true Markup.keyword1 (yypos, yytext, Tokens.REM));
+<INITIAL>"RESULT"      => (okw st false Markup.keyword1 (yypos, yytext, Tokens.RESULT));
+<INITIAL>"RETYPES"     => (okw st false Markup.keyword1 (yypos, yytext, Tokens.RETYPES));
+<INITIAL>"ROUND"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.ROUND));
+<INITIAL>"SEQ"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.SEQ));
+<INITIAL>"SIZE"        => (okw st true Markup.keyword1 (yypos, yytext, Tokens.SIZE));
+<INITIAL>"SKIP"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.SKIP));
+<INITIAL>"STOP"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.STOP));
+<INITIAL>"TIMER"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.TIMER));
+<INITIAL>"TIMES"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.TIMES));
+<INITIAL>"TRUE"        => (okw st false Markup.keyword1 (yypos, yytext, Tokens.TRUE));
+<INITIAL>"TRUNC"       => (okw st true Markup.keyword1 (yypos, yytext, Tokens.TRUNC));
+<INITIAL>"VAL"         => (okw st false Markup.keyword1 (yypos, yytext, Tokens.VAL));
+<INITIAL>"VALOF"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.VALOF));
+<INITIAL>"WHILE"       => (okw st false Markup.keyword1 (yypos, yytext, Tokens.WHILE));
 
-<INITIAL>{L}{A}*       => (otok_val false (yypos, yytext, Markup.free, "NAME", "", Tokens.NAME, yytext));
+<INITIAL>{L}{A}*       => (otok_val st false (yypos, yytext, Markup.free, "NAME", "", Tokens.NAME, yytext));
 
-<INITIAL>{D}+"."{D}+("E"[+-]{D}+)?      => (otok_val false (yypos, yytext, Markup.numeral, "REAL_LIT", "", Tokens.REAL_LIT, yytext));
-<INITIAL>{D}+                           => (otok_val false (yypos, yytext, Markup.numeral, "INT_LIT", "", Tokens.INT_LIT, yytext));
-<INITIAL>"#"{H}+                        => (otok_val false (yypos, yytext, Markup.numeral, "INT_LIT", "", Tokens.INT_LIT, yytext));
-<INITIAL>"'"([^*'"\n]|{ES})"'"          => (otok_val false (yypos, yytext, Markup.string, "BYTE_LIT", "", Tokens.BYTE_LIT,
+<INITIAL>{D}+"."{D}+("E"[+-]{D}+)?      => (otok_val st false (yypos, yytext, Markup.numeral, "REAL_LIT", "", Tokens.REAL_LIT, yytext));
+<INITIAL>{D}+                           => (otok_val st false (yypos, yytext, Markup.numeral, "INT_LIT", "", Tokens.INT_LIT, yytext));
+<INITIAL>"#"{H}+                        => (otok_val st false (yypos, yytext, Markup.numeral, "INT_LIT", "", Tokens.INT_LIT, yytext));
+<INITIAL>"'"([^*'"\n]|{ES})"'"          => (otok_val st false (yypos, yytext, Markup.string, "BYTE_LIT", "", Tokens.BYTE_LIT,
                                                                            String.substring (yytext, 1, String.size yytext - 2)));
-<INITIAL>["]([^*'"\n]|{ES})*["]         => (otok_val false (yypos, yytext, Markup.string, "STRING_LIT", "", Tokens.STRING_LIT,
+<INITIAL>["]([^*'"\n]|{ES})*["]         => (otok_val st false (yypos, yytext, Markup.string, "STRING_LIT", "", Tokens.STRING_LIT,
                                                                            String.substring (yytext, 1, String.size yytext - 2)));
 
-<INITIAL>":="  => (otok true (yypos, yytext, Markup.operator, "ASSIGN", "", Tokens.ASSIGN));
-<INITIAL>"::"  => (otok true (yypos, yytext, Markup.operator, "COLONCOLON", "", Tokens.COLONCOLON));
-<INITIAL>":"   => (otok false (yypos, yytext, Markup.operator, "COLON", "", Tokens.COLON));
-<INITIAL>";"   => (otok true (yypos, yytext, Markup.operator, "SEMI", "", Tokens.SEMI));
-<INITIAL>","   => (otok true (yypos, yytext, Markup.operator, "COMMA", "", Tokens.COMMA));
-<INITIAL>"("   => (otok false (yypos, yytext, Markup.operator, "LPAREN", "", Tokens.LPAREN));
-<INITIAL>")"   => (otok false (yypos, yytext, Markup.operator, "RPAREN", "", Tokens.RPAREN));
-<INITIAL>"["   => (otok false (yypos, yytext, Markup.operator, "LBRACKET", "", Tokens.LBRACKET));
-<INITIAL>"]"   => (otok false (yypos, yytext, Markup.operator, "RBRACKET", "", Tokens.RBRACKET));
-<INITIAL>"!"   => (otok true (yypos, yytext, Markup.operator, "BANG", "", Tokens.BANG));
-<INITIAL>"?"   => (otok true (yypos, yytext, Markup.operator, "QUERY", "", Tokens.QUERY));
-<INITIAL>"&"   => (otok true (yypos, yytext, Markup.operator, "AMP", "", Tokens.AMP));
-<INITIAL>"+"   => (otok true (yypos, yytext, Markup.operator, "ADD", "", Tokens.ADD));
-<INITIAL>"-"   => (otok true (yypos, yytext, Markup.operator, "SUB", "", Tokens.SUB));
-<INITIAL>"*"   => (otok true (yypos, yytext, Markup.operator, "MUL", "", Tokens.MUL));
-<INITIAL>"/"   => (otok true (yypos, yytext, Markup.operator, "DIV", "", Tokens.DIV));
-<INITIAL>"\\"  => (otok true (yypos, yytext, Markup.operator, "BSLASH", "", Tokens.BSLASH));
-<INITIAL>"/\\" => (otok true (yypos, yytext, Markup.operator, "AND_SYM", "", Tokens.AND_SYM));
-<INITIAL>"\\/" => (otok true (yypos, yytext, Markup.operator, "OR_SYM", "", Tokens.OR_SYM));
-<INITIAL>"><"  => (otok true (yypos, yytext, Markup.operator, "XOR_SYM", "", Tokens.XOR_SYM));
-<INITIAL>"~"   => (otok true (yypos, yytext, Markup.operator, "TILDE", "", Tokens.TILDE));
-<INITIAL>"<<"  => (otok true (yypos, yytext, Markup.operator, "SHL", "", Tokens.SHL));
-<INITIAL>">>"  => (otok true (yypos, yytext, Markup.operator, "SHR", "", Tokens.SHR));
-<INITIAL>"="   => (otok true (yypos, yytext, Markup.operator, "EQ", "", Tokens.EQ));
-<INITIAL>"<>"  => (otok true (yypos, yytext, Markup.operator, "NE", "", Tokens.NE));
-<INITIAL>"<="  => (otok true (yypos, yytext, Markup.operator, "LE", "", Tokens.LE));
-<INITIAL>">="  => (otok true (yypos, yytext, Markup.operator, "GE", "", Tokens.GE));
-<INITIAL>"<"   => (otok true (yypos, yytext, Markup.operator, "LT", "", Tokens.LT));
-<INITIAL>">"   => (otok true (yypos, yytext, Markup.operator, "GT", "", Tokens.GT));
+<INITIAL>":="  => (otok st true (yypos, yytext, Markup.operator, "ASSIGN", "", Tokens.ASSIGN));
+<INITIAL>"::"  => (otok st true (yypos, yytext, Markup.operator, "COLONCOLON", "", Tokens.COLONCOLON));
+<INITIAL>":"   => (otok st false (yypos, yytext, Markup.operator, "COLON", "", Tokens.COLON));
+<INITIAL>";"   => (otok st true (yypos, yytext, Markup.operator, "SEMI", "", Tokens.SEMI));
+<INITIAL>","   => (otok st true (yypos, yytext, Markup.operator, "COMMA", "", Tokens.COMMA));
+<INITIAL>"("   => (otok st false (yypos, yytext, Markup.operator, "LPAREN", "", Tokens.LPAREN));
+<INITIAL>")"   => (otok st false (yypos, yytext, Markup.operator, "RPAREN", "", Tokens.RPAREN));
+<INITIAL>"["   => (otok st false (yypos, yytext, Markup.operator, "LBRACKET", "", Tokens.LBRACKET));
+<INITIAL>"]"   => (otok st false (yypos, yytext, Markup.operator, "RBRACKET", "", Tokens.RBRACKET));
+<INITIAL>"!"   => (otok st true (yypos, yytext, Markup.operator, "BANG", "", Tokens.BANG));
+<INITIAL>"?"   => (otok st true (yypos, yytext, Markup.operator, "QUERY", "", Tokens.QUERY));
+<INITIAL>"&"   => (otok st true (yypos, yytext, Markup.operator, "AMP", "", Tokens.AMP));
+<INITIAL>"+"   => (otok st true (yypos, yytext, Markup.operator, "ADD", "", Tokens.ADD));
+<INITIAL>"-"   => (otok st true (yypos, yytext, Markup.operator, "SUB", "", Tokens.SUB));
+<INITIAL>"*"   => (otok st true (yypos, yytext, Markup.operator, "MUL", "", Tokens.MUL));
+<INITIAL>"/"   => (otok st true (yypos, yytext, Markup.operator, "DIV", "", Tokens.DIV));
+<INITIAL>"\\"  => (otok st true (yypos, yytext, Markup.operator, "BSLASH", "", Tokens.BSLASH));
+<INITIAL>"/\\" => (otok st true (yypos, yytext, Markup.operator, "AND_SYM", "", Tokens.AND_SYM));
+<INITIAL>"\\/" => (otok st true (yypos, yytext, Markup.operator, "OR_SYM", "", Tokens.OR_SYM));
+<INITIAL>"><"  => (otok st true (yypos, yytext, Markup.operator, "XOR_SYM", "", Tokens.XOR_SYM));
+<INITIAL>"~"   => (otok st true (yypos, yytext, Markup.operator, "TILDE", "", Tokens.TILDE));
+<INITIAL>"<<"  => (otok st true (yypos, yytext, Markup.operator, "SHL", "", Tokens.SHL));
+<INITIAL>">>"  => (otok st true (yypos, yytext, Markup.operator, "SHR", "", Tokens.SHR));
+<INITIAL>"="   => (otok st true (yypos, yytext, Markup.operator, "EQ", "", Tokens.EQ));
+<INITIAL>"<>"  => (otok st true (yypos, yytext, Markup.operator, "NE", "", Tokens.NE));
+<INITIAL>"<="  => (otok st true (yypos, yytext, Markup.operator, "LE", "", Tokens.LE));
+<INITIAL>">="  => (otok st true (yypos, yytext, Markup.operator, "GE", "", Tokens.GE));
+<INITIAL>"<"   => (otok st true (yypos, yytext, Markup.operator, "LT", "", Tokens.LT));
+<INITIAL>">"   => (otok st true (yypos, yytext, Markup.operator, "GT", "", Tokens.GT));
 
-<INITIAL>.     => (otok_val false (yypos, yytext, Markup.bad (), "ILLEGAL", "", Tokens.ILLEGAL, yytext));
+<INITIAL>.     => (otok_val st false (yypos, yytext, Markup.bad (), "ILLEGAL", "", Tokens.ILLEGAL, yytext));
 
-<LCOMMENT>[^@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
+<LCOMMENT>[^@\\\n]+                        => (push_raw_fragment st (yypos, yytext); continue ());
 <LCOMMENT>"@"{HWS}*{TL}{TA}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "occam antiquotation tag+body", "");
-                                                antiq_tag_and_string_seen (yypos, yytext); lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "occam antiquotation tag+body", "");
+                                                antiq_tag_and_string_seen st (yypos, yytext); continue ());
 <LCOMMENT>"@"{HWS}*{TL}{TA}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "occam antiquotation tag", "");
-                                                antiq_tag_seen (yypos, yytext); lex());
-<LCOMMENT>"@"                              => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>"\\"                             => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>{OPENCART}                       => (report_token (yypos, String.size yytext, Markup.cartouche, "occam antiquotation body", "");
-                                                antiq_depth := 1;
-                                                antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
-<LCOMMENT>\n{HWS}*                         => (antiq_flush_pending_tag (); layout_newline yytext; YYBEGIN INITIAL; lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "occam antiquotation tag", "");
+                                                antiq_tag_seen st (yypos, yytext); continue ());
+<LCOMMENT>"@"                              => (push_raw_fragment st (yypos, yytext); continue ());
+<LCOMMENT>"\\"                             => (push_raw_fragment st (yypos, yytext); continue ());
+<LCOMMENT>{OPENCART}                       => (report st (yypos, String.size yytext, Markup.cartouche, "occam antiquotation body", "");
+                                                antiq_depth st := 1;
+                                                antiq_body_start st (yypos + String.size yytext); YYBEGIN ANTIQ; continue ());
+<LCOMMENT>\n{HWS}*                         => (antiq_flush_pending_tag st; layout_newline st yytext; YYBEGIN INITIAL; continue ());
 
-<ANTIQ>[^\\\n]+                            => (antiq_body_push yytext; lex());
-<ANTIQ>\n+                                  => (antiq_body_push yytext; lex());
-<ANTIQ>"\\"                                => (antiq_body_push yytext; lex());
-<ANTIQ>{OPENCART}                          => (antiq_depth := !antiq_depth + 1; antiq_body_push yytext; lex());
-<ANTIQ>{CLOSECART}                         => (antiq_depth := !antiq_depth - 1;
-                                                if !antiq_depth = 0
-                                                then (antiq_body_finish yypos; YYBEGIN LCOMMENT; lex())
-                                                else (antiq_body_push yytext; lex()));
+<ANTIQ>[^\\\n]+                            => (antiq_body_push st yytext; continue ());
+<ANTIQ>\n+                                  => (antiq_body_push st yytext; continue ());
+<ANTIQ>"\\"                                => (antiq_body_push st yytext; continue ());
+<ANTIQ>{OPENCART}                          => (antiq_depth st := !(antiq_depth st) + 1; antiq_body_push st yytext; continue ());
+<ANTIQ>{CLOSECART}                         => (antiq_depth st := !(antiq_depth st) - 1;
+                                                if !(antiq_depth st) = 0
+                                                then (antiq_body_finish st yypos; YYBEGIN LCOMMENT; continue ())
+                                                else (antiq_body_push st yytext; continue ()));
 \<close>
 and yacc_user_declarations\<open>
 open Occam2_Ast
 
-fun ndi p = Occam2_Comments.mk_nodeInfo p p
-fun ndi2 (p1, p2) = Occam2_Comments.mk_nodeInfo p1 (Position.range_position (p1, p2))
+fun ndi st p = Occam2_Comments.mk_nodeInfo st p p
+fun ndi2 st (p1, p2) = Occam2_Comments.mk_nodeInfo st p1 (Position.range_position (p1, p2))
 
 (* A name token carries its true source span as its position, so the node's own
    range is exactly the name. *)
-fun mkid (s, l, r) = Ident (s, 0, ndi2 (l, r))
+fun mkid st (s, l, r) = Ident (s, 0, ndi2 st (l, r))
 
 (* "formal" is "[VAL] specifier {1 , name}" in the manual, but a flat, left-
    recursive "formal COMMA formal" cannot be parsed as one LALR(1) production
@@ -441,6 +463,7 @@ fun type_of_prim (k, ni) = TPrim (k, ni)
 \<close>
 yacc_definitions\<open>
 %eop EOF
+%arg (st) : Occam2_State.T
 %pure
 %noshift EOF
 
@@ -519,7 +542,7 @@ yacc_rules\<open>
 start_rule:
         ENTRY_UNIT program_unit        (SOME program_unit)
 |       ENTRY_EXPR expression opt_newline    (SOME (Expr expression))
-|       ENTRY_ID NAME opt_newline      (SOME (Id (mkid (NAME, NAMEleft, NAMEright))))
+|       ENTRY_ID NAME opt_newline      (SOME (Id (mkid st (NAME, NAMEleft, NAMEright))))
 
 opt_newline:
         NEWLINE        (())
@@ -537,50 +560,50 @@ specs_only:
 
 spec:
         data_type name_list COLON NEWLINE
-                (SDecl (type_of_prim data_type, name_list, ndi2 (data_typeleft, COLONright)))
+                (SDecl (type_of_prim data_type, name_list, ndi2 st (data_typeleft, COLONright)))
 |       typ_nd name_list COLON NEWLINE
-                (SDecl (typ_nd, name_list, ndi2 (typ_ndleft, COLONright)))
+                (SDecl (typ_nd, name_list, ndi2 st (typ_ndleft, COLONright)))
 |       data_type NAME IS element COLON NEWLINE
-                (SAbbrev (SOME (type_of_prim data_type), mkid (NAME, NAMEleft, NAMEright), element, ndi2 (data_typeleft, COLONright)))
+                (SAbbrev (SOME (type_of_prim data_type), mkid st (NAME, NAMEleft, NAMEright), element, ndi2 st (data_typeleft, COLONright)))
 |       typ_nd NAME IS element COLON NEWLINE
-                (SAbbrev (SOME typ_nd, mkid (NAME, NAMEleft, NAMEright), element, ndi2 (typ_ndleft, COLONright)))
+                (SAbbrev (SOME typ_nd, mkid st (NAME, NAMEleft, NAMEright), element, ndi2 st (typ_ndleft, COLONright)))
 |       NAME IS element COLON NEWLINE
-                (SAbbrev (NONE, mkid (NAME, NAMEleft, NAMEright), element, ndi2 (NAMEleft, COLONright)))
+                (SAbbrev (NONE, mkid st (NAME, NAMEleft, NAMEright), element, ndi2 st (NAMEleft, COLONright)))
 |       VAL typ NAME IS expression COLON NEWLINE
-                (SValAbbrev (SOME typ, mkid (NAME, NAMEleft, NAMEright), expression, ndi2 (VALleft, COLONright)))
+                (SValAbbrev (SOME typ, mkid st (NAME, NAMEleft, NAMEright), expression, ndi2 st (VALleft, COLONright)))
 |       VAL NAME IS expression COLON NEWLINE
-                (SValAbbrev (NONE, mkid (NAME, NAMEleft, NAMEright), expression, ndi2 (VALleft, COLONright)))
+                (SValAbbrev (NONE, mkid st (NAME, NAMEleft, NAMEright), expression, ndi2 st (VALleft, COLONright)))
 |       data_type NAME RETYPES element COLON NEWLINE
-                (SRetypes (type_of_prim data_type, mkid (NAME, NAMEleft, NAMEright), element, ndi2 (data_typeleft, COLONright)))
+                (SRetypes (type_of_prim data_type, mkid st (NAME, NAMEleft, NAMEright), element, ndi2 st (data_typeleft, COLONright)))
 |       typ_nd NAME RETYPES element COLON NEWLINE
-                (SRetypes (typ_nd, mkid (NAME, NAMEleft, NAMEright), element, ndi2 (typ_ndleft, COLONright)))
+                (SRetypes (typ_nd, mkid st (NAME, NAMEleft, NAMEright), element, ndi2 st (typ_ndleft, COLONright)))
 |       VAL typ NAME RETYPES expression COLON NEWLINE
-                (SValRetypes (typ, mkid (NAME, NAMEleft, NAMEright), expression, ndi2 (VALleft, COLONright)))
+                (SValRetypes (typ, mkid st (NAME, NAMEleft, NAMEright), expression, ndi2 st (VALleft, COLONright)))
 |       PROTOCOL NAME IS protocol COLON NEWLINE
-                (SProtocol (mkid (NAME, NAMEleft, NAMEright), protocol, ndi2 (PROTOCOLleft, COLONright)))
+                (SProtocol (mkid st (NAME, NAMEleft, NAMEright), protocol, ndi2 st (PROTOCOLleft, COLONright)))
 |       PROTOCOL NAME NEWLINE INDENT CASE NEWLINE INDENT tagged_list OUTDENT OUTDENT COLON NEWLINE
-                (SProtocolCase (mkid (NAME, NAMEleft, NAMEright), tagged_list, ndi2 (PROTOCOLleft, COLONright)))
+                (SProtocolCase (mkid st (NAME, NAMEleft, NAMEright), tagged_list, ndi2 st (PROTOCOLleft, COLONright)))
 |       PROC NAME LPAREN formals RPAREN NEWLINE INDENT process OUTDENT COLON NEWLINE
-                (SProc (mkid (NAME, NAMEleft, NAMEright), formals, process, ndi2 (PROCleft, COLONright)))
+                (SProc (mkid st (NAME, NAMEleft, NAMEright), formals, process, ndi2 st (PROCleft, COLONright)))
 |       data_type_list FUNCTION NAME LPAREN formals RPAREN NEWLINE INDENT value_process OUTDENT COLON NEWLINE
-                (SFunction (data_type_list, mkid (NAME, NAMEleft, NAMEright), formals, value_process,
-                            ndi2 (data_type_listleft, COLONright)))
+                (SFunction (data_type_list, mkid st (NAME, NAMEleft, NAMEright), formals, value_process,
+                            ndi2 st (data_type_listleft, COLONright)))
 |       data_type_list FUNCTION NAME LPAREN formals RPAREN IS expression_list COLON NEWLINE
-                (SFunctionIs (data_type_list, mkid (NAME, NAMEleft, NAMEright), formals, expression_list,
-                              ndi2 (data_type_listleft, COLONright)))
+                (SFunctionIs (data_type_list, mkid st (NAME, NAMEleft, NAMEright), formals, expression_list,
+                              ndi2 st (data_type_listleft, COLONright)))
 
 name_list:
-        NAME                     ([mkid (NAME, NAMEleft, NAMEright)])
-|       name_list COMMA NAME     (name_list @ [mkid (NAME, NAMEleft, NAMEright)])
+        NAME                     ([mkid st (NAME, NAMEleft, NAMEright)])
+|       name_list COMMA NAME     (name_list @ [mkid st (NAME, NAMEleft, NAMEright)])
 
 formal_head:
-        typ NAME         (Formal (false, typ, [mkid (NAME, NAMEleft, NAMEright)], ndi2 (typleft, NAMEright)))
-|       VAL typ NAME     (Formal (true, typ, [mkid (NAME, NAMEleft, NAMEright)], ndi2 (VALleft, NAMEright)))
+        typ NAME         (Formal (false, typ, [mkid st (NAME, NAMEleft, NAMEright)], ndi2 st (typleft, NAMEright)))
+|       VAL typ NAME     (Formal (true, typ, [mkid st (NAME, NAMEleft, NAMEright)], ndi2 st (VALleft, NAMEright)))
 
 formal_list:
         formal_head                        ([formal_head])
 |       formal_list COMMA formal_head      (formal_list @ [formal_head])
-|       formal_list COMMA NAME             (extend_last formal_list (mkid (NAME, NAMEleft, NAMEright)))
+|       formal_list COMMA NAME             (extend_last formal_list (mkid st (NAME, NAMEleft, NAMEright)))
 
 formals:
                        ([])
@@ -589,14 +612,14 @@ formals:
 (* ---- Types and protocols ---- *)
 
 data_type:
-        BOOL      ((KBool, ndi2 (BOOLleft, BOOLright)))
-|       BYTE      ((KByte, ndi2 (BYTEleft, BYTEright)))
-|       INT       ((KInt, ndi2 (INTleft, INTright)))
-|       INT16     ((KInt16, ndi2 (INT16left, INT16right)))
-|       INT32     ((KInt32, ndi2 (INT32left, INT32right)))
-|       INT64     ((KInt64, ndi2 (INT64left, INT64right)))
-|       REAL32    ((KReal32, ndi2 (REAL32left, REAL32right)))
-|       REAL64    ((KReal64, ndi2 (REAL64left, REAL64right)))
+        BOOL      ((KBool, ndi2 st (BOOLleft, BOOLright)))
+|       BYTE      ((KByte, ndi2 st (BYTEleft, BYTEright)))
+|       INT       ((KInt, ndi2 st (INTleft, INTright)))
+|       INT16     ((KInt16, ndi2 st (INT16left, INT16right)))
+|       INT32     ((KInt32, ndi2 st (INT32left, INT32right)))
+|       INT64     ((KInt64, ndi2 st (INT64left, INT64right)))
+|       REAL32    ((KReal32, ndi2 st (REAL32left, REAL32right)))
+|       REAL64    ((KReal64, ndi2 st (REAL64left, REAL64right)))
 
 data_type_list:
         data_type                          ([type_of_prim data_type])
@@ -611,20 +634,20 @@ data_type_list:
    token too early. Spelling the data-type alternatives out in "spec" itself keeps
    the shared prefix unreduced until the token after the name settles it. *)
 typ_nd:
-        CHAN OF protocol         (TChan (protocol, ndi2 (CHANleft, protocolright)))
-|       TIMER                    (TTimer (ndi2 (TIMERleft, TIMERright)))
-|       PORT OF typ              (TPort (typ, ndi2 (PORTleft, typright)))
-|       LBRACKET expression RBRACKET typ         (TArray (expression, typ, ndi2 (LBRACKETleft, typright)))
-|       LBRACKET RBRACKET typ                    (TOpenArray (typ, ndi2 (LBRACKETleft, typright)))
+        CHAN OF protocol         (TChan (protocol, ndi2 st (CHANleft, protocolright)))
+|       TIMER                    (TTimer (ndi2 st (TIMERleft, TIMERright)))
+|       PORT OF typ              (TPort (typ, ndi2 st (PORTleft, typright)))
+|       LBRACKET expression RBRACKET typ         (TArray (expression, typ, ndi2 st (LBRACKETleft, typright)))
+|       LBRACKET RBRACKET typ                    (TOpenArray (typ, ndi2 st (LBRACKETleft, typright)))
 
 typ:
         data_type                (type_of_prim data_type)
 |       typ_nd                   (typ_nd)
 
 protocol:
-        ANY                      (PrAny (ndi2 (ANYleft, ANYright)))
-|       NAME                     (PrName (mkid (NAME, NAMEleft, NAMEright)))
-|       simple_prot_list         (PrSeq (simple_prot_list, ndi2 (simple_prot_listleft, simple_prot_listright)))
+        ANY                      (PrAny (ndi2 st (ANYleft, ANYright)))
+|       NAME                     (PrName (mkid st (NAME, NAMEleft, NAMEright)))
+|       simple_prot_list         (PrSeq (simple_prot_list, ndi2 st (simple_prot_listleft, simple_prot_listright)))
 
 simple_prot_list:
         simple_prot                        ([simple_prot])
@@ -633,13 +656,13 @@ simple_prot_list:
 simple_prot:
         typ                                      (SPType typ)
 |       data_type COLONCOLON LBRACKET RBRACKET typ
-                (SPCounted (#1 data_type, #2 data_type, typ, ndi2 (data_typeleft, typright)))
+                (SPCounted (#1 data_type, #2 data_type, typ, ndi2 st (data_typeleft, typright)))
 
 tagged_prot:
-        NAME                     (Tagged (mkid (NAME, NAMEleft, NAMEright), [], ndi2 (NAMEleft, NAMEright)))
+        NAME                     (Tagged (mkid st (NAME, NAMEleft, NAMEright), [], ndi2 st (NAMEleft, NAMEright)))
 |       NAME SEMI simple_prot_list
-                                 (Tagged (mkid (NAME, NAMEleft, NAMEright), simple_prot_list,
-                                          ndi2 (NAMEleft, simple_prot_listright)))
+                                 (Tagged (mkid st (NAME, NAMEleft, NAMEright), simple_prot_list,
+                                          ndi2 st (NAMEleft, simple_prot_listright)))
 
 tagged_list:
         tagged_prot NEWLINE                  ([tagged_prot])
@@ -652,72 +675,72 @@ process_list:
 |       process_list process     (process_list @ [process])
 
 process:
-        SKIP NEWLINE             (PSkip (ndi2 (SKIPleft, SKIPright)))
-|       STOP NEWLINE             (PStop (ndi2 (STOPleft, STOPright)))
+        SKIP NEWLINE             (PSkip (ndi2 st (SKIPleft, SKIPright)))
+|       STOP NEWLINE             (PStop (ndi2 st (STOPleft, STOPright)))
 |       variable_list ASSIGN expression_list NEWLINE
-                (PAssign (variable_list, expression_list, ndi2 (variable_listleft, expression_listright)))
-|       o_input NEWLINE          (PInput (o_input, ndi2 (o_inputleft, o_inputright)))
+                (PAssign (variable_list, expression_list, ndi2 st (variable_listleft, expression_listright)))
+|       o_input NEWLINE          (PInput (o_input, ndi2 st (o_inputleft, o_inputright)))
 |       element BANG out_items NEWLINE
-                (POutput (element, out_items, ndi2 (elementleft, out_itemsright)))
+                (POutput (element, out_items, ndi2 st (elementleft, out_itemsright)))
 |       element QUERY CASE NEWLINE INDENT variant_list OUTDENT
-                (PCaseInput (element, variant_list, ndi2 (elementleft, variant_listright)))
-|       SEQ NEWLINE              (PSeq (NONE, [], ndi2 (SEQleft, SEQright)))
+                (PCaseInput (element, variant_list, ndi2 st (elementleft, variant_listright)))
+|       SEQ NEWLINE              (PSeq (NONE, [], ndi2 st (SEQleft, SEQright)))
 |       SEQ NEWLINE INDENT process_list OUTDENT
-                (PSeq (NONE, process_list, ndi2 (SEQleft, process_listright)))
+                (PSeq (NONE, process_list, ndi2 st (SEQleft, process_listright)))
 |       SEQ replicator NEWLINE INDENT process OUTDENT
-                (PSeq (SOME replicator, [process], ndi2 (SEQleft, processright)))
+                (PSeq (SOME replicator, [process], ndi2 st (SEQleft, processright)))
 |       conditional              (conditional)
-|       CASE expression NEWLINE  (PCase (expression, [], ndi2 (CASEleft, expressionright)))
+|       CASE expression NEWLINE  (PCase (expression, [], ndi2 st (CASEleft, expressionright)))
 |       CASE expression NEWLINE INDENT option_list OUTDENT
-                (PCase (expression, option_list, ndi2 (CASEleft, option_listright)))
+                (PCase (expression, option_list, ndi2 st (CASEleft, option_listright)))
 |       WHILE expression NEWLINE INDENT process OUTDENT
-                (PWhile (expression, process, ndi2 (WHILEleft, processright)))
+                (PWhile (expression, process, ndi2 st (WHILEleft, processright)))
 |       parallel                 (parallel)
 |       alternation              (alternation)
 |       placed_par               (placed_par)
 |       NAME LPAREN expression_list0 RPAREN NEWLINE
-                (PInstance (mkid (NAME, NAMEleft, NAMEright), expression_list0, ndi2 (NAMEleft, RPARENright)))
-|       spec process             (PSpecP (spec, process, ndi2 (specleft, processright)))
+                (PInstance (mkid st (NAME, NAMEleft, NAMEright), expression_list0, ndi2 st (NAMEleft, RPARENright)))
+|       spec process             (PSpecP (spec, process, ndi2 st (specleft, processright)))
 |       PLACE NAME AT expression COLON NEWLINE process
-                (PPlace (mkid (NAME, NAMEleft, NAMEright), expression, process, ndi2 (PLACEleft, processright)))
+                (PPlace (mkid st (NAME, NAMEleft, NAMEright), expression, process, ndi2 st (PLACEleft, processright)))
 
 conditional:
-        IF NEWLINE               (PIf (NONE, [], ndi2 (IFleft, IFright)))
+        IF NEWLINE               (PIf (NONE, [], ndi2 st (IFleft, IFright)))
 |       IF NEWLINE INDENT choice_list OUTDENT
-                (PIf (NONE, choice_list, ndi2 (IFleft, choice_listright)))
+                (PIf (NONE, choice_list, ndi2 st (IFleft, choice_listright)))
 |       IF replicator NEWLINE INDENT choice OUTDENT
-                (PIf (SOME replicator, [choice], ndi2 (IFleft, choiceright)))
+                (PIf (SOME replicator, [choice], ndi2 st (IFleft, choiceright)))
 
 parallel:
-        PAR NEWLINE              (PPar (false, NONE, [], ndi2 (PARleft, PARright)))
+        PAR NEWLINE              (PPar (false, NONE, [], ndi2 st (PARleft, PARright)))
 |       PAR NEWLINE INDENT process_list OUTDENT
-                (PPar (false, NONE, process_list, ndi2 (PARleft, process_listright)))
+                (PPar (false, NONE, process_list, ndi2 st (PARleft, process_listright)))
 |       PAR replicator NEWLINE INDENT process OUTDENT
-                (PPar (false, SOME replicator, [process], ndi2 (PARleft, processright)))
-|       PRI PAR NEWLINE          (PPar (true, NONE, [], ndi2 (PRIleft, PARright)))
+                (PPar (false, SOME replicator, [process], ndi2 st (PARleft, processright)))
+|       PRI PAR NEWLINE          (PPar (true, NONE, [], ndi2 st (PRIleft, PARright)))
 |       PRI PAR NEWLINE INDENT process_list OUTDENT
-                (PPar (true, NONE, process_list, ndi2 (PRIleft, process_listright)))
+                (PPar (true, NONE, process_list, ndi2 st (PRIleft, process_listright)))
 |       PRI PAR replicator NEWLINE INDENT process OUTDENT
-                (PPar (true, SOME replicator, [process], ndi2 (PRIleft, processright)))
+                (PPar (true, SOME replicator, [process], ndi2 st (PRIleft, processright)))
 
 alternation:
-        ALT NEWLINE              (PAlt (false, NONE, [], ndi2 (ALTleft, ALTright)))
+        ALT NEWLINE              (PAlt (false, NONE, [], ndi2 st (ALTleft, ALTright)))
 |       ALT NEWLINE INDENT alt_list OUTDENT
-                (PAlt (false, NONE, alt_list, ndi2 (ALTleft, alt_listright)))
+                (PAlt (false, NONE, alt_list, ndi2 st (ALTleft, alt_listright)))
 |       ALT replicator NEWLINE INDENT alt OUTDENT
-                (PAlt (false, SOME replicator, [alt], ndi2 (ALTleft, altright)))
-|       PRI ALT NEWLINE          (PAlt (true, NONE, [], ndi2 (PRIleft, ALTright)))
+                (PAlt (false, SOME replicator, [alt], ndi2 st (ALTleft, altright)))
+|       PRI ALT NEWLINE          (PAlt (true, NONE, [], ndi2 st (PRIleft, ALTright)))
 |       PRI ALT NEWLINE INDENT alt_list OUTDENT
-                (PAlt (true, NONE, alt_list, ndi2 (PRIleft, alt_listright)))
+                (PAlt (true, NONE, alt_list, ndi2 st (PRIleft, alt_listright)))
 |       PRI ALT replicator NEWLINE INDENT alt OUTDENT
-                (PAlt (true, SOME replicator, [alt], ndi2 (PRIleft, altright)))
+                (PAlt (true, SOME replicator, [alt], ndi2 st (PRIleft, altright)))
 
 placed_par:
-        PLACED PAR NEWLINE       (PPlacedPar (NONE, [], ndi2 (PLACEDleft, PARright)))
+        PLACED PAR NEWLINE       (PPlacedPar (NONE, [], ndi2 st (PLACEDleft, PARright)))
 |       PLACED PAR NEWLINE INDENT placed_list OUTDENT
-                (PPlacedPar (NONE, placed_list, ndi2 (PLACEDleft, placed_listright)))
+                (PPlacedPar (NONE, placed_list, ndi2 st (PLACEDleft, placed_listright)))
 |       PLACED PAR replicator NEWLINE INDENT placed OUTDENT
-                (PPlacedPar (SOME replicator, [placed], ndi2 (PLACEDleft, placedright)))
+                (PPlacedPar (SOME replicator, [placed], ndi2 st (PLACEDleft, placedright)))
 
 placed_list:
         placed                   ([placed])
@@ -725,15 +748,15 @@ placed_list:
 
 placed:
         PROCESSOR expression NEWLINE INDENT process OUTDENT
-                (PlProcessor (expression, process, ndi2 (PROCESSORleft, processright)))
+                (PlProcessor (expression, process, ndi2 st (PROCESSORleft, processright)))
 |       PLACED PAR NEWLINE INDENT placed_list OUTDENT
-                (PlPar (NONE, placed_list, ndi2 (PLACEDleft, placed_listright)))
+                (PlPar (NONE, placed_list, ndi2 st (PLACEDleft, placed_listright)))
 |       PLACED PAR replicator NEWLINE INDENT placed OUTDENT
-                (PlPar (SOME replicator, [placed], ndi2 (PLACEDleft, placedright)))
+                (PlPar (SOME replicator, [placed], ndi2 st (PLACEDleft, placedright)))
 
 replicator:
         NAME EQ expression FOR expression
-                (Repl (mkid (NAME, NAMEleft, NAMEright), expression1, expression2, ndi2 (NAMEleft, expression2right)))
+                (Repl (mkid st (NAME, NAMEleft, NAMEright), expression1, expression2, ndi2 st (NAMEleft, expression2right)))
 
 (* ---- Actions ---- *)
 
@@ -743,9 +766,9 @@ variable_list:
 
 o_input:
         element QUERY input_items
-                (InVars (element, input_items, ndi2 (elementleft, input_itemsright)))
+                (InVars (element, input_items, ndi2 st (elementleft, input_itemsright)))
 |       element QUERY AFTER expression
-                (InAfter (element, expression, ndi2 (elementleft, expressionright)))
+                (InAfter (element, expression, ndi2 st (elementleft, expressionright)))
 
 input_item:
         element                          (IIVar element)
@@ -771,9 +794,9 @@ choice_list:
 
 choice:
         expression NEWLINE INDENT process OUTDENT
-                (ChGuarded (expression, process, ndi2 (expressionleft, processright)))
+                (ChGuarded (expression, process, ndi2 st (expressionleft, processright)))
 |       conditional              (ChNested conditional)
-|       spec choice              (ChSpec (spec, choice, ndi2 (specleft, choiceright)))
+|       spec choice              (ChSpec (spec, choice, ndi2 st (specleft, choiceright)))
 
 option_list:
         option_                  ([option_])
@@ -781,10 +804,10 @@ option_list:
 
 option_:
         expression_list NEWLINE INDENT process OUTDENT
-                (OpCases (expression_list, process, ndi2 (expression_listleft, processright)))
+                (OpCases (expression_list, process, ndi2 st (expression_listleft, processright)))
 |       ELSE NEWLINE INDENT process OUTDENT
-                (OpElse (process, ndi2 (ELSEleft, processright)))
-|       spec option_             (OpSpec (spec, option_, ndi2 (specleft, option_right)))
+                (OpElse (process, ndi2 st (ELSEleft, processright)))
+|       spec option_             (OpSpec (spec, option_, ndi2 st (specleft, option_right)))
 
 variant_list:
         variant                  ([variant])
@@ -792,36 +815,36 @@ variant_list:
 
 variant:
         NAME NEWLINE INDENT process OUTDENT
-                (VaTagged (mkid (NAME, NAMEleft, NAMEright), [], process, ndi2 (NAMEleft, processright)))
+                (VaTagged (mkid st (NAME, NAMEleft, NAMEright), [], process, ndi2 st (NAMEleft, processright)))
 |       NAME SEMI input_items NEWLINE INDENT process OUTDENT
-                (VaTagged (mkid (NAME, NAMEleft, NAMEright), input_items, process, ndi2 (NAMEleft, processright)))
-|       spec variant             (VaSpec (spec, variant, ndi2 (specleft, variantright)))
+                (VaTagged (mkid st (NAME, NAMEleft, NAMEright), input_items, process, ndi2 st (NAMEleft, processright)))
+|       spec variant             (VaSpec (spec, variant, ndi2 st (specleft, variantright)))
 
 alt_list:
         alt                      ([alt])
 |       alt_list alt             (alt_list @ [alt])
 
 guard:
-        o_input                  (GInput (o_input, ndi2 (o_inputleft, o_inputright)))
-|       expression AMP o_input   (GCondInput (expression, o_input, ndi2 (expressionleft, o_inputright)))
-|       expression AMP SKIP      (GCondSkip (expression, ndi2 (expressionleft, SKIPright)))
+        o_input                  (GInput (o_input, ndi2 st (o_inputleft, o_inputright)))
+|       expression AMP o_input   (GCondInput (expression, o_input, ndi2 st (expressionleft, o_inputright)))
+|       expression AMP SKIP      (GCondSkip (expression, ndi2 st (expressionleft, SKIPright)))
 
 alt:
         guard NEWLINE INDENT process OUTDENT
-                (AlGuarded (guard, process, ndi2 (guardleft, processright)))
+                (AlGuarded (guard, process, ndi2 st (guardleft, processright)))
 |       element QUERY CASE NEWLINE INDENT variant_list OUTDENT
-                (AlCase (NONE, element, variant_list, ndi2 (elementleft, variant_listright)))
+                (AlCase (NONE, element, variant_list, ndi2 st (elementleft, variant_listright)))
 |       expression AMP element QUERY CASE NEWLINE INDENT variant_list OUTDENT
-                (AlCase (SOME expression, element, variant_list, ndi2 (expressionleft, variant_listright)))
+                (AlCase (SOME expression, element, variant_list, ndi2 st (expressionleft, variant_listright)))
 |       alternation              (AlNested alternation)
-|       spec alt                 (AlSpec (spec, alt, ndi2 (specleft, altright)))
+|       spec alt                 (AlSpec (spec, alt, ndi2 st (specleft, altright)))
 
 (* ---- Value processes ---- *)
 
 value_process:
         VALOF NEWLINE INDENT process OUTDENT RESULT expression_list NEWLINE
-                (VPValof (process, expression_list, ndi2 (VALOFleft, expression_listright)))
-|       spec value_process       (VPSpec (spec, value_process, ndi2 (specleft, value_processright)))
+                (VPValof (process, expression_list, ndi2 st (VALOFleft, expression_listright)))
+|       spec value_process       (VPSpec (spec, value_process, ndi2 st (specleft, value_processright)))
 
 (* ---- Expressions: no precedence; the only unparenthesized chaining is AND/OR ---- *)
 
@@ -835,15 +858,15 @@ expression_list0:
 
 expression:
         operand                  (operand)
-|       monop operand            (EMon (monop, operand, ndi2 (monopleft, operandright)))
-|       operand dyop operand     (EBin (operand1, dyop, operand2, ndi2 (operand1left, operand2right)))
-|       and_chain                (EChain (LAnd, and_chain, ndi2 (and_chainleft, and_chainright)))
-|       or_chain                 (EChain (LOr, or_chain, ndi2 (or_chainleft, or_chainright)))
-|       data_type operand        (EConv (ConvPlain, #1 data_type, operand, ndi2 (data_typeleft, operandright)))
-|       data_type ROUND operand  (EConv (ConvRound, #1 data_type, operand, ndi2 (data_typeleft, operandright)))
-|       data_type TRUNC operand  (EConv (ConvTrunc, #1 data_type, operand, ndi2 (data_typeleft, operandright)))
-|       MOSTPOS typ              (EMost (true, typ, ndi2 (MOSTPOSleft, typright)))
-|       MOSTNEG typ              (EMost (false, typ, ndi2 (MOSTNEGleft, typright)))
+|       monop operand            (EMon (monop, operand, ndi2 st (monopleft, operandright)))
+|       operand dyop operand     (EBin (operand1, dyop, operand2, ndi2 st (operand1left, operand2right)))
+|       and_chain                (EChain (LAnd, and_chain, ndi2 st (and_chainleft, and_chainright)))
+|       or_chain                 (EChain (LOr, or_chain, ndi2 st (or_chainleft, or_chainright)))
+|       data_type operand        (EConv (ConvPlain, #1 data_type, operand, ndi2 st (data_typeleft, operandright)))
+|       data_type ROUND operand  (EConv (ConvRound, #1 data_type, operand, ndi2 st (data_typeleft, operandright)))
+|       data_type TRUNC operand  (EConv (ConvTrunc, #1 data_type, operand, ndi2 st (data_typeleft, operandright)))
+|       MOSTPOS typ              (EMost (true, typ, ndi2 st (MOSTPOSleft, typright)))
+|       MOSTNEG typ              (EMost (false, typ, ndi2 st (MOSTNEGleft, typright)))
 
 and_chain:
         operand AND operand      ([operand1, operand2])
@@ -857,11 +880,11 @@ operand:
         element                  (EElem element)
 |       literal                  (ELit literal)
 |       table                    (ETable table)
-|       LPAREN expression RPAREN (EParen (expression, ndi2 (LPARENleft, RPARENright)))
+|       LPAREN expression RPAREN (EParen (expression, ndi2 st (LPARENleft, RPARENright)))
 |       LPAREN NEWLINE INDENT value_process OUTDENT RPAREN
-                (EValof (value_process, ndi2 (LPARENleft, RPARENright)))
+                (EValof (value_process, ndi2 st (LPARENleft, RPARENright)))
 |       NAME LPAREN expression_list0 RPAREN
-                (ECall (mkid (NAME, NAMEleft, NAMEright), expression_list0, ndi2 (NAMEleft, RPARENright)))
+                (ECall (mkid st (NAME, NAMEleft, NAMEright), expression_list0, ndi2 st (NAMEleft, RPARENright)))
 
 monop:
         SUB                      (MNeg)
@@ -897,38 +920,38 @@ dyop:
 |       AFTER                    (DAfter)
 
 literal:
-        INT_LIT                  (LInt (INT_LIT, ndi2 (INT_LITleft, INT_LITright)))
-|       BYTE_LIT                 (LByte (BYTE_LIT, ndi2 (BYTE_LITleft, BYTE_LITright)))
+        INT_LIT                  (LInt (INT_LIT, ndi2 st (INT_LITleft, INT_LITright)))
+|       BYTE_LIT                 (LByte (BYTE_LIT, ndi2 st (BYTE_LITleft, BYTE_LITright)))
 |       INT_LIT LPAREN typ RPAREN
-                (LTyped (LInt (INT_LIT, ndi2 (INT_LITleft, INT_LITright)), typ, ndi2 (INT_LITleft, RPARENright)))
+                (LTyped (LInt (INT_LIT, ndi2 st (INT_LITleft, INT_LITright)), typ, ndi2 st (INT_LITleft, RPARENright)))
 |       BYTE_LIT LPAREN typ RPAREN
-                (LTyped (LByte (BYTE_LIT, ndi2 (BYTE_LITleft, BYTE_LITright)), typ, ndi2 (BYTE_LITleft, RPARENright)))
+                (LTyped (LByte (BYTE_LIT, ndi2 st (BYTE_LITleft, BYTE_LITright)), typ, ndi2 st (BYTE_LITleft, RPARENright)))
 |       REAL_LIT LPAREN typ RPAREN
-                (LTyped (LReal (REAL_LIT, ndi2 (REAL_LITleft, REAL_LITright)), typ, ndi2 (REAL_LITleft, RPARENright)))
-|       STRING_LIT               (LString (STRING_LIT, ndi2 (STRING_LITleft, STRING_LITright)))
-|       TRUE                     (LTrue (ndi2 (TRUEleft, TRUEright)))
-|       FALSE                    (LFalse (ndi2 (FALSEleft, FALSEright)))
+                (LTyped (LReal (REAL_LIT, ndi2 st (REAL_LITleft, REAL_LITright)), typ, ndi2 st (REAL_LITleft, RPARENright)))
+|       STRING_LIT               (LString (STRING_LIT, ndi2 st (STRING_LITleft, STRING_LITright)))
+|       TRUE                     (LTrue (ndi2 st (TRUEleft, TRUEright)))
+|       FALSE                    (LFalse (ndi2 st (FALSEleft, FALSEright)))
 
 element:
-        NAME                     (ENamed (mkid (NAME, NAMEleft, NAMEright)))
+        NAME                     (ENamed (mkid st (NAME, NAMEleft, NAMEright)))
 |       element LBRACKET expression RBRACKET
-                (ESub (element, expression, ndi2 (elementleft, RBRACKETright)))
+                (ESub (element, expression, ndi2 st (elementleft, RBRACKETright)))
 |       LBRACKET element FROM expression FOR expression RBRACKET
-                (ESlice (element, expression1, expression2, ndi2 (LBRACKETleft, RBRACKETright)))
+                (ESlice (element, expression1, expression2, ndi2 st (LBRACKETleft, RBRACKETright)))
 
 table:
         LBRACKET expression_list RBRACKET
-                (TabList (expression_list, ndi2 (LBRACKETleft, RBRACKETright)))
+                (TabList (expression_list, ndi2 st (LBRACKETleft, RBRACKETright)))
 |       LBRACKET table FROM expression FOR expression RBRACKET
-                (TabSlice (table, expression1, expression2, ndi2 (LBRACKETleft, RBRACKETright)))
+                (TabSlice (table, expression1, expression2, ndi2 st (LBRACKETleft, RBRACKETright)))
 |       LBRACKET STRING_LIT FROM expression FOR expression RBRACKET
-                (TabSlice (TabString (STRING_LIT, ndi2 (STRING_LITleft, STRING_LITright)),
-                           expression1, expression2, ndi2 (LBRACKETleft, RBRACKETright)))
+                (TabSlice (TabString (STRING_LIT, ndi2 st (STRING_LITleft, STRING_LITright)),
+                           expression1, expression2, ndi2 st (LBRACKETleft, RBRACKETright)))
 |       table LBRACKET expression RBRACKET
-                (TabSub (table, expression, ndi2 (tableleft, RBRACKETright)))
+                (TabSub (table, expression, ndi2 st (tableleft, RBRACKETright)))
 |       STRING_LIT LBRACKET expression RBRACKET
-                (TabSub (TabString (STRING_LIT, ndi2 (STRING_LITleft, STRING_LITright)),
-                         expression, ndi2 (STRING_LITleft, RBRACKETright)))
+                (TabSub (TabString (STRING_LIT, ndi2 st (STRING_LITleft, STRING_LITright)),
+                         expression, ndi2 st (STRING_LITleft, RBRACKETright)))
 \<close>
 
 text\<open>
@@ -957,7 +980,7 @@ fun entry_token Entry_Unit p = T.ENTRY_UNIT (p, p)
    that does not return to any enclosing level) are reported through it too, so
    they are located, and (for the reject commands) silenced, exactly like a
    syntax error. *)
-fun layout_stream err entry raw_lex pos eof_pos =
+fun layout_stream err entry st raw_lex pos eof_pos =
   let
     fun fail msg p = (err (msg, p, p); raise Fail msg)
     fun nl p = T.NEWLINE (p, p)
@@ -1004,7 +1027,7 @@ fun layout_stream err entry raw_lex pos eof_pos =
            else
              let
                val tok = raw_lex ()
-               val st = Occam2_Layout.get ()
+               val lay = Occam2_Layout.get st
              in
                if P.sameToken (tok, eof_tok) then
                  (eof_seen := true;
@@ -1012,41 +1035,42 @@ fun layout_stream err entry raw_lex pos eof_pos =
                   next ())
                else
                  let
-                   val p = pos (#start st)
+                   val p = pos (#start lay)
                    val before =
                      if !stack = [] then (* first real token: its own line fixes the base level *)
-                       layout_before p (if #nl_seen st then #indent st else 0)
-                     else if #nl_seen st andalso not (!prev_cont) then layout_before p (#indent st)
+                       layout_before p (if #nl_seen lay then #indent lay else 0)
+                     else if #nl_seen lay andalso not (!prev_cont) then layout_before p (#indent lay)
                      else []
                  in
-                   Occam2_Layout.clear_newline ();
-                   prev_cont := #cont st;
-                   prev_end := #stop st;
+                   Occam2_Layout.clear_newline st;
+                   prev_cont := #cont lay;
+                   prev_end := #stop lay;
                    queue := before @ [tok];
                    next ()
                  end
              end)
   in P.Stream.streamify next end
 
-(* Runs the parser on "source" from the given entry point. All process-wide
-   state (comments, layout) is reset first. *)
-fun parse err entry ctxt source =
+(* Runs the parser on "source" from the given entry point; "mk_err" makes the parser's error
+   callback from the parse's state (see "parse_loud" and "parse_quiet"). Every parse creates its own
+   state ("Occam2_State.init"), given to the lexer and to the parser, so parses can run
+   concurrently. *)
+fun parse mk_err entry ctxt source =
   let
-    val _ = Occam2_Comments.reset ()
-    val _ = Occam2_Layout.reset ()
-    val _ = Isabelle_lex_yacc.set source ctxt
-    val (input_text, _) = Input.source_content source
+    val st = Occam2_State.init ctxt source
+    val err = mk_err st
+    val input_text = Lex_yacc_state.text_of (#base st)
     val consumed = Unsynchronized.ref false
     fun input_string _ = if !consumed then "" else (consumed := true; input_text)
-    val raw_lex = Occam2.Occam2Lex.makeLexer input_string
-    val pos = Isabelle_lex_yacc.get_pos
+    val raw_lex = Occam2.Occam2Lex.makeLexer input_string st
+    val pos = Lex_yacc_state.get_pos (#base st)
     val eof_pos = pos (String.size input_text)
-    val stream = layout_stream err entry raw_lex pos eof_pos
-    val (result, _) = P.parse (0, stream, err, ())
+    val stream = layout_stream err entry st raw_lex pos eof_pos
+    val (result, _) = P.parse (0, stream, err, st)
   in result end
 
 fun parse_loud entry ctxt source =
-  parse (fn (s, p, p') => Isabelle_lex_yacc.print_error (s, p, p')) entry ctxt source
+  parse (fn st => Lex_yacc_state.print_error (#base st)) entry ctxt source
 
 (* The silent variant the "_reject" commands use: a locally declared exception,
    not YaccLib's "print_error" (which reports PIDE error markup before raising,
@@ -1055,7 +1079,7 @@ fun parse_loud entry ctxt source =
 exception Rejected of string
 fun quiet_error (s : string, _ : Position.T, _ : Position.T) = raise Rejected s
 
-fun parse_quiet entry ctxt source = parse quiet_error entry ctxt source
+fun parse_quiet entry ctxt source = parse (K quiet_error) entry ctxt source
 
 end
 \<close>

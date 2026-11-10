@@ -5,10 +5,9 @@ begin
 section\<open>Command-level Tests\<close>
 
 text\<open>
-  Imports \<open>Occam2_Tests\<close> (not merely \<open>Occam2\<close>) to force a sequential build order: the
-  lexer's comment/layout state is process-wide (the project's known re-entrancy
-  limitation), so two theories running parser commands with no import edge between
-  them could race on it.
+  Imports \<open>Occam2_Tests\<close> (not merely \<open>Occam2\<close>) to keep the theories of this session in
+  one sequential chain; as the parser is re-entrant (every parse has its own state) nothing
+  depends on the order.
 \<close>
 
 subsection\<open>Accepting commands\<close>

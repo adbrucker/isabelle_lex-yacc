@@ -218,4 +218,58 @@ val _ = rejects_entry Occam2_Parse.Entry_Expr ["a b"]
 val _ = rejects_entry Occam2_Parse.Entry_Id ["a b"]
 \<close>
 
+
+section\<open>Parallel Parses\<close>
+
+text\<open>
+  Every parse has its own state object (\<^ML_structure>\<open>Occam2_State\<close>), so any number of parses
+  may run at once. Twelve different programs, each with annotated comments and several
+  indentation levels, are parsed by \<^ML>\<open>Par_List.map\<close>, ten rounds in a row; each result must
+  equal the sequential one, and the comment in front of the first statement must be attached
+  to that statement (the comments of one parse must never end up in another).
+  (With the process-wide state of the earlier version nearly every one of these parses failed
+  with a spurious syntax error.)
+\<close>
+
+ML\<open>
+local
+  fun prog k =
+    let val v = "v" ^ Int.toString k
+    in String.concatWith "\n"
+         ([ "-- program " ^ Int.toString k, "INT " ^ v ^ ":", "SEQ" ] @
+          List.concat (List.tabulate (30, fn i =>
+            [ "  --@ probe_ast",
+              "  " ^ v ^ " := " ^ v ^ " + " ^ Int.toString (k * 100 + i),
+              "  IF",
+              "    " ^ v ^ " > " ^ Int.toString i,
+              "      SKIP",
+              "    TRUE",
+              "      STOP" ]))) ^ "\n"
+    end
+
+  fun parse text =
+    the (Occam2_Parse.parse_quiet Occam2_Parse.Entry_Unit @{context} (Input.string text))
+
+  fun first_has_probe (Occam2_Ast.Proc (Occam2_Ast.PSpecP (_, Occam2_Ast.PSeq (_, p1 :: _, _), _))) =
+        exists (fn Occam2_Ast.Antiquotation ({tag = (t, _)}, _, _, _) => t = "probe_ast" | _ => false)
+          (Occam2_Ast.comments_of_NodeInfo (Occam2_Ast.nodeInfo_of_process p1))
+    | first_has_probe _ = false
+
+  val progs = List.tabulate (12, prog)
+  val reference = map (Occam2_Ast.pp_root o parse) progs
+in
+  val _ =
+    List.app (fn _ =>
+      List.app (fn (ref_text, result) =>
+          (case result of
+             Exn.Res (text, probe) =>
+               if text = ref_text andalso probe then ()
+               else error "parallel parse: wrong result"
+           | Exn.Exn e => error ("parallel parse failed: " ^ Runtime.exn_message e)))
+        (ListPair.zip (reference,
+           Par_List.map (fn t => Exn.capture (fn () => let val r = parse t in (Occam2_Ast.pp_root r, first_has_probe r) end) ()) progs)))
+      (List.tabulate (10, I))
+end
+\<close>
+
 end

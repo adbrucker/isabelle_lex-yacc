@@ -167,6 +167,18 @@ text\<open>
   underlining) is available at every level of the tree.
 \<close>
 
+text\<open>
+  \<^bold>\<open>Re-entrancy.\<close> Isabelle runs commands, and in a build whole theories, in parallel, and PIDE
+  re-checks incrementally, so any number of parses may be running at the same time. The
+  lexer and the grammar actions therefore keep \<^emph>\<open>no\<close> state in process-wide variables: the
+  comment accumulator, the layout recorder, the antiquotation scanner and the position
+  table of a parse are all fields of one \<^emph>\<open>state object\<close> (\<^ML_structure>\<open>Occam2_State\<close>), created for
+  the parse and handed to the lexer (ML-Lex's \<open>%arg\<close>) and to the parser (ML-Yacc's \<open>%arg\<close>) by
+  the \<open>[state]\<close> mode of \<open>ml_lex_yacc\<close>. The analysis of \<open>\<section>2.2\<close> likewise keeps its bookkeeping per
+  walk. The test suite parses twelve annotated programs at once, ten times over, and
+  compares each result to the sequential one.
+\<close>
+
 subsection\<open>The occam Environment, and Declaration/Use Navigation\<close>
 
 text\<open>
@@ -423,11 +435,11 @@ text\<open>
     name the original source text is written instead of the (deliberately simple,
     canonical two-space layout) pretty-printer's.
 
-  All of these are \<open>thy_decl\<close> commands (\<open>occam2_file\<close> is \<open>thy_load\<close>, so that Isabelle tracks
-  the file dependency). The accepting commands change theory data. The \<open>_reject\<close> commands
-  store nothing and could be \<open>diag\<close>, but Isabelle evaluates a \<open>diag\<close> command asynchronously,
-  in parallel with the commands that follow, and the parser's lexer state is process-wide
-  (\<open>\<section>5\<close>): a reject running while the next \<open>occam2\<close> command parses would corrupt it.
+  The accepting commands are \<open>thy_decl\<close> commands, because they change theory data
+  (\<open>occam2_file\<close> is \<open>thy_load\<close>, so that Isabelle tracks the file dependency); the \<open>_reject\<close>
+  commands, which store nothing, are \<open>diag\<close>. Isabelle evaluates a \<open>diag\<close> command asynchronously,
+  in parallel with the commands that follow; that is harmless here, because every parse has
+  its own state (\<open>\<section>2.1\<close>).
 \<close>
 
 subsection\<open>A Worked Example\<close>
@@ -739,10 +751,6 @@ text\<open>
     Isabelle itself, not of this front-end: the presentation of a command is only consulted
     for document-class commands, which a \<open>thy_decl\<close> command can never be, and the
     \<open>occam2\<close> commands must be \<open>thy_decl\<close> to change \<open>oenv\<close>.
-  \<^item> \<^bold>\<open>A single, shared, non-reentrant lexer state.\<close> The comment accumulator and the layout
-    recorder are process-wide, so the parser cannot safely be invoked re-entrantly. For the
-    same reason the theories of this session that run parser commands are chained by imports
-    rather than left to Isabelle's scheduler to run in parallel.
   \<^item> \<^bold>\<open>Navigation is not total.\<close> An \<open>Id\<close> root is a leaf and is never navigable by \<open>r\<close>/\<open>d\<close>;
     there is no wrapping; and the counted-array and protocol syntax, types and replicator
     names, having no \<open>root\<close> variant, cannot be navigation targets.
