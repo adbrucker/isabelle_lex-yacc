@@ -10,7 +10,7 @@ chapter AFP
 session "Occam2" (AFP) = HOL +
   options [timeout = 1200]
   directories
-    "../../Isabelle_Lex-Yacc/"
+    "../Isabelle_Lex-Yacc"
   theories
     Occam2 (global)
     Occam2_Tests

@@ -1,14 +1,14 @@
 (***********************************************************************************
  * Copyright (c) University of Paris-Saclay 2026
  *
- * Author : Burkhart Wolff
+ * Authors: Burkhart Wolff, Achim D. Brucker (University of Exeter), Claude Sonnet 5.5
  *
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
- * * Redistributions of source code must retain the above copyright notice, this
+ * * Redistributions of source code must retain the above copyright notice
  *
  * * Redistributions in binary form must reproduce the above copyright notice,
  *   this list of conditions and the following disclaimer in the documentation
