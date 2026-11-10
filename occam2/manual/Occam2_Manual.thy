@@ -408,15 +408,26 @@ text\<open>
     with no earlier \<open>set_oenv_default\<close> in scope \<open>reset_oenv\<close> falls back to the empty \<open>oenv\<close>.
     \<^verbatim>\<open>Occam2.thy\<close> itself nominates, as its last step, the environment holding exactly the
     standard antiquotation handlers.
+  \<^descr> \<open>setup_backend \<open>f\<close>\<close> installs the \<^emph>\<open>semantic backend\<close>: \<open>f\<close> is an ML expression of type
+    \<open>Position.T Occam2_Ast.root -> theory -> theory\<close>, evaluated like the argument of Isabelle's
+    own \<open>setup\<close> command. At the very end of every \<open>occam2\<close>/\<open>occam2_file\<close> - after the
+    antiquotation actions have run and the AST is stored - the installed function is applied to
+    the parsed root and the theory the command has produced, and its result is the theory the
+    command returns; the fragment commands never trigger it. The default is \<open>K I\<close>, which
+    \<open>setup_backend \<open>K I\<close>\<close> restores. The function is kept in the theory's context (separately
+    from \<open>oenv\<close>, so \<open>reset_oenv\<close> does not uninstall it) and is inherited by later theories.
+    A CSP-style denotation of the processes of \<open>\<section>4\<close> would be installed this way.
   \<^descr> \<open>occam2_export \<open>path\<close> exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> renders previously stored sections - given by the
     store keys the accepting commands report - back to occam text with
     \<^ML>\<open>Occam2_Ast.pp_root\<close> and writes them to \<open>path.occ\<close>. With \<open>[verbatim]\<close> after the command
     name the original source text is written instead of the (deliberately simple,
     canonical two-space layout) pretty-printer's.
 
-  The accepting commands are \<open>thy_decl\<close> commands, not \<open>diag\<close>, because they change theory data;
-  \<open>occam2_file\<close> is \<open>thy_load\<close> so that Isabelle tracks the file dependency; only the \<open>_reject\<close>
-  commands, which store nothing, are \<open>diag\<close>.
+  All of these are \<open>thy_decl\<close> commands (\<open>occam2_file\<close> is \<open>thy_load\<close>, so that Isabelle tracks
+  the file dependency). The accepting commands change theory data. The \<open>_reject\<close> commands
+  store nothing and could be \<open>diag\<close>, but Isabelle evaluates a \<open>diag\<close> command asynchronously,
+  in parallel with the commands that follow, and the parser's lexer state is process-wide
+  (\<open>\<section>5\<close>): a reject running while the next \<open>occam2\<close> command parses would corrupt it.
 \<close>
 
 subsection\<open>A Worked Example\<close>

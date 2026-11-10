@@ -1666,4 +1666,63 @@ text\<open>
   every use of that name - declaration, self-reference, and every later occurrence alike.
 \<close>
 
+
+section\<open>The Semantic-Backend Hook\<close>
+
+text\<open>
+  \<open>setup_backend\<close> installs the function \<^verbatim>\<open>full_eval_and_store\<close> runs on the parsed root and the
+  freshly stored theory at the end of every \<open>c11\<close>/\<open>c11_file\<close>. By default that is
+  \<open>K I\<close>. Here a backend that records which kind of root it was handed, and which stored
+  a theory-level fact, is installed, exercised, and then removed again so that the theories
+  chained after this one see the default. The fragments \<open>c11_expr\<close> and friends must
+  \<^emph>\<open>not\<close> trigger it.
+\<close>
+
+ML\<open>
+val BACKEND_LOG = Unsynchronized.ref ([] : string list)
+\<close>
+
+setup_backend\<open>fn root => fn thy =>
+  (BACKEND_LOG := (case root of
+                     C_Ast.Units us => "Units " ^ Int.toString (length us)
+                   | C_Ast.Expr _ => "Expr" | C_Ast.Stmt _ => "Stmt" | C_Ast.Id _ => "Id")
+                  :: !BACKEND_LOG;
+   thy)\<close>
+
+c11_expr\<open>1 + 2\<close>
+
+ML\<open>val _ = if null (!BACKEND_LOG) then () else error "backend ran for an expression fragment"\<close>
+
+c11\<open>int backend_probe_f(int x) { return x; }\<close>
+
+ML\<open>
+val _ = if !BACKEND_LOG = ["Units 1"] then ()
+        else error ("backend log: " ^ String.concatWith ", " (!BACKEND_LOG))
+\<close>
+
+text\<open>The backend gets the theory the root was stored into, and its result is the theory the
+  command continues with: the next backend installs a definition from it.\<close>
+
+setup_backend\<open>fn _ => fn thy =>
+  let val ((_, _), lthy) =
+        Specification.definition_cmd {verbose = false}
+          NONE [] [] (Binding.empty_atts, "backend_probe_const = (42::nat)")
+          (Named_Target.theory_init thy)
+  in Local_Theory.exit_global lthy end\<close>
+
+c11\<open>int backend_probe_g(void) { return 0; }\<close>
+
+thm backend_probe_const_def
+
+text\<open>Back to the default, so nothing downstream is affected.\<close>
+
+setup_backend\<open>K I\<close>
+
+c11\<open>int backend_probe_h(void) { return 1; }\<close>
+
+ML\<open>
+val _ = if length (!BACKEND_LOG) = 1 then ()
+        else error "the default backend must do nothing"
+\<close>
+
 end

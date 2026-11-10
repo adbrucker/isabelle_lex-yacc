@@ -464,6 +464,16 @@ text\<open>
     per-\<open>typedef\<close>-name lexer table (\<open>\<section>4\<close>'s \<open>typedef\<close> item) - only the
     symbolic environment used for hyperlinking and member-/type-chasing is
     reset.
+  \<^descr> \<open>setup_backend \<open>f\<close>\<close> installs the \<^emph>\<open>semantic backend\<close>: \<open>f\<close> is an ML expression of type
+    \<open>Position.T C_Ast.root -> theory -> theory\<close>, evaluated like the argument of Isabelle's own
+    \<open>setup\<close> command. At the very end of every \<open>c11\<close>/\<open>c11_file\<close> - after the antiquotation
+    actions have run and the AST is stored - the installed function is applied to the parsed root
+    and the theory the command has produced, and its result is the theory the command returns;
+    the fragment commands (\<open>c11_expr\<close>, \<open>\<dots>\<close>) never trigger it. The default is \<open>K I\<close>, which
+    \<open>setup_backend \<open>K I\<close>\<close> restores. The function is kept in the theory's context (separately
+    from \<open>cenv\<close>, so \<open>reset_cenv\<close> does not uninstall it) and is inherited by later theories: a
+    verification tool built on this front-end installs itself once, at the top of the theory
+    that wants it, and the front-end needs to know nothing about it.
   \<^descr> \<open>c11_export_h \<open>path\<close> exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> and \<open>c11_export_c \<open>path\<close>
     exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> render one or more previously stored sections
     - given by the same store keys every accepting command above reports

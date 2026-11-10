@@ -34,6 +34,7 @@ theory C11
   and      "c11_file" :: thy_load
   and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
   and      "set_cenv_default" "reset_cenv" :: thy_decl
+  and      "setup_backend" :: thy_decl
   and      "c11_export_h" "c11_export_c" :: thy_decl
   and      "exports" "verbatim"
 begin
@@ -312,6 +313,12 @@ fun require_kind check kind_name cmd_name root =
    of doing real document output - the same wall, confirmed by inspection,
    not merely inferred). The Manual's own Limitations section (\<open>\<section>4\<close>)
    documents this. *)
+(* The last step is the semantic-backend hook (CEnv.get_backend, "setup_backend"
+   below): a function from the parsed root and the theory the root has just
+   been stored into to a theory, "K I" unless a backend has been installed. It
+   runs *after* the root is stored and reported (so the theory it receives
+   already contains the stored AST), and only for "c11"/"c11_file" - the
+   commands whose input is a genuine compilation unit. *)
 fun full_eval_and_store root text thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
@@ -320,7 +327,7 @@ fun full_eval_and_store root text thy =
       val thy_for_store = Context.theory_of context_for_store
       val (key, thy'') = store_root root text thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-    in thy'' end
+    in get_backend thy'' root thy'' end
 
 (* "full_eval_and_store" (above) and this no longer share one function under
    a boolean flag the way they once did: after the antiquotation-handler
@@ -601,6 +608,24 @@ val _ = Outer_Syntax.command @{command_keyword "reset_cenv"}
         "Reset cenv to the snapshot set_cenv_default last nominated (or empty_cenv, if none yet)"
         (Scan.succeed (Toplevel.theory (fn thy =>
           let val thy' = CEnv.reset_cenv thy in report_cenv_size "reset_cenv" thy'; thy' end)))
+
+(* "setup_backend \<open>f\<close>" installs the semantic backend that "full_eval_and_store" runs
+   at the end of every "c11"/"c11_file" (see "CEnv.get_backend", C11_Env.thy):
+   "f" is an ML expression of type "Position.T C_Ast.root -> theory -> theory",
+   evaluated exactly like the argument of Isabelle's own "setup" command
+   (Isar_Cmd.setup, Pure/Isar/isar_cmd.ML) - and, like that command, taken as
+   embedded ML source. The default, in force until the first "setup_backend",
+   is "K I"; "setup_backend \<open>K I\<close>" restores it. The installed function lives in
+   the theory's context and is inherited by later theories, so a semantic
+   backend is installed once, at the top of the theory that wants it. *)
+fun setup_backend source =
+  ML_Context.expression (Input.pos_of source)
+    (ML_Lex.read "Theory.setup (CEnv.set_backend (" @ ML_Lex.read_source source @ ML_Lex.read "))")
+  |> Context.theory_map
+
+val _ = Outer_Syntax.command @{command_keyword "setup_backend"}
+        "Install the semantic backend run at the end of every c11/c11_file"
+        (Parse.ML_source >> (Toplevel.theory o setup_backend))
 
 (* "c11_export_h"/"c11_export_c" - the export counterpart to "c11"/"c11_file"'s
    own storing: every accepting command (\<open>c11\<close>, \<open>c11_file\<close>, \<open>c11_ident\<close>,

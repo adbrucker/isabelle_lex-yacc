@@ -163,6 +163,26 @@ fun get_antiq name thy =
     let val mk {occam_antiq, ...} = get (Context.Theory thy)
     in Symtab.lookup occam_antiq name end
 
+(* The semantic-backend hook, as in C11_Env.thy (see the note on "Backend" there):
+   "full_eval_and_store" (Occam2.thy) calls the function stored here, on the parsed
+   root and the theory it has just stored that root into, as the last step of every
+   "occam2"/"occam2_file". The default is "K I"; "setup_backend" (Occam2.thy)
+   installs another one. A separate registry, not a field of "oenv": "reset_oenv"
+   resets what has been declared, not which backend is installed. "NONE" stands for
+   the default, so that "merge" is well defined for a function type. *)
+type backend = pos Occam2_Ast.root -> theory -> theory
+
+structure Backend = Generic_Data
+  (type T = backend option
+   val empty = NONE
+   val merge = fn (a, b) => if is_some a then a else b)
+
+fun get_backend thy : backend = the_default (K I) (Backend.get (Context.Theory thy))
+
+fun set_backend (f : backend) = Context.theory_map (Backend.put (SOME f))
+
+fun reset_backend thy = Context.theory_map (Backend.put NONE) thy
+
 (* "set_oenv_default"/"reset_oenv" (Occam2.thy): a theory nominates its own
    snapshot as what "reset_oenv" later restores; a separate registry, not a
    field of "oenv" itself, which would make every snapshot carry a copy of itself. *)

@@ -283,4 +283,62 @@ val _ = check "pipeline: without the library, square and max.items are reported 
   (count "bad" (reports_in (OEnv.reset_oenv @{theory Occam2}) pipeline_text) >= 2)
 \<close>
 
+
+subsection\<open>The semantic-backend hook\<close>
+
+text\<open>\<open>setup_backend\<close> installs the function run on the parsed root and the freshly stored theory at
+  the end of every \<open>occam2\<close>/\<open>occam2_file\<close>; by default it is \<open>K I\<close>. Here a backend that records
+  the kind of root it receives is installed, exercised and removed again, so that the theories
+  chained after this one see the default. The fragment commands must not trigger it.\<close>
+
+ML\<open>
+val BACKEND_LOG = Unsynchronized.ref ([] : string list)
+\<close>
+
+setup_backend\<open>fn root => fn thy =>
+  (BACKEND_LOG := (case root of
+                     Occam2_Ast.Proc _ => "Proc" | Occam2_Ast.Specs ss => "Specs " ^ Int.toString (length ss)
+                   | Occam2_Ast.Spec _ => "Spec" | Occam2_Ast.Expr _ => "Expr" | Occam2_Ast.Id _ => "Id")
+                  :: !BACKEND_LOG;
+   thy)\<close>
+
+occam2_expr\<open>1 + 2\<close>
+
+ML\<open>val _ = check "the backend does not run for a fragment" (null (!BACKEND_LOG))\<close>
+
+occam2\<open>SKIP\<close>
+
+occam2\<open>
+VAL INT backend.probe IS 7:
+\<close>
+
+ML\<open>
+val _ = check "the backend ran once per unit, with the root's kind"
+  (!BACKEND_LOG = ["Specs 1", "Proc"])
+\<close>
+
+text\<open>The backend receives the theory the root was stored into, and its result is the theory the
+  command continues with: the next backend adds a definition to it.\<close>
+
+setup_backend\<open>fn _ => fn thy =>
+  let val ((_, _), lthy) =
+        Specification.definition_cmd {verbose = false}
+          NONE [] [] (Binding.empty_atts, "backend_probe_const = (42::nat)")
+          (Named_Target.theory_init thy)
+  in Local_Theory.exit_global lthy end\<close>
+
+occam2\<open>SKIP\<close>
+
+thm backend_probe_const_def
+
+text\<open>Back to the default.\<close>
+
+setup_backend\<open>K I\<close>
+
+occam2\<open>SKIP\<close>
+
+ML\<open>
+val _ = check "the default backend does nothing" (length (!BACKEND_LOG) = 2)
+\<close>
+
 end

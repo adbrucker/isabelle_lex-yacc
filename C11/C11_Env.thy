@@ -323,6 +323,34 @@ structure Default_Env = Generic_Data
    val empty = NONE
    val merge = fn (a, b) => if is_some a then a else b)
 
+(* The semantic-backend hook. "full_eval_and_store" (C11.thy) calls the
+   function stored here, on the parsed root and the theory it has just stored
+   that root into, as the very last step of every "c11"/"c11_file" - the one
+   point where a complete, analysed translation unit exists and every
+   antiquotation action has already run. The default is "K I" (do nothing); a
+   semantic backend, a verification-condition generator say, replaces it once
+   per theory with the "setup_backend" command (C11.thy), so nothing in the
+   front-end has to know the backend. Stored in the context like every other
+   piece of per-theory state - a separate "Generic_Data" registry, not a field
+   of "cenv": "reset_cenv" resets what has been *declared*, not which backend
+   is installed, and a function value has no business being copied into every
+   "cenv" snapshot. "NONE" stands for the default, which also makes "merge" well
+   defined for a function type (no equality): an installed backend wins over
+   the default, and on two different installed backends the left one wins - the
+   same arbitrary tie-break as "Default_Env" below. *)
+type backend = pos C_Ast.root -> theory -> theory
+
+structure Backend = Generic_Data
+  (type T = backend option
+   val empty = NONE
+   val merge = fn (a, b) => if is_some a then a else b)
+
+fun get_backend thy : backend = the_default (K I) (Backend.get (Context.Theory thy))
+
+fun set_backend (f : backend) = Context.theory_map (Backend.put (SOME f))
+
+fun reset_backend thy = Context.theory_map (Backend.put NONE) thy
+
 fun set_cenv_default thy = Context.theory_map (Default_Env.put (SOME (get (Context.Theory thy)))) thy
 
 fun reset_cenv thy =

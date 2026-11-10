@@ -50,7 +50,9 @@ The commands are `occam2` (a program unit), `occam2_expr`, `occam2_ident`,
 `occam2_file` (an external `.occ` file), the silent negative-test variants
 `occam2_reject`, `occam2_expr_reject`, `occam2_ident_reject`,
 `occam2_export` (stored sections back to occam text),
-and `set_oenv_default` / `reset_oenv`.
+`set_oenv_default` / `reset_oenv`, and `setup_backend`, which installs a
+semantic backend (an ML function `root -> theory -> theory`, `K I` by default)
+run at the end of every `occam2` / `occam2_file`.
 
 ## Contents
 

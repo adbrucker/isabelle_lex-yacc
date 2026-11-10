@@ -30,8 +30,9 @@ theory Occam2
   imports "Occam2_Parser" "Occam2_AnaEval"
   keywords "occam2" "occam2_ident" "occam2_expr" :: thy_decl
   and      "occam2_file" :: thy_load
-  and      "occam2_reject" "occam2_ident_reject" "occam2_expr_reject" :: diag
+  and      "occam2_reject" "occam2_ident_reject" "occam2_expr_reject" :: thy_decl
   and      "set_oenv_default" "reset_oenv" :: thy_decl
+  and      "setup_backend" :: thy_decl
   and      "occam2_export" :: thy_decl
   and      "exports" "verbatim"
 begin
@@ -62,6 +63,10 @@ text\<open>
     has been analysed, and see the \<^emph>\<open>resolved\<close> node; the standard ones (\<open>probe_oenv\<close>,
     \<open>probe_ast\<close>, \<open>highlight\<close>, \<open>term\<close>, \<open>ML\<close>, \<open>text\<close>, \<open>definition\<close>, \<open>lemma\<close>) are
     registered in \<^verbatim>\<open>Occam2_AnaEval.thy\<close>.
+  \<^item> \<^bold>\<open>The semantic-backend hook.\<close> At the very end of \<open>occam2\<close>/\<open>occam2_file\<close>, after the
+    antiquotation actions have run and the AST is stored, a function of type
+    \<open>pos Occam2_Ast.root -> theory -> theory\<close> kept in the theory's context is applied; it is
+    \<open>K I\<close> by default, and \<open>setup_backend \<open>f\<close>\<close> installs another one.
 
   What is specific to occam, and so handled differently from C11, is \<^emph>\<open>layout\<close>. The
   language has no braces: a construct's body is its lines indented two spaces deeper
@@ -124,6 +129,11 @@ fun string_of_root (Occam2_Ast.Id id) =
    "Context.generic -> Context.generic" function in ascending "level" order
    (a stable sort, so equal levels keep their textual order) - see the note on
    "full_eval_and_store" in C11.thy for why they are never lifted one by one. *)
+(* The last step is the semantic-backend hook (OEnv.get_backend, "setup_backend"
+   below): a function from the parsed root and the theory the root has just been
+   stored into to a theory, "K I" unless a backend has been installed. It runs
+   after the root is stored and reported, and only for "occam2"/"occam2_file", the
+   commands whose input is a genuine program unit. *)
 fun full_eval_and_store root text thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
@@ -132,7 +142,7 @@ fun full_eval_and_store root text thy =
       val thy_for_store = Context.theory_of context_for_store
       val (key, thy'') = store_root root text thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
-    in thy'' end
+    in get_backend thy'' root thy'' end
 
 (* A fragment (identifier, expression): analysed for its hyperlinks only. *)
 fun fragment_and_store entry cmd_name source thy =
@@ -203,6 +213,21 @@ val _ = Outer_Syntax.command @{command_keyword "reset_oenv"}
         (Scan.succeed (Toplevel.theory (fn thy =>
           let val thy' = reset_oenv thy in report_oenv_size "reset_oenv" thy'; thy' end)))
 
+(* "setup_backend \<open>f\<close>" installs the semantic backend that "full_eval_and_store" runs at
+   the end of every "occam2"/"occam2_file": "f" is an ML expression of type
+   "Position.T Occam2_Ast.root -> theory -> theory", evaluated exactly like the
+   argument of Isabelle's own "setup" command (Isar_Cmd.setup). The default is
+   "K I"; "setup_backend \<open>K I\<close>" restores it. The function lives in the theory's
+   context and is inherited by later theories. *)
+fun setup_backend source =
+  ML_Context.expression (Input.pos_of source)
+    (ML_Lex.read "Theory.setup (OEnv.set_backend (" @ ML_Lex.read_source source @ ML_Lex.read "))")
+  |> Context.theory_map
+
+val _ = Outer_Syntax.command @{command_keyword "setup_backend"}
+        "Install the semantic backend run at the end of every occam2/occam2_file"
+        (Parse.ML_source >> (Toplevel.theory o setup_backend))
+
 (* "occam2_export name exports key ..." writes the stored sections, printed
    back with "Occam2_Ast.pp_root" (or, with "[verbatim]", as originally
    written), to "name.occ" in the theory's master directory. Same contract as
@@ -230,7 +255,12 @@ val _ = Outer_Syntax.command @{command_keyword "occam2_export"}
         "Export the given stored occam2 section(s) as occam 2 source text into a .occ file"
         (export_args >> (fn args => Toplevel.theory (run_occam2_export args)))
 
-(* The _reject commands: correct rejection means a parse failure under the
+(* The _reject commands are "thy_decl" although they store nothing (and so could be
+   "diag", as C11's are): Isabelle runs a diag command asynchronously, in parallel with the
+   commands after it (Pure/PIDE/command.ML, "Toplevel.diag"), and the lexer and layout
+   state of the parser is process-wide - a reject running while the next "occam2" command
+   parses made that command fail now and then, with a spurious syntax error. A thy_decl
+   command is evaluated in sequence. Correct rejection means a parse failure under the
    silent, locally-raising error callback (see "Occam2_Parse.parse_quiet"). *)
 fun run_reject entry kind_name source thy =
     let
