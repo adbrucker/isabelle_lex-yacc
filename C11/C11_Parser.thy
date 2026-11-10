@@ -219,63 +219,134 @@ text\<open>
   lookahead.
 \<close>
 
-(* <Bu>: this prototypical, Claude-generated code is quite state-heavy and surely not re-entrant. *) 
-
 text\<open>
-  \<open>pending\<close>/\<open>attached\<close> live in one \<^verbatim>\<open>Synchronized.var\<close>, not plain
-  \<^verbatim>\<open>Unsynchronized.ref\<close>s. Two things were tried and ruled out empirically
-  before landing here, both worth recording since either looks reasonable on
-  paper: a plain \<^verbatim>\<open>Unsynchronized.ref\<close> is not atomic across concurrent
-  writers, so it is never really safe as *global* state. The seemingly obvious
-  fix, \<^verbatim>\<open>Thread_Data.var\<close> (what \<open>Isabelle_lex_yacc.global_state\<close> in
-  \<^verbatim>\<open>YaccLib.thy\<close> uses for its own per-command state), turned out to be
-  actively *wrong* here: a targeted test confirmed a push and an immediately
-  following read of \<open>pending\<close> agree with each other (so the sandbox is not
-  somehow talking to a different copy of this structure), yet the very next
-  token's \<open>attach_pending\<close> already sees it as empty - meaning the generated
-  lexer's own token production does not reliably stay on one OS thread between
-  one token and the next, so \<^verbatim>\<open>Thread_Data.var\<close>'s per-thread isolation
-  silently drops state that must survive from one token to the next \<^emph>\<open>within
-  a single parse\<close>. \<^verbatim>\<open>Synchronized.var\<close> is the mechanism that is actually
-  correct for that: one global cell, atomic reads and writes, visible
-  regardless of which thread happens to run a given token. It does not, on its
-  own, stop two genuinely concurrent \<open>c11\<close>-family commands from interleaving
-  their comments - a real, still-open limitation \<^emph>\<open>if\<close> \<open>isabelle build\<close> ever
-  schedules two such commands' lexing truly concurrently, rather than
-  serializing them via their shared, sequential \<open>thy_decl\<close> theory-state
-  dependency (see \<open>run_c11_kind\<close>, below, and its own note on why the four
-  accepting commands are \<open>thy_decl\<close> rather than \<open>diag\<close>) - but it is no longer
-  wrong even *within one single parse*, which is what mattered here.
+  \<^bold>\<open>Re-entrancy.\<close> Everything the lexer and the grammar actions remember \<^emph>\<open>during one
+  parse\<close> - the pending and attached comments, the antiquotation scanner, the typedef names
+  seen so far - lives in one state object (\<^verbatim>\<open>C11_State\<close>), created for the parse and handed to
+  the lexer (ML-Lex's \<open>%arg\<close>) and the parser (ML-Yacc's \<open>%arg\<close>) by the \<open>[state]\<close> mode of
+  \<open>ml_lex_yacc\<close>. Nothing is shared between parses, so any number can run at once. (An earlier
+  version kept this data in process-wide variables, which two simultaneous parses
+  corrupted; two techniques that look like fixes - \<^verbatim>\<open>Thread_Data\<close> variables, plain
+  \<^verbatim>\<open>Unsynchronized.ref\<close>s - had been ruled out, because the generated lexer's token production
+  does not reliably stay on one OS thread, so per-thread state silently loses what must
+  survive from one token to the next. An object passed explicitly does not depend on the
+  thread.)
+
+  The one thing that is \<^emph>\<open>meant\<close> to outlive a parse is the set of typedef names: once
+  a \<open>typedef\<close> has been parsed, its name stays a type name for the rest of the session. It is
+  kept in \<^verbatim>\<open>C11_Typedefs\<close>; a parse starts from a copy of that set, adds to its own copy as
+  its \<open>typedef\<close> declarations are reduced, and \<^verbatim>\<open>C11_Parse\<close> merges the copy back only when the
+  parse is \<^emph>\<open>accepted\<close>. This also replaces the former \<open>snapshot\<close>/\<open>restore\<close> workaround for
+  error recovery (whose discarded trial reductions used to register names that were never
+  really declared): a parse that fails never merges anything.
 \<close>
 ML\<open>
-structure C11_Comments = struct
-  type state = {pending: Position.T C_Ast.comment list,
-                attached: (Position.T * Position.T C_Ast.comment list) list}
-  val state : state Synchronized.var =
-    Synchronized.var "C11_Comments.state" {pending = [], attached = []}
+(* The typedef names declared so far in this session - the only cross-parse state. A parse
+   works on its own copy (see "C11_State") and "commit"s it when accepted. *)
+structure C11_Typedefs = struct
+  val names : string list Synchronized.var =
+    Synchronized.var "C11_Typedefs.names" []
 
-  fun push c =
-    Synchronized.change state (fn {pending, attached} =>
-      {pending = pending @ [c], attached = attached})
+  fun snapshot () = Synchronized.value names
+
+  fun commit (ns : string list) =
+    Synchronized.change names (fn old =>
+      fold (fn n => fn acc => if member (op =) acc n then acc else n :: acc) ns old)
+end
+
+(* Everything one parse remembers; see the text above.
+     base        - the library's own part: source, context, position table
+     pending     - comments lexed since the previous real token
+     attached    - the comments that have been attached to a token position
+     antiq_*     - the antiquotation scanner (see the lexer): nesting depth of the cartouche
+                   being skipped, which comment state ("/* */" or "//") to return to, the
+                   most recent tag, the body text so far and its start position
+     typedefs    - the typedef names known to this parse (a copy, see "C11_Typedefs") *)
+structure C11_State = struct
+  type comments = Position.T C_Ast.comment list
+
+  type T = {base : Lex_yacc_state.T,
+            pending : comments Unsynchronized.ref,
+            attached : (Position.T * comments) list Unsynchronized.ref,
+            antiq_depth : int Unsynchronized.ref,
+            antiq_from_block : bool Unsynchronized.ref,
+            antiq_tag : (string * C_Ast.navi list * int * Position.T) Unsynchronized.ref,
+            antiq_buf : string list Unsynchronized.ref,
+            antiq_start : Position.T Unsynchronized.ref,
+            typedefs : string list Unsynchronized.ref}
+
+  fun init ctxt source : T =
+    {base = Lex_yacc_state.init ctxt source,
+     pending = Unsynchronized.ref [],
+     attached = Unsynchronized.ref [],
+     antiq_depth = Unsynchronized.ref 0,
+     antiq_from_block = Unsynchronized.ref true,
+     antiq_tag = Unsynchronized.ref ("", [], 0, Position.none),
+     antiq_buf = Unsynchronized.ref [],
+     antiq_start = Unsynchronized.ref Position.none,
+     typedefs = Unsynchronized.ref (C11_Typedefs.snapshot ())}
+
+  (* Minimal "typedef name" lexer feedback, the classic mechanism a C grammar needs to
+     disambiguate a bare identifier from a type name at lex time (e.g. "setjmp.h"'s
+     "jmp_buf", "stdarg.h"'s "va_list" - see the "typedef" note in the header comment
+     above): consulted by the lexer's own "IDENTIFIER" rule (below) to decide whether to
+     emit "Tokens.IDENTIFIER" or "Tokens.TYPEDEF_NAME" for a given piece of text.
+
+     "register_if_typedef" is called from "declaration"'s own second alternative (below),
+     the *only* point where both the complete, already-fully-reduced
+     "declaration_specifiers" (to check for "CTypedef") and the complete
+     "init_declarator_list" (the names to register, if so) are simultaneously available
+     as plain, local SML values.
+
+     ML-Yacc's error recovery (mlyacc-polyml/mlyacc-lib/parser2.sml, "distanceParse")
+     speculatively re-runs semantic actions for candidate token insertions/deletions and
+     discards the losing candidates, so an action here can run for a parse that is
+     rejected overall; as the names go into this parse's own copy, and the copy is merged
+     into "C11_Typedefs" only for an accepted parse, such a trial cannot leak. It still
+     does not guard the narrower case of a recovery trial inside a fragment that
+     ultimately does parse successfully - not observed in practice. *)
+  fun is_typedef (st : T) name = member (op =) (!(#typedefs st)) name
+
+  fun register (st : T) name =
+    if is_typedef st name then () else #typedefs st := name :: !(#typedefs st)
+
+  fun register_if_typedef (st : T) (specs : Position.T C_Ast.cDeclarationSpecifier list)
+        (entries : ((Position.T C_Ast.cDeclarator option * Position.T C_Ast.cInitializer option) *
+                    Position.T C_Ast.cExpression option) list) =
+    let val is_td = List.exists (fn C_Ast.CStorageSpec (C_Ast.CTypedef _) => true | _ => false) specs
+    in
+      if is_td then
+        List.app (fn ((SOME (C_Ast.CDeclr (SOME (C_Ast.Ident (name, _, _)), _, _, _, _)), _), _) => register st name
+                    | _ => ())
+          entries
+      else ()
+    end
+
+  fun commit (st : T) = C11_Typedefs.commit (!(#typedefs st))
+end
+
+(* The comments/antiquotations collected while lexing, attached to whichever real token
+   follows (see the rationale in the text above). *)
+structure C11_Comments = struct
+  fun push (st : C11_State.T) c = #pending st := !(#pending st) @ [c]
 
   (* A fragment made up entirely of whitespace (a blank line between two
      pieces of real text, indentation, ...) carries no information worth
      keeping and is dropped rather than pushed - this also stops a comment
      consisting of nothing but blank lines from producing a spurious
      "attached" entry of all-whitespace Raw_txt. *)
-  fun push_raw (text, pos) =
+  fun push_raw st (text, pos) =
     if List.all Char.isSpace (String.explode text) then ()
-    else push (C_Ast.Raw_txt [(text, pos)])
+    else push st (C_Ast.Raw_txt [(text, pos)])
 
-  fun push_antiquotation tag navi level cartouche = push (C_Ast.Antiquotation (tag, navi, level, cartouche))
+  fun push_antiquotation st tag navi level cartouche = push st (C_Ast.Antiquotation (tag, navi, level, cartouche))
 
   (* Called once per real token, at its start position: claims whatever
      comments/antiquotations have accumulated since the previous token. *)
-  fun attach_pending (p : Position.T) =
-    Synchronized.change state (fn {pending, attached} =>
-      case pending of
-        [] => {pending = pending, attached = attached}
-      | cs => {pending = [], attached = (p, cs) :: attached})
+  fun attach_pending (st : C11_State.T) (p : Position.T) =
+    (case !(#pending st) of
+       [] => ()
+     | cs => (#pending st := []; #attached st := (p, cs) :: !(#attached st)))
 
   (* Looks up whatever comments were attached at exactly this position -
      "p" must be the *token's own* position, exactly as it was originally
@@ -310,10 +381,10 @@ structure C11_Comments = struct
      equality (comments are built from strings/positions, both "eqtype"s) and
      skips a repeat - safe regardless of how many *walked* nodes end up
      seeing the same physical comment this way. *)
-  fun claim (p : Position.T) : Position.T C_Ast.comment list =
-    case AList.lookup (op =) (#attached (Synchronized.value state)) p of
-      NONE => []
-    | SOME cs => cs
+  fun claim (st : C11_State.T) (p : Position.T) : Position.T C_Ast.comment list =
+    (case AList.lookup (op =) (!(#attached st)) p of
+       NONE => []
+     | SOME cs => cs)
 
   (* Builds the nodeInfo a grammar action actually reports for a node:
      "claimed_at" is always the node's own leftmost token's un-merged
@@ -322,123 +393,39 @@ structure C11_Comments = struct
      for a single-token node, but often a wider merged range for a
      multi-token one. Keeping the two separate is exactly what makes claiming
      correct regardless of how wide the node's own reported span is. *)
-  fun mk_nodeInfo (claimed_at : Position.T) (report_pos : Position.T) : Position.T C_Ast.nodeInfo =
-    case claim claimed_at of
-      [] => C_Ast.OnlyPos report_pos
-    | cs => C_Ast.NodeInfo (cs, report_pos)
-
-  fun reset () = Synchronized.change state (fn _ => {pending = [], attached = []})
-end
-
-(* Minimal "typedef name" lexer feedback, the classic mechanism a C grammar
-   needs to disambiguate a bare identifier from a type name at lex time
-   (e.g. "setjmp.h"'s "jmp_buf", "stdarg.h"'s "va_list" - see the "typedef"
-   note in the header comment above): "names" is the set of identifiers a
-   "typedef" declaration has, at some point, declared - consulted by the
-   lexer's own "IDENTIFIER" rule (below) to decide whether to emit
-   "Tokens.IDENTIFIER" or "Tokens.TYPEDEF_NAME" for a given piece of text.
-
-   "register_if_typedef" is called from "declaration"'s own second
-   alternative (below), the *only* point where both the complete,
-   already-fully-reduced "declaration_specifiers" (to check for "CTypedef")
-   and the complete "init_declarator_list" (the names to register, if so)
-   are simultaneously available as plain, local SML values - deliberately
-   *not* threaded through a separate mutable "pending"-style flag set by one
-   grammar action and read by another (a first version did exactly that,
-   and was reverted - see the note on "C11_Typedefs.snapshot" below for why,
-   and why reading two already-computed values off the parser's own stack
-   here does *not* by itself make this call safe either).
-
-   This still registers well before the declaration's own closing ";" is
-   even shifted - "declaration"'s action runs once "declaration_specifiers
-   init_declarator_list SEMI" is *fully* matched, i.e. after every declarator
-   in "init_declarator_list" (each, in turn, reduced from its own, earlier
-   tokens) is already built - so well before the lexer is ever asked for a
-   token belonging to a *later* declaration; a name reused as a type only a
-   few tokens later, in the same or a later declaration (e.g. "typedef ...
-   jmp_buf; int setjmp(jmp_buf env);" - the realistic shape "c11_predef"
-   fragments for "setjmp.h"/"stdarg.h" need, "jmp_buf" not being the very
-   next token lexed after the typedef's own ";") resolves correctly; the one
-   remaining, narrower edge case - a typedef'd name reused as the *literal
-   next* token right after its own ";" - is not handled (the lexer may
-   already have fetched that one token as plain "IDENTIFIER" as its own
-   required lookahead before this action can run) and is not needed by
-   anything in this project so far. A related, but genuinely different,
-   restriction: once a name is registered here, it stays a typedef name for
-   the rest of the session (see "never reset" below), so it can no longer
-   also be used as a *fresh* declarator elsewhere - re-declaring the exact
-   same name as a new, unrelated typedef (not real C either) fails with a
-   parse error pointing at whatever follows it, which is a real, if narrow,
-   limitation worth knowing about but is not specific to typedef at all
-   (ordinary C forbids redeclaring a typedef name too); genuine, one-time
-   uses of realistic shapes - including glibc's actual array-typedef
-   "jmp_buf" declarator, "typedef struct __jmp_buf_tag { ... } jmp_buf[1];"
-   - parse and register correctly, confirmed via this project's own
-   "c11_predef [setjmp.h]" test. Deliberately never reset: unlike
-   "C11_Comments" (reset once per "c11"-family command, since its own job is
-   "pending since the last token"), a "typedef" name needs to stay
-   recognized for the rest of the session, the same way "CEnv.cenv"'s own
-   tables persist across commands - matching this project's already-
-   documented "single, shared, non-reentrant lexer state" limitation (the
-   C11 manual's own Limitations section), not a new instance of it. *)
-structure C11_Typedefs = struct
-  val names : string list Synchronized.var =
-    Synchronized.var "C11_Typedefs.names" []
-
-  fun is_typedef name = member (op =) (Synchronized.value names) name
-
-  (* "mlyacc-polyml/mlyacc-lib/parser2.sml" (this project's underlying LR
-     driver, vendored from Appel/Tarditi's ML-Yacc) documents that its
-     error-recovery routine assumes semantic actions are side-effect-free:
-     on a syntax error, "distanceParse" (parser2.sml ~239-271) speculatively
-     re-invokes the very same "saction" used for genuine reduces, once per
-     candidate token insertion/deletion it tries, and simply discards the
-     losing candidates - their semantic actions still ran for real. Every
-     action in this grammar was already effect-free except this one, which
-     is why a "c11_reject" fragment containing a malformed declaration next
-     to some identifier "n" could permanently, incorrectly add "n" to
-     "names" even though the fragment is correctly rejected overall (caught
-     via a hard trace showing exactly this for three "c11_reject" blocks
-     using "x" in "C11_Tests.thy", with zero legitimate "typedef" anywhere
-     in the source). "snapshot"/"restore" let every top-level parse entry
-     point in "C11.thy" undo any registration a discarded recovery trial
-     made, by rolling back to the pre-parse snapshot whenever the command
-     does not end in a genuine, committed accept. This does not guard the
-     narrower case of a mid-command recovery trial inside a fragment that
-     ultimately *does* parse successfully as a whole - not observed in
-     practice and not guarded against here. *)
-  fun snapshot () = Synchronized.value names
-  fun restore snap = Synchronized.change names (fn _ => snap)
-
-  fun register name =
-    Synchronized.change names (fn ns => if member (op =) ns name then ns else name :: ns)
-
-  fun register_if_typedef (specs : Position.T C_Ast.cDeclarationSpecifier list)
-        (entries : ((Position.T C_Ast.cDeclarator option * Position.T C_Ast.cInitializer option) *
-                    Position.T C_Ast.cExpression option) list) =
-    let val is_td = List.exists (fn C_Ast.CStorageSpec (C_Ast.CTypedef _) => true | _ => false) specs
-    in
-      if is_td then
-        List.app (fn ((SOME (C_Ast.CDeclr (SOME (C_Ast.Ident (name, _, _)), _, _, _, _)), _), _) => register name
-                    | _ => ())
-          entries
-      else ()
-    end
+  fun mk_nodeInfo st (claimed_at : Position.T) (report_pos : Position.T) : Position.T C_Ast.nodeInfo =
+    (case claim st claimed_at of
+       [] => C_Ast.OnlyPos report_pos
+     | cs => C_Ast.NodeInfo (cs, report_pos))
 end
 \<close>
 SML_import \<open>structure C_Ast = struct open C_Ast end\<close>
+SML_import \<open>structure C11_State = struct open C11_State end\<close>
 SML_import \<open>structure C11_Comments = struct open C11_Comments end\<close>
-SML_import \<open>structure C11_Typedefs = struct open C11_Typedefs end\<close>
 
-ml_lex_yacc [verbose] "C11" where
+ml_lex_yacc [verbose, state] "C11" where
 lex_user_declarations\<open>
 (* State kept for lexically recognizing "@tag \<open>...\<close>" antiquotations inside
    comments (see the ANTIQ state below): the nesting depth of the cartouche
    currently being skipped, and which comment state (block "/* */" or line
    "//") to return to once it closes. Plain "ref", not Isabelle_lex_yacc's
    own machinery, so it needs no qualification here. *)
-val antiq_depth = ref 0
-val antiq_from_block = ref true
+
+(* The lexer's and the parser's argument is the per-parse state of "C11_State" (the lexer
+   rules and the grammar actions call it "st"); "init" creates it, "base" is its part the
+   library functions work on. *)
+type arg = C11_State.T
+fun init ctxt source : arg = C11_State.init ctxt source
+fun base (st : arg) : Lex_yacc_state.T = #base st
+
+fun gp (st : arg) yypos = Lex_yacc_state.get_pos (base st) yypos
+fun report (st : arg) x = Lex_yacc_state.report_token (base st) x
+
+fun antiq_depth (st : arg) = #antiq_depth st
+fun antiq_from_block (st : arg) = #antiq_from_block st
+fun antiq_tag (st : arg) = #antiq_tag st
+fun antiq_buf (st : arg) = #antiq_buf st
+fun antiq_start (st : arg) = #antiq_start st
 
 (* Position handling for keyword tokens, following Pascal.thy's convention:
    report the token's full span under the given markup (Markup.keyword1 for
@@ -452,10 +439,10 @@ val antiq_from_block = ref true
    position ranges of adjacent keyword and identifier tokens overlapping in
    the PIDE markup tree, where such overlaps are silently dropped - which
    otherwise suppressed keyword coloring intermittently. *)
-fun kw_tok markup (yypos, yytext, cons) =
+fun kw_tok st markup (yypos, yytext, cons) =
     let
-      val p = get_pos yypos
-      val _ = report_token (yypos, String.size yytext, markup, yytext, "")
+      val p = gp st yypos
+      val _ = report st (yypos, String.size yytext, markup, yytext, "")
     in cons (p, p) end
 
 (* Every real token claims whatever comments/antiquotations have piled up
@@ -463,24 +450,24 @@ fun kw_tok markup (yypos, yytext, cons) =
    "tok"/"tok_val"/"kw_tok" of YaccLib.thy computes and reports its own
    position - claiming at the token's own start ("get_pos yypos"), which is
    exactly the position the grammar will later see as this token's "left". *)
-fun c11_tok (yypos, yytext, markup, typ, sort, cons) =
-    (C11_Comments.attach_pending (get_pos yypos);
-     tok (yypos, yytext, markup, typ, sort, cons))
+fun c11_tok st (yypos, yytext, markup, typ, sort, cons) =
+    (C11_Comments.attach_pending st (gp st yypos);
+     tok (base st) (yypos, yytext, markup, typ, sort, cons))
 
-fun c11_tok_val (yypos, yytext, markup, typ, sort, cons, value) =
-    (C11_Comments.attach_pending (get_pos yypos);
-     tok_val (yypos, yytext, markup, typ, sort, cons, value))
+fun c11_tok_val st (yypos, yytext, markup, typ, sort, cons, value) =
+    (C11_Comments.attach_pending st (gp st yypos);
+     tok_val (base st) (yypos, yytext, markup, typ, sort, cons, value))
 
-fun c11_kw_tok markup (yypos, yytext, cons) =
-    (C11_Comments.attach_pending (get_pos yypos);
-     kw_tok markup (yypos, yytext, cons))
+fun c11_kw_tok st markup (yypos, yytext, cons) =
+    (C11_Comments.attach_pending st (gp st yypos);
+     kw_tok st markup (yypos, yytext, cons))
 
 (* Accumulate one fragment of raw comment text, tagged with its own span -
    mirrors "report_token"'s own start/end computation, since comment
    fragments never go through "tok"/"tok_val" themselves (they produce no
    token at all). *)
-fun push_raw_fragment (yypos, yytext) =
-    C11_Comments.push_raw (yytext, Position.range_position (get_pos yypos, get_pos (yypos + String.size yytext)))
+fun push_raw_fragment st (yypos, yytext) =
+    C11_Comments.push_raw st (yytext, Position.range_position (gp st yypos, gp st (yypos + String.size yytext)))
 
 (* Antiquotation state: the tag most recently seen ("@tag", or "@tag(N)"
    with an explicit level, or "@tag[navi]"/"@tag[navi](N)" with a navigation
@@ -493,10 +480,6 @@ fun push_raw_fragment (yypos, yytext) =
    since a quoted body cannot nest, it is matched, extracted, and pushed in
    one shot by a single lex rule/handler - see "antiq_tag_and_string_seen"
    below - without ever touching this state. *)
-val antiq_tag : (string * C_Ast.navi list * int * Position.T) ref =
-  ref ("", [], 0, Position.none)
-val antiq_buf : string list ref = ref []
-val antiq_start : Position.T ref = ref Position.none
 
 (* Maps one navigation-string character to its "C_Ast.navi" constructor -
    the lexer's own "{NAVI}*" = "[uUrd]*" regex already guarantees every
@@ -566,35 +549,35 @@ fun parse_tag_navi_level text =
    tail of a comment is not simply discarded the way it silently was
    before. The empty-string body's own "cartouche" position is the tag's
    own position - there is no text of its own to span. *)
-fun antiq_flush_pending_tag () =
-    let val (name, navi, level, pos) = !antiq_tag in
+fun antiq_flush_pending_tag st =
+    let val (name, navi, level, pos) = !(antiq_tag st) in
       if name = "" then ()
       else
-        (antiq_tag := ("", [], 0, Position.none);
-         C11_Comments.push_antiquotation {tag = (name, pos)} navi {level = level} {cartouche = ("", pos)})
+        (antiq_tag st := ("", [], 0, Position.none);
+         C11_Comments.push_antiquotation st {tag = (name, pos)} navi {level = level} {cartouche = ("", pos)})
     end
 
-fun antiq_tag_seen (yypos, yytext) =
+fun antiq_tag_seen st (yypos, yytext) =
     let val (name, navi, level) = parse_tag_navi_level yytext
-    in antiq_flush_pending_tag (); antiq_tag := (name, navi, level, get_pos yypos) end
+    in antiq_flush_pending_tag st; antiq_tag st := (name, navi, level, gp st yypos) end
 
-fun antiq_body_start yypos = antiq_start := get_pos yypos
+fun antiq_body_start st yypos = antiq_start st := gp st yypos
 
-fun antiq_body_push text = antiq_buf := text :: !antiq_buf
+fun antiq_body_push st text = antiq_buf st := text :: !(antiq_buf st)
 
-fun antiq_body_finish yypos =
+fun antiq_body_finish st yypos =
     let
-      val body_text = String.concat (rev (!antiq_buf))
-      val body_pos = Position.range_position (!antiq_start, get_pos yypos)
-      val (tag_text, navi, level, tag_pos) = !antiq_tag
+      val body_text = String.concat (rev (!(antiq_buf st)))
+      val body_pos = Position.range_position (!(antiq_start st), gp st yypos)
+      val (tag_text, navi, level, tag_pos) = !(antiq_tag st)
     in
-      antiq_buf := [];
+      antiq_buf st := [];
       (* Clear the pending-tag marker now that its body has been found -
          otherwise a later "antiq_flush_pending_tag" (on the next tag, or at
          the comment's end) would wrongly re-push this same tag a second
          time, now with an empty body. *)
-      antiq_tag := ("", [], 0, Position.none);
-      C11_Comments.push_antiquotation {tag = (tag_text, tag_pos)} navi {level = level} {cartouche = (body_text, body_pos)}
+      antiq_tag st := ("", [], 0, Position.none);
+      C11_Comments.push_antiquotation st {tag = (tag_text, tag_pos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* The quoted-string alternative to a cartouche body: unlike "\<open>...\<close>",
@@ -611,7 +594,7 @@ fun antiq_body_finish yypos =
    through to ordinary raw-comment-text scanning as always. The body text
    is kept exactly as written between the quotes (no escape decoding),
    matching how the cartouche body is likewise stored raw. *)
-fun antiq_tag_and_string_seen (yypos, yytext) =
+fun antiq_tag_and_string_seen st (yypos, yytext) =
     let
       fun find_quote i = if String.sub (yytext, i) = #"\"" then i else find_quote (i + 1)
       val qpos = find_quote 0
@@ -619,9 +602,9 @@ fun antiq_tag_and_string_seen (yypos, yytext) =
       val body_len = String.size yytext - qpos - 2
       val body_text = String.substring (yytext, qpos + 1, body_len)
       val body_start = yypos + qpos + 1
-      val body_pos = Position.range_position (get_pos body_start, get_pos (body_start + body_len))
+      val body_pos = Position.range_position (gp st body_start, gp st (body_start + body_len))
     in
-      C11_Comments.push_antiquotation {tag = (name, get_pos yypos)} navi {level = level} {cartouche = (body_text, body_pos)}
+      C11_Comments.push_antiquotation st {tag = (name, gp st yypos)} navi {level = level} {cartouche = (body_text, body_pos)}
     end
 
 (* Overrides the default "fun eof () = Tokens.EOF(Position.none, Position.none)"
@@ -646,13 +629,13 @@ fun antiq_tag_and_string_seen (yypos, yytext) =
    the same flush the COMMENT/LCOMMENT close rules below perform, needed
    here too for a "//"-comment's trailing bodyless tag when the source ends
    without a final newline. *)
-fun eof () =
+fun eof (st : arg) =
     let
       val _ =
-        if !antiq_depth > 0
-        then print_error ("Unterminated antiquotation body: no matching closing cartouche before the end of input",
-                           !antiq_start, !antiq_start)
-        else antiq_flush_pending_tag ()
+        if !(antiq_depth st) > 0
+        then print_error (base st) ("Unterminated antiquotation body: no matching closing cartouche before the end of input",
+                                    !(antiq_start st), !(antiq_start st))
+        else antiq_flush_pending_tag st
     in Tokens.EOF (Position.none, Position.none) end
 \<close>
 lex_definitions\<open>
@@ -678,188 +661,188 @@ CLOSECART=\\\<close>;
 %s COMMENT INCLUDE LCOMMENT ANTIQ DEFINE;
 \<close>
 lex_rules\<open>
-<INITIAL>"/*"                            => (YYBEGIN COMMENT; lex());
-<INITIAL>"//"                            => (antiq_from_block := false; YYBEGIN LCOMMENT; lex());
+<INITIAL>"/*"                            => (YYBEGIN COMMENT; continue ());
+<INITIAL>"//"                            => (antiq_from_block st := false; YYBEGIN LCOMMENT; continue ());
 
-<INITIAL>"#"{HWS}*"include"               => (YYBEGIN INCLUDE; c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.INCLUDE));
-<INCLUDE>{HWS}+                          => (lex());
-<INCLUDE>"<"[^>\n]*">"                   => (YYBEGIN INITIAL; c11_tok_val (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME, yytext));
-<INCLUDE>["][^"\n]*["]                   => (YYBEGIN INITIAL; c11_tok_val (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME, yytext));
-<INCLUDE>\n                              => (YYBEGIN INITIAL; lex());
-<INCLUDE>.                               => (YYBEGIN INITIAL; lex());
+<INITIAL>"#"{HWS}*"include"               => (YYBEGIN INCLUDE; c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.INCLUDE));
+<INCLUDE>{HWS}+                          => (continue ());
+<INCLUDE>"<"[^>\n]*">"                   => (YYBEGIN INITIAL; c11_tok_val st (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME, yytext));
+<INCLUDE>["][^"\n]*["]                   => (YYBEGIN INITIAL; c11_tok_val st (yypos, yytext, Markup.string, "HEADER_NAME", "", Tokens.HEADER_NAME, yytext));
+<INCLUDE>\n                              => (YYBEGIN INITIAL; continue ());
+<INCLUDE>.                               => (YYBEGIN INITIAL; continue ());
 
-<INITIAL>"#"{HWS}*"define"               => (YYBEGIN DEFINE; c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
+<INITIAL>"#"{HWS}*"define"               => (YYBEGIN DEFINE; c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.DEFINE));
 
-<DEFINE>{HWS}+                           => (lex());
+<DEFINE>{HWS}+                           => (continue ());
 <DEFINE>{L}{A}*"("                       => (YYBEGIN INITIAL;
                                               let val name = String.substring (yytext, 0, String.size yytext - 1)
-                                              in c11_tok_val (yypos, name, Markup.free, "IDENTIFIER", "",
+                                              in c11_tok_val st (yypos, name, Markup.free, "IDENTIFIER", "",
                                                                Tokens.DEFINE_LPAREN, name) end);
 <DEFINE>{L}{A}*                          => (YYBEGIN INITIAL;
-                                              if C11_Typedefs.is_typedef yytext
-                                              then c11_tok_val (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
-                                              else c11_tok_val (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
+                                              if C11_State.is_typedef st yytext
+                                              then c11_tok_val st (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
+                                              else c11_tok_val st (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
 
-<INITIAL>"#"{HWS}*"ifndef"               => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFNDEF));
-<INITIAL>"#"{HWS}*"ifdef"                => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.IFDEF));
-<INITIAL>"#"{HWS}*"else"                 => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.PP_ELSE));
-<INITIAL>"#"{HWS}*"endif"                => (c11_kw_tok Markup.keyword2 (yypos, yytext, Tokens.ENDIF));
+<INITIAL>"#"{HWS}*"ifndef"               => (c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.IFNDEF));
+<INITIAL>"#"{HWS}*"ifdef"                => (c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.IFDEF));
+<INITIAL>"#"{HWS}*"else"                 => (c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.PP_ELSE));
+<INITIAL>"#"{HWS}*"endif"                => (c11_kw_tok st Markup.keyword2 (yypos, yytext, Tokens.ENDIF));
 
-<INITIAL>"auto"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.AUTO));
-<INITIAL>"break"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.BREAK));
-<INITIAL>"case"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.CASE));
-<INITIAL>"char"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.CHAR));
-<INITIAL>"const"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONST));
-<INITIAL>"continue"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.CONTINUE));
-<INITIAL>"default"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.DEFAULT));
-<INITIAL>"do"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.DO));
-<INITIAL>"double"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.DOUBLE));
-<INITIAL>"else"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.ELSE));
-<INITIAL>"enum"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.ENUM));
-<INITIAL>"extern"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.EXTERN));
-<INITIAL>"float"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.FLOAT));
-<INITIAL>"for"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.FOR));
-<INITIAL>"goto"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.GOTO));
-<INITIAL>"if"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.IF));
-<INITIAL>"inline"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.INLINE));
-<INITIAL>"int"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.INT));
-<INITIAL>"long"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.LONG));
-<INITIAL>"register"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.REGISTER));
-<INITIAL>"restrict"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.RESTRICT));
-<INITIAL>"return"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.RETURN));
-<INITIAL>"short"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.SHORT));
-<INITIAL>"signed"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIGNED));
-<INITIAL>"sizeof"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.SIZEOF));
-<INITIAL>"static"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC));
-<INITIAL>"struct"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.STRUCT));
-<INITIAL>"switch"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.SWITCH));
-<INITIAL>"typedef"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.TYPEDEF));
-<INITIAL>"union"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNION));
-<INITIAL>"unsigned"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.UNSIGNED));
-<INITIAL>"void"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOID));
-<INITIAL>"volatile"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.VOLATILE));
-<INITIAL>"while"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.WHILE));
-<INITIAL>"_Alignas"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNAS));
-<INITIAL>"_Alignof"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.ALIGNOF));
-<INITIAL>"_Atomic"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.ATOMIC));
-<INITIAL>"_Bool"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.BOOL));
-<INITIAL>"_Complex"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.COMPLEX));
-<INITIAL>"_Generic"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.GENERIC));
-<INITIAL>"_Imaginary"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.IMAGINARY));
-<INITIAL>"_Noreturn"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.NORETURN));
-<INITIAL>"_Static_assert"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.STATIC_ASSERT));
-<INITIAL>"_Thread_local"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.THREAD_LOCAL));
-<INITIAL>"__func__"	=> (c11_kw_tok Markup.keyword1 (yypos, yytext, Tokens.FUNC_NAME));
+<INITIAL>"auto"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.AUTO));
+<INITIAL>"break"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.BREAK));
+<INITIAL>"case"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.CASE));
+<INITIAL>"char"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.CHAR));
+<INITIAL>"const"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.CONST));
+<INITIAL>"continue"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.CONTINUE));
+<INITIAL>"default"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.DEFAULT));
+<INITIAL>"do"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.DO));
+<INITIAL>"double"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.DOUBLE));
+<INITIAL>"else"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.ELSE));
+<INITIAL>"enum"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.ENUM));
+<INITIAL>"extern"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.EXTERN));
+<INITIAL>"float"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.FLOAT));
+<INITIAL>"for"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.FOR));
+<INITIAL>"goto"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.GOTO));
+<INITIAL>"if"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.IF));
+<INITIAL>"inline"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.INLINE));
+<INITIAL>"int"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.INT));
+<INITIAL>"long"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.LONG));
+<INITIAL>"register"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.REGISTER));
+<INITIAL>"restrict"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.RESTRICT));
+<INITIAL>"return"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.RETURN));
+<INITIAL>"short"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.SHORT));
+<INITIAL>"signed"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.SIGNED));
+<INITIAL>"sizeof"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.SIZEOF));
+<INITIAL>"static"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.STATIC));
+<INITIAL>"struct"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.STRUCT));
+<INITIAL>"switch"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.SWITCH));
+<INITIAL>"typedef"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.TYPEDEF));
+<INITIAL>"union"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.UNION));
+<INITIAL>"unsigned"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.UNSIGNED));
+<INITIAL>"void"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.VOID));
+<INITIAL>"volatile"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.VOLATILE));
+<INITIAL>"while"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.WHILE));
+<INITIAL>"_Alignas"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.ALIGNAS));
+<INITIAL>"_Alignof"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.ALIGNOF));
+<INITIAL>"_Atomic"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.ATOMIC));
+<INITIAL>"_Bool"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.BOOL));
+<INITIAL>"_Complex"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.COMPLEX));
+<INITIAL>"_Generic"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.GENERIC));
+<INITIAL>"_Imaginary"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.IMAGINARY));
+<INITIAL>"_Noreturn"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.NORETURN));
+<INITIAL>"_Static_assert"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.STATIC_ASSERT));
+<INITIAL>"_Thread_local"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.THREAD_LOCAL));
+<INITIAL>"__func__"	=> (c11_kw_tok st Markup.keyword1 (yypos, yytext, Tokens.FUNC_NAME));
 
-<INITIAL>{L}{A}*	=> (if C11_Typedefs.is_typedef yytext
-                            then c11_tok_val (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
-                            else c11_tok_val (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
+<INITIAL>{L}{A}*	=> (if C11_State.is_typedef st yytext
+                            then c11_tok_val st (yypos, yytext, Markup.free, "TYPEDEF_NAME", "", Tokens.TYPEDEF_NAME, yytext)
+                            else c11_tok_val st (yypos, yytext, Markup.free, "IDENTIFIER", "", Tokens.IDENTIFIER, yytext));
 
-<INITIAL>{HP}{H}+{IS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
-<INITIAL>{NZ}{D}*{IS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
-<INITIAL>"0"{O}*{IS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
-<INITIAL>{CP}?'([^'\\\n]|{ES})+'	=> (c11_tok_val (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
+<INITIAL>{HP}{H}+{IS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
+<INITIAL>{NZ}{D}*{IS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
+<INITIAL>"0"{O}*{IS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
+<INITIAL>{CP}?'([^'\\\n]|{ES})+'	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "I_CONSTANT", "", Tokens.I_CONSTANT, yytext));
 
-<INITIAL>{D}+{E}{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
-<INITIAL>{D}*"."{D}+{E}?{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
-<INITIAL>{D}+"."{E}?{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
-<INITIAL>{HP}{H}+{P}{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
-<INITIAL>{HP}{H}*"."{H}+{P}{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
-<INITIAL>{HP}{H}+"."{P}{FS}?	=> (c11_tok_val (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{D}+{E}{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{D}*"."{D}+{E}?{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{D}+"."{E}?{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{HP}{H}+{P}{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{HP}{H}*"."{H}+{P}{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
+<INITIAL>{HP}{H}+"."{P}{FS}?	=> (c11_tok_val st (yypos, yytext, Markup.numeral, "F_CONSTANT", "", Tokens.F_CONSTANT, yytext));
 
-<INITIAL>({SP}?["]([^"\\\n]|{ES})*["]{WS}*)+	=> (c11_tok_val (yypos, yytext, Markup.string, "STRING_LITERAL", "", Tokens.STRING_LITERAL, yytext));
+<INITIAL>({SP}?["]([^"\\\n]|{ES})*["]{WS}*)+	=> (c11_tok_val st (yypos, yytext, Markup.string, "STRING_LITERAL", "", Tokens.STRING_LITERAL, yytext));
 
-<INITIAL>"..."	=> (c11_tok (yypos, yytext, Markup.operator, "ELLIPSIS", "", Tokens.ELLIPSIS));
-<INITIAL>">>="	=> (c11_tok (yypos, yytext, Markup.operator, "RIGHT_ASSIGN", "", Tokens.RIGHT_ASSIGN));
-<INITIAL>"<<="	=> (c11_tok (yypos, yytext, Markup.operator, "LEFT_ASSIGN", "", Tokens.LEFT_ASSIGN));
-<INITIAL>"+="	=> (c11_tok (yypos, yytext, Markup.operator, "ADD_ASSIGN", "", Tokens.ADD_ASSIGN));
-<INITIAL>"-="	=> (c11_tok (yypos, yytext, Markup.operator, "SUB_ASSIGN", "", Tokens.SUB_ASSIGN));
-<INITIAL>"*="	=> (c11_tok (yypos, yytext, Markup.operator, "MUL_ASSIGN", "", Tokens.MUL_ASSIGN));
-<INITIAL>"/="	=> (c11_tok (yypos, yytext, Markup.operator, "DIV_ASSIGN", "", Tokens.DIV_ASSIGN));
-<INITIAL>"%="	=> (c11_tok (yypos, yytext, Markup.operator, "MOD_ASSIGN", "", Tokens.MOD_ASSIGN));
-<INITIAL>"&="	=> (c11_tok (yypos, yytext, Markup.operator, "AND_ASSIGN", "", Tokens.AND_ASSIGN));
-<INITIAL>"^="	=> (c11_tok (yypos, yytext, Markup.operator, "XOR_ASSIGN", "", Tokens.XOR_ASSIGN));
-<INITIAL>"|="	=> (c11_tok (yypos, yytext, Markup.operator, "OR_ASSIGN", "", Tokens.OR_ASSIGN));
-<INITIAL>">>"	=> (c11_tok (yypos, yytext, Markup.operator, "RIGHT_OP", "", Tokens.RIGHT_OP));
-<INITIAL>"<<"	=> (c11_tok (yypos, yytext, Markup.operator, "LEFT_OP", "", Tokens.LEFT_OP));
-<INITIAL>"++"	=> (c11_tok (yypos, yytext, Markup.operator, "INC_OP", "", Tokens.INC_OP));
-<INITIAL>"--"	=> (c11_tok (yypos, yytext, Markup.operator, "DEC_OP", "", Tokens.DEC_OP));
-<INITIAL>"->"	=> (c11_tok (yypos, yytext, Markup.operator, "PTR_OP", "", Tokens.PTR_OP));
-<INITIAL>"&&"	=> (c11_tok (yypos, yytext, Markup.operator, "AND_OP", "", Tokens.AND_OP));
-<INITIAL>"||"	=> (c11_tok (yypos, yytext, Markup.operator, "OR_OP", "", Tokens.OR_OP));
-<INITIAL>"<="	=> (c11_tok (yypos, yytext, Markup.operator, "LE_OP", "", Tokens.LE_OP));
-<INITIAL>">="	=> (c11_tok (yypos, yytext, Markup.operator, "GE_OP", "", Tokens.GE_OP));
-<INITIAL>"=="	=> (c11_tok (yypos, yytext, Markup.operator, "EQ_OP", "", Tokens.EQ_OP));
-<INITIAL>"!="	=> (c11_tok (yypos, yytext, Markup.operator, "NE_OP", "", Tokens.NE_OP));
+<INITIAL>"..."	=> (c11_tok st (yypos, yytext, Markup.operator, "ELLIPSIS", "", Tokens.ELLIPSIS));
+<INITIAL>">>="	=> (c11_tok st (yypos, yytext, Markup.operator, "RIGHT_ASSIGN", "", Tokens.RIGHT_ASSIGN));
+<INITIAL>"<<="	=> (c11_tok st (yypos, yytext, Markup.operator, "LEFT_ASSIGN", "", Tokens.LEFT_ASSIGN));
+<INITIAL>"+="	=> (c11_tok st (yypos, yytext, Markup.operator, "ADD_ASSIGN", "", Tokens.ADD_ASSIGN));
+<INITIAL>"-="	=> (c11_tok st (yypos, yytext, Markup.operator, "SUB_ASSIGN", "", Tokens.SUB_ASSIGN));
+<INITIAL>"*="	=> (c11_tok st (yypos, yytext, Markup.operator, "MUL_ASSIGN", "", Tokens.MUL_ASSIGN));
+<INITIAL>"/="	=> (c11_tok st (yypos, yytext, Markup.operator, "DIV_ASSIGN", "", Tokens.DIV_ASSIGN));
+<INITIAL>"%="	=> (c11_tok st (yypos, yytext, Markup.operator, "MOD_ASSIGN", "", Tokens.MOD_ASSIGN));
+<INITIAL>"&="	=> (c11_tok st (yypos, yytext, Markup.operator, "AND_ASSIGN", "", Tokens.AND_ASSIGN));
+<INITIAL>"^="	=> (c11_tok st (yypos, yytext, Markup.operator, "XOR_ASSIGN", "", Tokens.XOR_ASSIGN));
+<INITIAL>"|="	=> (c11_tok st (yypos, yytext, Markup.operator, "OR_ASSIGN", "", Tokens.OR_ASSIGN));
+<INITIAL>">>"	=> (c11_tok st (yypos, yytext, Markup.operator, "RIGHT_OP", "", Tokens.RIGHT_OP));
+<INITIAL>"<<"	=> (c11_tok st (yypos, yytext, Markup.operator, "LEFT_OP", "", Tokens.LEFT_OP));
+<INITIAL>"++"	=> (c11_tok st (yypos, yytext, Markup.operator, "INC_OP", "", Tokens.INC_OP));
+<INITIAL>"--"	=> (c11_tok st (yypos, yytext, Markup.operator, "DEC_OP", "", Tokens.DEC_OP));
+<INITIAL>"->"	=> (c11_tok st (yypos, yytext, Markup.operator, "PTR_OP", "", Tokens.PTR_OP));
+<INITIAL>"&&"	=> (c11_tok st (yypos, yytext, Markup.operator, "AND_OP", "", Tokens.AND_OP));
+<INITIAL>"||"	=> (c11_tok st (yypos, yytext, Markup.operator, "OR_OP", "", Tokens.OR_OP));
+<INITIAL>"<="	=> (c11_tok st (yypos, yytext, Markup.operator, "LE_OP", "", Tokens.LE_OP));
+<INITIAL>">="	=> (c11_tok st (yypos, yytext, Markup.operator, "GE_OP", "", Tokens.GE_OP));
+<INITIAL>"=="	=> (c11_tok st (yypos, yytext, Markup.operator, "EQ_OP", "", Tokens.EQ_OP));
+<INITIAL>"!="	=> (c11_tok st (yypos, yytext, Markup.operator, "NE_OP", "", Tokens.NE_OP));
 
-<INITIAL>";"	=> (c11_tok (yypos, yytext, Markup.operator, "SEMI", "", Tokens.SEMI));
-<INITIAL>("{"|"<%")	=> (c11_tok (yypos, yytext, Markup.operator, "LBRACE", "", Tokens.LBRACE));
-<INITIAL>("}"|"%>")	=> (c11_tok (yypos, yytext, Markup.operator, "RBRACE", "", Tokens.RBRACE));
-<INITIAL>","	=> (c11_tok (yypos, yytext, Markup.operator, "COMMA", "", Tokens.COMMA));
-<INITIAL>":"	=> (c11_tok (yypos, yytext, Markup.operator, "COLON", "", Tokens.COLON));
-<INITIAL>"="	=> (c11_tok (yypos, yytext, Markup.operator, "ASSIGN", "", Tokens.ASSIGN));
-<INITIAL>"("	=> (c11_tok (yypos, yytext, Markup.operator, "LPAREN", "", Tokens.LPAREN));
-<INITIAL>")"	=> (c11_tok (yypos, yytext, Markup.operator, "RPAREN", "", Tokens.RPAREN));
-<INITIAL>("["|"<:")	=> (c11_tok (yypos, yytext, Markup.operator, "LBRACKET", "", Tokens.LBRACKET));
-<INITIAL>("]"|":>")	=> (c11_tok (yypos, yytext, Markup.operator, "RBRACKET", "", Tokens.RBRACKET));
-<INITIAL>"."	=> (c11_tok (yypos, yytext, Markup.operator, "DOT", "", Tokens.DOT));
-<INITIAL>"&"	=> (c11_tok (yypos, yytext, Markup.operator, "AMP", "", Tokens.AMP));
-<INITIAL>"!"	=> (c11_tok (yypos, yytext, Markup.operator, "BANG", "", Tokens.BANG));
-<INITIAL>"~"	=> (c11_tok (yypos, yytext, Markup.operator, "TILDE", "", Tokens.TILDE));
-<INITIAL>"-"	=> (c11_tok (yypos, yytext, Markup.operator, "MINUS", "", Tokens.MINUS));
-<INITIAL>"+"	=> (c11_tok (yypos, yytext, Markup.operator, "PLUS", "", Tokens.PLUS));
-<INITIAL>"*"	=> (c11_tok (yypos, yytext, Markup.operator, "STAR", "", Tokens.STAR));
-<INITIAL>"/"	=> (c11_tok (yypos, yytext, Markup.operator, "SLASH", "", Tokens.SLASH));
-<INITIAL>"%"	=> (c11_tok (yypos, yytext, Markup.operator, "PERCENT", "", Tokens.PERCENT));
-<INITIAL>"<"	=> (c11_tok (yypos, yytext, Markup.operator, "LT", "", Tokens.LT));
-<INITIAL>">"	=> (c11_tok (yypos, yytext, Markup.operator, "GT", "", Tokens.GT));
-<INITIAL>"^"	=> (c11_tok (yypos, yytext, Markup.operator, "CARET", "", Tokens.CARET));
-<INITIAL>"|"	=> (c11_tok (yypos, yytext, Markup.operator, "PIPE", "", Tokens.PIPE));
-<INITIAL>"?"	=> (c11_tok (yypos, yytext, Markup.operator, "QUESTION", "", Tokens.QUESTION));
+<INITIAL>";"	=> (c11_tok st (yypos, yytext, Markup.operator, "SEMI", "", Tokens.SEMI));
+<INITIAL>("{"|"<%")	=> (c11_tok st (yypos, yytext, Markup.operator, "LBRACE", "", Tokens.LBRACE));
+<INITIAL>("}"|"%>")	=> (c11_tok st (yypos, yytext, Markup.operator, "RBRACE", "", Tokens.RBRACE));
+<INITIAL>","	=> (c11_tok st (yypos, yytext, Markup.operator, "COMMA", "", Tokens.COMMA));
+<INITIAL>":"	=> (c11_tok st (yypos, yytext, Markup.operator, "COLON", "", Tokens.COLON));
+<INITIAL>"="	=> (c11_tok st (yypos, yytext, Markup.operator, "ASSIGN", "", Tokens.ASSIGN));
+<INITIAL>"("	=> (c11_tok st (yypos, yytext, Markup.operator, "LPAREN", "", Tokens.LPAREN));
+<INITIAL>")"	=> (c11_tok st (yypos, yytext, Markup.operator, "RPAREN", "", Tokens.RPAREN));
+<INITIAL>("["|"<:")	=> (c11_tok st (yypos, yytext, Markup.operator, "LBRACKET", "", Tokens.LBRACKET));
+<INITIAL>("]"|":>")	=> (c11_tok st (yypos, yytext, Markup.operator, "RBRACKET", "", Tokens.RBRACKET));
+<INITIAL>"."	=> (c11_tok st (yypos, yytext, Markup.operator, "DOT", "", Tokens.DOT));
+<INITIAL>"&"	=> (c11_tok st (yypos, yytext, Markup.operator, "AMP", "", Tokens.AMP));
+<INITIAL>"!"	=> (c11_tok st (yypos, yytext, Markup.operator, "BANG", "", Tokens.BANG));
+<INITIAL>"~"	=> (c11_tok st (yypos, yytext, Markup.operator, "TILDE", "", Tokens.TILDE));
+<INITIAL>"-"	=> (c11_tok st (yypos, yytext, Markup.operator, "MINUS", "", Tokens.MINUS));
+<INITIAL>"+"	=> (c11_tok st (yypos, yytext, Markup.operator, "PLUS", "", Tokens.PLUS));
+<INITIAL>"*"	=> (c11_tok st (yypos, yytext, Markup.operator, "STAR", "", Tokens.STAR));
+<INITIAL>"/"	=> (c11_tok st (yypos, yytext, Markup.operator, "SLASH", "", Tokens.SLASH));
+<INITIAL>"%"	=> (c11_tok st (yypos, yytext, Markup.operator, "PERCENT", "", Tokens.PERCENT));
+<INITIAL>"<"	=> (c11_tok st (yypos, yytext, Markup.operator, "LT", "", Tokens.LT));
+<INITIAL>">"	=> (c11_tok st (yypos, yytext, Markup.operator, "GT", "", Tokens.GT));
+<INITIAL>"^"	=> (c11_tok st (yypos, yytext, Markup.operator, "CARET", "", Tokens.CARET));
+<INITIAL>"|"	=> (c11_tok st (yypos, yytext, Markup.operator, "PIPE", "", Tokens.PIPE));
+<INITIAL>"?"	=> (c11_tok st (yypos, yytext, Markup.operator, "QUESTION", "", Tokens.QUESTION));
 
-<INITIAL>{WS}+                             => (lex());
-<INITIAL>.                                  => (lex());
+<INITIAL>{WS}+                             => (continue ());
+<INITIAL>.                                  => (continue ());
 
-<COMMENT>[^*@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>\n+                                => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>"*"+[^*/@\\\n]*                   => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>"*"+"/"                            => (antiq_flush_pending_tag (); YYBEGIN INITIAL; lex());
+<COMMENT>[^*@\\\n]+                        => (push_raw_fragment st (yypos, yytext); continue ());
+<COMMENT>\n+                                => (push_raw_fragment st (yypos, yytext); continue ());
+<COMMENT>"*"+[^*/@\\\n]*                   => (push_raw_fragment st (yypos, yytext); continue ());
+<COMMENT>"*"+"/"                            => (antiq_flush_pending_tag st; YYBEGIN INITIAL; continue ());
 
 <COMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
-                                                antiq_tag_and_string_seen (yypos, yytext); lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
+                                                antiq_tag_and_string_seen st (yypos, yytext); continue ());
 <COMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
-                                                antiq_tag_seen (yypos, yytext); lex());
-<COMMENT>"@"                               => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>"\\"                              => (push_raw_fragment (yypos, yytext); lex());
-<COMMENT>{OPENCART}                        => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
-                                                antiq_depth := 1; antiq_from_block := true;
-                                                antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
+                                                antiq_tag_seen st (yypos, yytext); continue ());
+<COMMENT>"@"                               => (push_raw_fragment st (yypos, yytext); continue ());
+<COMMENT>"\\"                              => (push_raw_fragment st (yypos, yytext); continue ());
+<COMMENT>{OPENCART}                        => (report st (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
+                                                antiq_depth st := 1; antiq_from_block st := true;
+                                                antiq_body_start st (yypos + String.size yytext); YYBEGIN ANTIQ; continue ());
 
-<LCOMMENT>[^@\\\n]+                        => (push_raw_fragment (yypos, yytext); lex());
+<LCOMMENT>[^@\\\n]+                        => (push_raw_fragment st (yypos, yytext); continue ());
 <LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?{HWS}*["]([^"\\\n]|{ES})*["]
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
-                                                antiq_tag_and_string_seen (yypos, yytext); lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag+body", "");
+                                                antiq_tag_and_string_seen st (yypos, yytext); continue ());
 <LCOMMENT>"@"{HWS}*{L}{A}*({HWS}*"["{NAVI}*"]")?({HWS}*"("{D}+")")?
-                                            => (report_token (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
-                                                antiq_tag_seen (yypos, yytext); lex());
-<LCOMMENT>"@"                              => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>"\\"                             => (push_raw_fragment (yypos, yytext); lex());
-<LCOMMENT>{OPENCART}                       => (report_token (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
-                                                antiq_depth := 1; antiq_from_block := false;
-                                                antiq_body_start (yypos + String.size yytext); YYBEGIN ANTIQ; lex());
-<LCOMMENT>\n                               => (antiq_flush_pending_tag (); YYBEGIN INITIAL; lex());
+                                            => (report st (yypos, String.size yytext, Markup.antiquote, "C antiquotation tag", "");
+                                                antiq_tag_seen st (yypos, yytext); continue ());
+<LCOMMENT>"@"                              => (push_raw_fragment st (yypos, yytext); continue ());
+<LCOMMENT>"\\"                             => (push_raw_fragment st (yypos, yytext); continue ());
+<LCOMMENT>{OPENCART}                       => (report st (yypos, String.size yytext, Markup.cartouche, "C antiquotation body", "");
+                                                antiq_depth st := 1; antiq_from_block st := false;
+                                                antiq_body_start st (yypos + String.size yytext); YYBEGIN ANTIQ; continue ());
+<LCOMMENT>\n                               => (antiq_flush_pending_tag st; YYBEGIN INITIAL; continue ());
 
-<ANTIQ>[^\\\n]+                            => (antiq_body_push yytext; lex());
-<ANTIQ>\n+                                  => (antiq_body_push yytext; lex());
-<ANTIQ>"\\"                                => (antiq_body_push yytext; lex());
-<ANTIQ>{OPENCART}                          => (antiq_depth := !antiq_depth + 1; antiq_body_push yytext; lex());
-<ANTIQ>{CLOSECART}                         => (antiq_depth := !antiq_depth - 1;
-                                                if !antiq_depth = 0
-                                                then (antiq_body_finish yypos;
-                                                      (if !antiq_from_block then YYBEGIN COMMENT else YYBEGIN LCOMMENT); lex())
-                                                else (antiq_body_push yytext; lex()));
+<ANTIQ>[^\\\n]+                            => (antiq_body_push st yytext; continue ());
+<ANTIQ>\n+                                  => (antiq_body_push st yytext; continue ());
+<ANTIQ>"\\"                                => (antiq_body_push st yytext; continue ());
+<ANTIQ>{OPENCART}                          => (antiq_depth st := !(antiq_depth st) + 1; antiq_body_push st yytext; continue ());
+<ANTIQ>{CLOSECART}                         => (antiq_depth st := !(antiq_depth st) - 1;
+                                                if !(antiq_depth st) = 0
+                                                then (antiq_body_finish st yypos;
+                                                      (if !(antiq_from_block st) then YYBEGIN COMMENT else YYBEGIN LCOMMENT); continue ())
+                                                else (antiq_body_push st yytext; continue ()));
 \<close>
 and yacc_user_declarations\<open>
 open C_Ast
@@ -982,11 +965,12 @@ fun ident_of_declr (CDeclr (io, _, _, _, _)) = io
 
 exception Parse_gap of string
 
-fun ndi p = C11_Comments.mk_nodeInfo p p
-fun ndi2 (p1, p2) = C11_Comments.mk_nodeInfo p1 (Position.range_position (p1, p2))
+fun ndi st p = C11_Comments.mk_nodeInfo st p p
+fun ndi2 st (p1, p2) = C11_Comments.mk_nodeInfo st p1 (Position.range_position (p1, p2))
 \<close>
 yacc_definitions\<open>
 %eop EOF
+%arg (st) : C11_State.T
 %pure
 %noshift EOF
 
@@ -1070,36 +1054,36 @@ yacc_definitions\<open>
 \<close>
 yacc_rules\<open>
 start_rule: 
-        IDENTIFIER    (SOME (Id (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft))))
+        IDENTIFIER    (SOME (Id (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft))))
 |       expression    (SOME (Expr expression))
 |       statement     (SOME (Stmt statement))
 |       translation_unit    
                       (SOME (Units [CTranslUnit (translation_unit, 
-                                                  ndi2 (translation_unitleft, 
+                                                  ndi2 st (translation_unitleft, 
                                                         translation_unitright))]))
 
 primary_expression: 
-        IDENTIFIER    (CVar (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi IDENTIFIERleft))
+        IDENTIFIER    (CVar (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), ndi st IDENTIFIERleft))
 |       constant      (CConst constant)
 |       string        (CConst (strLit_to_constant string))
 |       LPAREN expression RPAREN    (expression)
 |       generic_selection           (generic_selection)
 
 constant: 
-        I_CONSTANT           (const_of_i_constant (I_CONSTANT, ndi I_CONSTANTleft))
-|       F_CONSTANT           (CFloatConst (CFloat F_CONSTANT, ndi F_CONSTANTleft))
+        I_CONSTANT           (const_of_i_constant (I_CONSTANT, ndi st I_CONSTANTleft))
+|       F_CONSTANT           (CFloatConst (CFloat F_CONSTANT, ndi st F_CONSTANTleft))
 |       ENUMERATION_CONSTANT    (CIntConst (CInteger (0, DecRepr, Flags 0), 
-                                             ndi ENUMERATION_CONSTANTleft))
+                                             ndi st ENUMERATION_CONSTANTleft))
 
-enumeration_constant: IDENTIFIER     (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft))
+enumeration_constant: IDENTIFIER     (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft))
 
-string: STRING_LITERAL    (CStrLit (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft))
-|       FUNC_NAME         (CStrLit (CString ("__func__", false), ndi FUNC_NAMEleft))
+string: STRING_LITERAL    (CStrLit (parse_c_string STRING_LITERAL, ndi st STRING_LITERALleft))
+|       FUNC_NAME         (CStrLit (CString ("__func__", false), ndi st FUNC_NAMEleft))
 
 generic_selection: 
         GENERIC LPAREN assignment_expression COMMA generic_assoc_list RPAREN    
                           (CGenericSelection (assignment_expression, generic_assoc_list, 
-                                               ndi2 (GENERICleft, RPARENright)))
+                                               ndi2 st (GENERICleft, RPARENright)))
 
 generic_assoc_list: generic_association                ([generic_association])
 |       generic_assoc_list COMMA generic_association   (generic_assoc_list @ [generic_association])
@@ -1112,34 +1096,34 @@ postfix_expression:
         primary_expression    (primary_expression)
 |       postfix_expression LBRACKET expression RBRACKET    
                               (CIndex (postfix_expression, expression, 
-                                        ndi2 (postfix_expressionleft, RBRACKETright)))
+                                        ndi2 st (postfix_expressionleft, RBRACKETright)))
 |       postfix_expression LPAREN RPAREN    
                               (CCall (postfix_expression, [], 
-                                        ndi2 (postfix_expressionleft, RPARENright)))
+                                        ndi2 st (postfix_expressionleft, RPARENright)))
 |       postfix_expression LPAREN argument_expression_list RPAREN    
                               (CCall (postfix_expression, argument_expression_list, 
-                                       ndi2 (postfix_expressionleft, RPARENright)))
+                                       ndi2 st (postfix_expressionleft, RPARENright)))
 |       postfix_expression DOT IDENTIFIER    
                               (CMember (postfix_expression, Ident (IDENTIFIER, 0, 
-                                                                     ndi IDENTIFIERleft), 
+                                                                     ndi st IDENTIFIERleft), 
                                          false, 
-                                         ndi2 (postfix_expressionleft, IDENTIFIERright)))
+                                         ndi2 st (postfix_expressionleft, IDENTIFIERright)))
 |       postfix_expression PTR_OP IDENTIFIER    
                               (CMember (postfix_expression, 
-                                         Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), true, 
-                                         ndi2 (postfix_expressionleft, IDENTIFIERright)))
+                                         Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), true, 
+                                         ndi2 st (postfix_expressionleft, IDENTIFIERright)))
 |       postfix_expression INC_OP    
                               (CUnary (CPostIncOp, postfix_expression, 
-                                        ndi2 (postfix_expressionleft, INC_OPright)))
+                                        ndi2 st (postfix_expressionleft, INC_OPright)))
 |       postfix_expression DEC_OP    
                               (CUnary (CPostDecOp, postfix_expression, 
-                                        ndi2 (postfix_expressionleft, DEC_OPright)))
+                                        ndi2 st (postfix_expressionleft, DEC_OPright)))
 |       LPAREN type_name RPAREN LBRACE initializer_list RBRACE    
                               (CCompoundLit (type_name, initializer_list, 
-                                              ndi2 (LPARENleft, RBRACEright)))
+                                              ndi2 st (LPARENleft, RBRACEright)))
 |       LPAREN type_name RPAREN LBRACE initializer_list COMMA RBRACE    
                               (CCompoundLit (type_name, initializer_list, 
-                                              ndi2 (LPARENleft, RBRACEright)))
+                                              ndi2 st (LPARENleft, RBRACEright)))
 
 argument_expression_list: 
         assignment_expression    ([assignment_expression])
@@ -1149,19 +1133,19 @@ argument_expression_list:
 unary_expression: 
         postfix_expression         (postfix_expression)
 |       INC_OP unary_expression    (CUnary (CPreIncOp, unary_expression, 
-                                             ndi2 (INC_OPleft, unary_expressionright)))
+                                             ndi2 st (INC_OPleft, unary_expressionright)))
 |       DEC_OP unary_expression    (CUnary (CPreDecOp, unary_expression, 
-                                             ndi2 (DEC_OPleft, unary_expressionright)))
+                                             ndi2 st (DEC_OPleft, unary_expressionright)))
 |       unary_operator cast_expression    
                                    (CUnary (unary_operator, cast_expression, 
-                                             ndi2 (unary_operatorleft, cast_expressionright)))
+                                             ndi2 st (unary_operatorleft, cast_expressionright)))
 |       SIZEOF unary_expression    (CSizeofExpr (unary_expression, 
-                                                  ndi2 (SIZEOFleft, unary_expressionright)))
+                                                  ndi2 st (SIZEOFleft, unary_expressionright)))
 |       SIZEOF LPAREN type_name RPAREN    
                                    (CSizeofType (type_name, 
-                                                  ndi2 (SIZEOFleft, RPARENright)))
+                                                  ndi2 st (SIZEOFleft, RPARENright)))
 |       ALIGNOF LPAREN type_name RPAREN    
-                                   (CAlignofType (type_name, ndi2 (ALIGNOFleft, RPARENright)))
+                                   (CAlignofType (type_name, ndi2 st (ALIGNOFleft, RPARENright)))
 
 unary_operator: 
         AMP     (CAdrOp)
@@ -1175,112 +1159,112 @@ cast_expression:
         unary_expression    (unary_expression)
 |       LPAREN type_name RPAREN cast_expression    
                             (CCast (type_name, cast_expression, 
-                                     ndi2 (LPARENleft, cast_expressionright)))
+                                     ndi2 st (LPARENleft, cast_expressionright)))
 
 multiplicative_expression: 
         cast_expression    (cast_expression)
 |       multiplicative_expression STAR cast_expression    
                            (CBinary (CMulOp, multiplicative_expression, cast_expression, 
-                                      ndi2 (multiplicative_expressionleft, cast_expressionright)))
+                                      ndi2 st (multiplicative_expressionleft, cast_expressionright)))
 |       multiplicative_expression SLASH cast_expression    
                            (CBinary (CDivOp, multiplicative_expression, cast_expression, 
-                                      ndi2 (multiplicative_expressionleft, cast_expressionright)))
+                                      ndi2 st (multiplicative_expressionleft, cast_expressionright)))
 |       multiplicative_expression PERCENT cast_expression    
                            (CBinary (CRmdOp, multiplicative_expression, cast_expression, 
-                                      ndi2 (multiplicative_expressionleft, cast_expressionright)))
+                                      ndi2 st (multiplicative_expressionleft, cast_expressionright)))
 
 additive_expression: 
         multiplicative_expression    
                            (multiplicative_expression)
 |       additive_expression PLUS multiplicative_expression    
                            (CBinary (CAddOp, additive_expression, multiplicative_expression, 
-                                      ndi2 (additive_expressionleft, multiplicative_expressionright)))
+                                      ndi2 st (additive_expressionleft, multiplicative_expressionright)))
 |       additive_expression MINUS multiplicative_expression    
                            (CBinary (CSubOp, additive_expression, multiplicative_expression, 
-                                      ndi2 (additive_expressionleft, 
+                                      ndi2 st (additive_expressionleft, 
                                             multiplicative_expressionright)))
 
 shift_expression: 
         additive_expression(additive_expression)
 |       shift_expression LEFT_OP additive_expression    
                            (CBinary (CShlOp, shift_expression, additive_expression, 
-                                      ndi2 (shift_expressionleft, additive_expressionright)))
+                                      ndi2 st (shift_expressionleft, additive_expressionright)))
 |       shift_expression RIGHT_OP additive_expression    
                            (CBinary (CShrOp, shift_expression, additive_expression, 
-                                      ndi2 (shift_expressionleft, additive_expressionright)))
+                                      ndi2 st (shift_expressionleft, additive_expressionright)))
 
 relational_expression: 
         shift_expression(shift_expression)
 |       relational_expression LT shift_expression    
                         (CBinary (CLeOp, relational_expression, shift_expression, 
-                                   ndi2 (relational_expressionleft, shift_expressionright)))
+                                   ndi2 st (relational_expressionleft, shift_expressionright)))
 |       relational_expression GT shift_expression    
                         (CBinary (CGrOp, relational_expression, shift_expression, 
-                                   ndi2 (relational_expressionleft, shift_expressionright)))
+                                   ndi2 st (relational_expressionleft, shift_expressionright)))
 |       relational_expression LE_OP shift_expression    
                         (CBinary (CLeqOp, relational_expression, shift_expression, 
-                                   ndi2 (relational_expressionleft, shift_expressionright)))
+                                   ndi2 st (relational_expressionleft, shift_expressionright)))
 |       relational_expression GE_OP shift_expression    
                         (CBinary (CGeqOp, relational_expression, shift_expression, 
-                                   ndi2 (relational_expressionleft, shift_expressionright)))
+                                   ndi2 st (relational_expressionleft, shift_expressionright)))
 
 equality_expression: 
         relational_expression    
                         (relational_expression)
 |       equality_expression EQ_OP relational_expression    
                         (CBinary (CEqOp, equality_expression, relational_expression, 
-                                   ndi2 (equality_expressionleft, relational_expressionright)))
+                                   ndi2 st (equality_expressionleft, relational_expressionright)))
 |       equality_expression NE_OP relational_expression    
                         (CBinary (CNeqOp, equality_expression, relational_expression, 
-                                   ndi2 (equality_expressionleft, relational_expressionright)))
+                                   ndi2 st (equality_expressionleft, relational_expressionright)))
 
 and_expression: 
         equality_expression    
                         (equality_expression)
 |       and_expression AMP equality_expression    
                         (CBinary (CAndOp, and_expression, equality_expression, 
-                                   ndi2 (and_expressionleft, equality_expressionright)))
+                                   ndi2 st (and_expressionleft, equality_expressionright)))
 
 exclusive_or_expression: 
         and_expression  (and_expression)
 |       exclusive_or_expression CARET and_expression    
                         (CBinary (CXorOp, exclusive_or_expression, and_expression, 
-                                   ndi2 (exclusive_or_expressionleft, and_expressionright)))
+                                   ndi2 st (exclusive_or_expressionleft, and_expressionright)))
 
 inclusive_or_expression: 
         exclusive_or_expression    
                         (exclusive_or_expression)
 |       inclusive_or_expression PIPE exclusive_or_expression    
                         (CBinary (COrOp, inclusive_or_expression, exclusive_or_expression, 
-                                   ndi2 (inclusive_or_expressionleft, exclusive_or_expressionright)))
+                                   ndi2 st (inclusive_or_expressionleft, exclusive_or_expressionright)))
 
 logical_and_expression: 
         inclusive_or_expression    
                         (inclusive_or_expression)
 |       logical_and_expression AND_OP inclusive_or_expression    
                         (CBinary (CLndOp, logical_and_expression, inclusive_or_expression, 
-                                   ndi2 (logical_and_expressionleft, inclusive_or_expressionright)))
+                                   ndi2 st (logical_and_expressionleft, inclusive_or_expressionright)))
 
 logical_or_expression: 
         logical_and_expression    
                         (logical_and_expression)
 |       logical_or_expression OR_OP logical_and_expression    
                         (CBinary (CLorOp, logical_or_expression, logical_and_expression, 
-                                   ndi2 (logical_or_expressionleft, logical_and_expressionright)))
+                                   ndi2 st (logical_or_expressionleft, logical_and_expressionright)))
 
 conditional_expression: 
         logical_or_expression    
                         (logical_or_expression)
 |       logical_or_expression QUESTION expression COLON conditional_expression    
                         (CCond (logical_or_expression, SOME expression, conditional_expression, 
-                                 ndi2 (logical_or_expressionleft, conditional_expressionright)))
+                                 ndi2 st (logical_or_expressionleft, conditional_expressionright)))
 
 assignment_expression: 
         conditional_expression    
                         (conditional_expression)
 |       unary_expression assignment_operator assignment_expression    
                         (CAssign (assignment_operator, unary_expression, assignment_expression, 
-                                   ndi2 (unary_expressionleft, assignment_expressionright)))
+                                   ndi2 st (unary_expressionleft, assignment_expressionright)))
 
 assignment_operator: 
         ASSIGN        (CAssignOp)
@@ -1301,18 +1285,18 @@ expression:
 |       expression COMMA assignment_expression    
                       (CComma ((case expression of CComma (l,_) => l | e => [e]) 
                                 @ [assignment_expression], 
-                                ndi2 (expressionleft, assignment_expressionright)))
+                                ndi2 st (expressionleft, assignment_expressionright)))
 
 constant_expression: 
         conditional_expression    (conditional_expression)
 
 declaration:
         declaration_specifiers SEMI
-                      (CDecl (declaration_specifiers, [], ndi2 (declaration_specifiersleft, SEMIright)))
+                      (CDecl (declaration_specifiers, [], ndi2 st (declaration_specifiersleft, SEMIright)))
 |       declaration_specifiers init_declarator_list SEMI
-                      (C11_Typedefs.register_if_typedef declaration_specifiers init_declarator_list;
+                      (C11_State.register_if_typedef st declaration_specifiers init_declarator_list;
                        CDecl (declaration_specifiers, init_declarator_list,
-                               ndi2 (declaration_specifiersleft, SEMIright)))
+                               ndi2 st (declaration_specifiersleft, SEMIright)))
 |       static_assert_declaration
                       (static_assert_declaration)
 
@@ -1348,47 +1332,47 @@ init_declarator:
 |       declarator    ((SOME declarator, NONE), NONE)
 
 storage_class_specifier: 
-        TYPEDEF       (CTypedef (ndi TYPEDEFleft))
-|       EXTERN        (CExtern (ndi EXTERNleft))
-|       STATIC        (CStatic (ndi STATICleft))
-|       THREAD_LOCAL  (CThread (ndi THREAD_LOCALleft))
-|       AUTO          (CAuto (ndi AUTOleft))
-|       REGISTER      (CRegister (ndi REGISTERleft))
+        TYPEDEF       (CTypedef (ndi st TYPEDEFleft))
+|       EXTERN        (CExtern (ndi st EXTERNleft))
+|       STATIC        (CStatic (ndi st STATICleft))
+|       THREAD_LOCAL  (CThread (ndi st THREAD_LOCALleft))
+|       AUTO          (CAuto (ndi st AUTOleft))
+|       REGISTER      (CRegister (ndi st REGISTERleft))
 
 type_specifier: 
-        VOID          (CVoidType (ndi VOIDleft))
-|       CHAR          (CCharType (ndi CHARleft))
-|       SHORT         (CShortType (ndi SHORTleft))
-|       INT           (CIntType (ndi INTleft))
-|       LONG          (CLongType (ndi LONGleft))
-|       FLOAT         (CFloatType (ndi FLOATleft))
-|       DOUBLE        (CDoubleType (ndi DOUBLEleft))
-|       SIGNED        (CSignedType (ndi SIGNEDleft))
-|       UNSIGNED      (CUnsigType (ndi UNSIGNEDleft))
-|       BOOL          (CBoolType (ndi BOOLleft))
-|       COMPLEX       (CComplexType (ndi COMPLEXleft))
-|       IMAGINARY     (CComplexType (ndi IMAGINARYleft))
+        VOID          (CVoidType (ndi st VOIDleft))
+|       CHAR          (CCharType (ndi st CHARleft))
+|       SHORT         (CShortType (ndi st SHORTleft))
+|       INT           (CIntType (ndi st INTleft))
+|       LONG          (CLongType (ndi st LONGleft))
+|       FLOAT         (CFloatType (ndi st FLOATleft))
+|       DOUBLE        (CDoubleType (ndi st DOUBLEleft))
+|       SIGNED        (CSignedType (ndi st SIGNEDleft))
+|       UNSIGNED      (CUnsigType (ndi st UNSIGNEDleft))
+|       BOOL          (CBoolType (ndi st BOOLleft))
+|       COMPLEX       (CComplexType (ndi st COMPLEXleft))
+|       IMAGINARY     (CComplexType (ndi st IMAGINARYleft))
 |       atomic_type_specifier    
                       (atomic_type_specifier)
 |       struct_or_union_specifier    
                       (struct_or_union_specifier)
 |       enum_specifier(enum_specifier)
-|       TYPEDEF_NAME  (CTypeDef (Ident (TYPEDEF_NAME, 0, ndi TYPEDEF_NAMEleft), ndi TYPEDEF_NAMEleft))
+|       TYPEDEF_NAME  (CTypeDef (Ident (TYPEDEF_NAME, 0, ndi st TYPEDEF_NAMEleft), ndi st TYPEDEF_NAMEleft))
 
 struct_or_union_specifier: 
         struct_or_union LBRACE struct_declaration_list RBRACE    
                       (CSUType (CStruct (struct_or_union, NONE, SOME struct_declaration_list, [], 
-                                           ndi2 (struct_or_unionleft, RBRACEright)), 
-                                 ndi2 (struct_or_unionleft, RBRACEright)))
+                                           ndi2 st (struct_or_unionleft, RBRACEright)), 
+                                 ndi2 st (struct_or_unionleft, RBRACEright)))
 |       struct_or_union IDENTIFIER LBRACE struct_declaration_list RBRACE    
-                      (CSUType (CStruct (struct_or_union, SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
-                                 SOME struct_declaration_list, [], ndi2 (struct_or_unionleft, RBRACEright)), 
-                                 ndi2 (struct_or_unionleft, RBRACEright)))
+                      (CSUType (CStruct (struct_or_union, SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)), 
+                                 SOME struct_declaration_list, [], ndi2 st (struct_or_unionleft, RBRACEright)), 
+                                 ndi2 st (struct_or_unionleft, RBRACEright)))
 |       struct_or_union IDENTIFIER    
                       (CSUType (CStruct (struct_or_union, 
-                                           SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)),NONE,[], 
-                                                 ndi2 (struct_or_unionleft, IDENTIFIERright)), 
-                                 ndi2 (struct_or_unionleft, IDENTIFIERright)))
+                                           SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)),NONE,[], 
+                                                 ndi2 st (struct_or_unionleft, IDENTIFIERright)), 
+                                 ndi2 st (struct_or_unionleft, IDENTIFIERright)))
 
 struct_or_union: 
         STRUCT        (CStructTag)
@@ -1403,10 +1387,10 @@ struct_declaration_list:
 struct_declaration: 
         specifier_qualifier_list SEMI    
                       (CDecl (specifier_qualifier_list, [], 
-                               ndi2 (specifier_qualifier_listleft, SEMIright)))
+                               ndi2 st (specifier_qualifier_listleft, SEMIright)))
 |       specifier_qualifier_list struct_declarator_list SEMI    
                       (CDecl (specifier_qualifier_list, struct_declarator_list, 
-                               ndi2 (specifier_qualifier_listleft, SEMIright)))
+                               ndi2 st (specifier_qualifier_listleft, SEMIright)))
 |       static_assert_declaration    
                       (static_assert_declaration)
 
@@ -1434,24 +1418,24 @@ struct_declarator:
 enum_specifier: 
         ENUM LBRACE enumerator_list RBRACE    
                       (CEnumType (CEnum (NONE, SOME enumerator_list, [], 
-                                      ndi2 (ENUMleft, RBRACEright)), ndi2 (ENUMleft, RBRACEright)))
+                                      ndi2 st (ENUMleft, RBRACEright)), ndi2 st (ENUMleft, RBRACEright)))
 |       ENUM LBRACE enumerator_list COMMA RBRACE    
                       (CEnumType (CEnum (NONE, SOME enumerator_list, [], 
-                                           ndi2 (ENUMleft, RBRACEright)), 
-                                   ndi2 (ENUMleft, RBRACEright)))
+                                           ndi2 st (ENUMleft, RBRACEright)), 
+                                   ndi2 st (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER LBRACE enumerator_list RBRACE    
-                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
-                                           SOME enumerator_list, [], ndi2 (ENUMleft, RBRACEright)), 
-                                   ndi2 (ENUMleft, RBRACEright)))
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)), 
+                                           SOME enumerator_list, [], ndi2 st (ENUMleft, RBRACEright)), 
+                                   ndi2 st (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER LBRACE enumerator_list COMMA RBRACE    
-                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)), 
                                                  SOME enumerator_list, [], 
-                                           ndi2 (ENUMleft, RBRACEright)), 
-                                   ndi2 (ENUMleft, RBRACEright)))
+                                           ndi2 st (ENUMleft, RBRACEright)), 
+                                   ndi2 st (ENUMleft, RBRACEright)))
 |       ENUM IDENTIFIER
-                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), 
-                                           NONE, [], ndi2 (ENUMleft, IDENTIFIERright)), 
-                                   ndi2 (ENUMleft, IDENTIFIERright)))
+                      (CEnumType (CEnum (SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)), 
+                                           NONE, [], ndi2 st (ENUMleft, IDENTIFIERright)), 
+                                   ndi2 st (ENUMleft, IDENTIFIERright)))
 
 enumerator_list: 
         enumerator    ([enumerator])
@@ -1466,110 +1450,110 @@ enumerator:
 
 atomic_type_specifier: 
         ATOMIC LPAREN type_name RPAREN    
-                      (CAtomicType (type_name, ndi2 (ATOMICleft, RPARENright)))
+                      (CAtomicType (type_name, ndi2 st (ATOMICleft, RPARENright)))
 
 type_qualifier: 
-        CONST         (CConstQual (ndi CONSTleft))
-|       RESTRICT      (CRestrQual (ndi RESTRICTleft))
-|       VOLATILE      (CVolatQual (ndi VOLATILEleft))
-|       ATOMIC        (CAtomicQual (ndi ATOMICleft))
+        CONST         (CConstQual (ndi st CONSTleft))
+|       RESTRICT      (CRestrQual (ndi st RESTRICTleft))
+|       VOLATILE      (CVolatQual (ndi st VOLATILEleft))
+|       ATOMIC        (CAtomicQual (ndi st ATOMICleft))
 
 function_specifier: 
-        INLINE        (CInlineQual (ndi INLINEleft))
-|       NORETURN      (CNoreturnQual (ndi NORETURNleft))
+        INLINE        (CInlineQual (ndi st INLINEleft))
+|       NORETURN      (CNoreturnQual (ndi st NORETURNleft))
 
 alignment_specifier: 
         ALIGNAS LPAREN type_name RPAREN    
-                      (CAlignAsType (type_name, ndi2 (ALIGNASleft, RPARENright)))
+                      (CAlignAsType (type_name, ndi2 st (ALIGNASleft, RPARENright)))
 |       ALIGNAS LPAREN constant_expression RPAREN    
-                      (CAlignAsExpr (constant_expression, ndi2 (ALIGNASleft, RPARENright)))
+                      (CAlignAsExpr (constant_expression, ndi2 st (ALIGNASleft, RPARENright)))
 
 declarator: 
         pointer direct_declarator    
                       (let val (io, derived) = direct_declarator 
                        in mk_declarator (io, pointer @ derived, NONE, [], 
-                                         ndi2 (pointerleft, direct_declaratorright)) 
+                                         ndi2 st (pointerleft, direct_declaratorright)) 
                        end)
 |       direct_declarator    
                       (let val (io, derived) = direct_declarator 
                        in mk_declarator (io, derived, NONE, [], 
-                                         ndi2 (direct_declaratorleft, direct_declaratorright)) 
+                                         ndi2 st (direct_declaratorleft, direct_declaratorright)) 
                        end)
 
 direct_declarator: 
-        IDENTIFIER    (SOME (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)), [])
+        IDENTIFIER    (SOME (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)), [])
 |       LPAREN declarator RPAREN    
                       (let val CDeclr (io, derived, _, _, _) = declarator in (io, derived) end)
 |       direct_declarator LBRACKET RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr ([], CNoArrSize false, 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STAR RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr ([], CNoArrSize false, 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr (type_qualifier_list, 
                                                 CArrSize (true, assignment_expression), 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET STATIC assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr ([], CArrSize (true, assignment_expression), 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list STAR RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET type_qualifier_list RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LBRACKET assignment_expression RBRACKET    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CArrDeclr ([], CArrSize (false, assignment_expression), 
-                                                ndi2 (direct_declaratorleft, RBRACKETright))]) 
+                                                ndi2 st (direct_declaratorleft, RBRACKETright))]) 
                        end)
 |       direct_declarator LPAREN parameter_type_list RPAREN    
                       (let val (io, d) = direct_declarator 
                            val (params, ellipsis) = parameter_type_list 
                        in (io, d @ [CFunDeclr (Right (params, ellipsis), [], 
-                                                ndi2 (direct_declaratorleft, RPARENright))]) 
+                                                ndi2 st (direct_declaratorleft, RPARENright))]) 
                        end)
 |       direct_declarator LPAREN RPAREN    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CFunDeclr (Right ([], false), [], 
-                                                       ndi2 (direct_declaratorleft, RPARENright))]) 
+                                                       ndi2 st (direct_declaratorleft, RPARENright))]) 
                        end)
 |       direct_declarator LPAREN identifier_list RPAREN    
                       (let val (io, d) = direct_declarator 
                        in (io, d @ [CFunDeclr (Left identifier_list, [], 
-                                                ndi2 (direct_declaratorleft, RPARENright))]) 
+                                                ndi2 st (direct_declaratorleft, RPARENright))]) 
                        end)
 
 pointer:STAR type_qualifier_list pointer    
                      (CPtrDeclr (type_qualifier_list, 
-                                  ndi2 (STARleft, type_qualifier_listright)) :: pointer)
+                                  ndi2 st (STARleft, type_qualifier_listright)) :: pointer)
 |       STAR type_qualifier_list    
-                     ([CPtrDeclr (type_qualifier_list, ndi2 (STARleft, type_qualifier_listright))])
-|       STAR pointer (CPtrDeclr ([], ndi STARleft) :: pointer)
-|       STAR         ([CPtrDeclr ([], ndi STARleft)])
+                     ([CPtrDeclr (type_qualifier_list, ndi2 st (STARleft, type_qualifier_listright))])
+|       STAR pointer (CPtrDeclr ([], ndi st STARleft) :: pointer)
+|       STAR         ([CPtrDeclr ([], ndi st STARleft)])
 
 type_qualifier_list: 
         type_qualifier
@@ -1591,113 +1575,113 @@ parameter_list:
 parameter_declaration: 
         declaration_specifiers declarator    
                      (mk_type_decl (declaration_specifiers, SOME declarator, 
-                                    ndi2 (declaration_specifiersleft, declaratorright)))
+                                    ndi2 st (declaration_specifiersleft, declaratorright)))
 |       declaration_specifiers abstract_declarator    
                      (mk_type_decl (declaration_specifiers, SOME abstract_declarator, 
-                                    ndi2 (declaration_specifiersleft, abstract_declaratorright)))
+                                    ndi2 st (declaration_specifiersleft, abstract_declaratorright)))
 |       declaration_specifiers    
-                     (mk_type_decl (declaration_specifiers, NONE, ndi declaration_specifiersleft))
+                     (mk_type_decl (declaration_specifiers, NONE, ndi st declaration_specifiersleft))
 
 identifier_list: 
-        IDENTIFIER    ([Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)])
+        IDENTIFIER    ([Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)])
 |       identifier_list COMMA IDENTIFIER    
-                      (identifier_list @ [Ident (IDENTIFIER, 0, ndi IDENTIFIERleft)])
+                      (identifier_list @ [Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft)])
 
 type_name: specifier_qualifier_list abstract_declarator    
                       (mk_type_decl (specifier_qualifier_list, SOME abstract_declarator, 
-                                     ndi2 (specifier_qualifier_listleft, abstract_declaratorright)))
+                                     ndi2 st (specifier_qualifier_listleft, abstract_declaratorright)))
 |       specifier_qualifier_list    
-                      (mk_type_decl (specifier_qualifier_list, NONE, ndi specifier_qualifier_listleft))
+                      (mk_type_decl (specifier_qualifier_list, NONE, ndi st specifier_qualifier_listleft))
 
 abstract_declarator: 
         pointer direct_abstract_declarator    
                       (mk_declarator (NONE, pointer @ direct_abstract_declarator, NONE, [], 
-                                      ndi2 (pointerleft, direct_abstract_declaratorright)))
-|       pointer       (mk_declarator (NONE, pointer, NONE, [], ndi pointerleft))
+                                      ndi2 st (pointerleft, direct_abstract_declaratorright)))
+|       pointer       (mk_declarator (NONE, pointer, NONE, [], ndi st pointerleft))
 |       direct_abstract_declarator    
                       (mk_declarator (NONE, direct_abstract_declarator, NONE, [], 
-                                      ndi2 (direct_abstract_declaratorleft, 
+                                      ndi2 st (direct_abstract_declaratorleft, 
                                             direct_abstract_declaratorright)))
 
 direct_abstract_declarator: 
         LPAREN abstract_declarator RPAREN    
                       (let val CDeclr (_, d, _, _, _) = abstract_declarator in d end)
 |       LBRACKET RBRACKET    
-                      ([CArrDeclr ([], CNoArrSize false, ndi2 (LBRACKETleft, RBRACKETright))])
+                      ([CArrDeclr ([], CNoArrSize false, ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STAR RBRACKET    
-                      ([CArrDeclr ([], CNoArrSize false, ndi2 (LBRACKETleft, RBRACKETright))])
+                      ([CArrDeclr ([], CNoArrSize false, ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
                       ([CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET STATIC assignment_expression RBRACKET    
                       ([CArrDeclr ([], CArrSize (true, assignment_expression), 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
                       ([CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list assignment_expression RBRACKET    
                       ([CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET type_qualifier_list RBRACKET    
                       ([CArrDeclr (type_qualifier_list, CNoArrSize false, 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       LBRACKET assignment_expression RBRACKET    
                       ([CArrDeclr ([], CArrSize (false, assignment_expression), 
-                                    ndi2 (LBRACKETleft, RBRACKETright))])
+                                    ndi2 st (LBRACKETleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr ([], CNoArrSize false, 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STAR RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr ([], CNoArrSize false, 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STATIC type_qualifier_list assignment_expression RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET STATIC assignment_expression RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr ([], CArrSize (true, assignment_expression), 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list assignment_expression RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr (type_qualifier_list, CArrSize (false, assignment_expression), 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list STATIC assignment_expression RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr (type_qualifier_list, CArrSize (true, assignment_expression), 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET type_qualifier_list RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr (type_qualifier_list, CNoArrSize false, 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
 |       direct_abstract_declarator LBRACKET assignment_expression RBRACKET    
                       (direct_abstract_declarator 
                        @ [CArrDeclr ([], CArrSize (false, assignment_expression), 
-                                      ndi2 (direct_abstract_declaratorleft, RBRACKETright))])
-|       LPAREN RPAREN ([CFunDeclr (Right ([], false), [], ndi2 (LPARENleft, RPARENright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RBRACKETright))])
+|       LPAREN RPAREN ([CFunDeclr (Right ([], false), [], ndi2 st (LPARENleft, RPARENright))])
 |       LPAREN parameter_type_list RPAREN    
                       (let val (params, ell) = parameter_type_list 
-                       in [CFunDeclr (Right (params, ell),[], ndi2 (LPARENleft, RPARENright))] end)
+                       in [CFunDeclr (Right (params, ell),[], ndi2 st (LPARENleft, RPARENright))] end)
 |       direct_abstract_declarator LPAREN RPAREN    
                       (direct_abstract_declarator 
                        @ [CFunDeclr (Right ([], false), [], 
-                                      ndi2 (direct_abstract_declaratorleft, RPARENright))])
+                                      ndi2 st (direct_abstract_declaratorleft, RPARENright))])
 |       direct_abstract_declarator LPAREN parameter_type_list RPAREN    
                       (let val (params, ell) = parameter_type_list 
                        in direct_abstract_declarator 
                           @ [CFunDeclr (Right (params, ell), [], 
-                                         ndi2 (direct_abstract_declaratorleft, RPARENright))] 
+                                         ndi2 st (direct_abstract_declaratorleft, RPARENright))] 
                        end)
 
 initializer: 
         LBRACE initializer_list RBRACE    
-                      (CInitList (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CInitList (initializer_list, ndi2 st (LBRACEleft, RBRACEright)))
 |       LBRACE initializer_list COMMA RBRACE    
-                      (CInitList (initializer_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CInitList (initializer_list, ndi2 st (LBRACEleft, RBRACEright)))
 |       assignment_expression    
-                      (CInitExpr (assignment_expression, ndi assignment_expressionleft))
+                      (CInitExpr (assignment_expression, ndi st assignment_expressionleft))
 
 initializer_list: 
         designation initializer    
@@ -1717,15 +1701,15 @@ designator_list:
 
 designator: 
         LBRACKET constant_expression RBRACKET    
-                      (CArrDesig (constant_expression, ndi2 (LBRACKETleft, RBRACKETright)))
-|       DOT IDENTIFIER(CMemberDesig (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), 
-                                      ndi2 (DOTleft, IDENTIFIERright)))
+                      (CArrDesig (constant_expression, ndi2 st (LBRACKETleft, RBRACKETright)))
+|       DOT IDENTIFIER(CMemberDesig (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), 
+                                      ndi2 st (DOTleft, IDENTIFIERright)))
 
 static_assert_declaration: 
         STATIC_ASSERT LPAREN constant_expression COMMA STRING_LITERAL RPAREN SEMI    
                       (CStaticAssert (constant_expression, 
-                                       CStrLit (parse_c_string STRING_LITERAL, ndi STRING_LITERALleft), 
-                                       ndi2 (STATIC_ASSERTleft, SEMIright)))
+                                       CStrLit (parse_c_string STRING_LITERAL, ndi st STRING_LITERALleft), 
+                                       ndi2 st (STATIC_ASSERTleft, SEMIright)))
 
 statement: 
         labeled_statement    
@@ -1742,17 +1726,17 @@ statement:
 
 labeled_statement: 
         IDENTIFIER COLON statement    
-                      (CLabel (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), statement, [], 
-                                ndi2 (IDENTIFIERleft, statementright)))
+                      (CLabel (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), statement, [], 
+                                ndi2 st (IDENTIFIERleft, statementright)))
 |       CASE constant_expression COLON statement    
-                      (CCase (constant_expression, statement, ndi2 (CASEleft, statementright)))
+                      (CCase (constant_expression, statement, ndi2 st (CASEleft, statementright)))
 |       DEFAULT COLON statement    
-                      (CDefault (statement, ndi2 (DEFAULTleft, statementright)))
+                      (CDefault (statement, ndi2 st (DEFAULTleft, statementright)))
 
 compound_statement: LBRACE RBRACE    
-                      (CCompound ([], [], ndi2 (LBRACEleft, RBRACEright)))
+                      (CCompound ([], [], ndi2 st (LBRACEleft, RBRACEright)))
 |       LBRACE block_item_list RBRACE    
-                      (CCompound ([], block_item_list, ndi2 (LBRACEleft, RBRACEright)))
+                      (CCompound ([], block_item_list, ndi2 st (LBRACEleft, RBRACEright)))
 
 block_item_list: 
         block_item    ([block_item])
@@ -1764,48 +1748,48 @@ block_item: declaration
 |       statement     (CBlockStmt statement)
 
 expression_statement: 
-        SEMI          (CExpr (NONE, ndi SEMIleft))
-|       expression SEMI(CExpr (SOME expression, ndi2 (expressionleft, SEMIright)))
+        SEMI          (CExpr (NONE, ndi st SEMIleft))
+|       expression SEMI(CExpr (SOME expression, ndi2 st (expressionleft, SEMIright)))
 
 selection_statement: 
         IF LPAREN expression RPAREN statement ELSE statement    
-           (CIf (expression, statement1, SOME statement2, ndi2 (IFleft, statement2right)))
+           (CIf (expression, statement1, SOME statement2, ndi2 st (IFleft, statement2right)))
 |       IF LPAREN expression RPAREN statement    
-           (CIf (expression, statement, NONE, ndi2 (IFleft, statementright)))
+           (CIf (expression, statement, NONE, ndi2 st (IFleft, statementright)))
 |       SWITCH LPAREN expression RPAREN statement    
-           (CSwitch (expression, statement, ndi2 (SWITCHleft, statementright)))
+           (CSwitch (expression, statement, ndi2 st (SWITCHleft, statementright)))
 
 iteration_statement: 
         WHILE LPAREN expression RPAREN statement    
-           (CWhile (expression, statement, false, ndi2 (WHILEleft, statementright)))
+           (CWhile (expression, statement, false, ndi2 st (WHILEleft, statementright)))
 |       DO statement WHILE LPAREN expression RPAREN SEMI    
-           (CWhile (expression, statement, true, ndi2 (DOleft, SEMIright)))
+           (CWhile (expression, statement, true, ndi2 st (DOleft, SEMIright)))
 |       FOR LPAREN expression_statement expression_statement RPAREN statement    
            (CFor (Left (case expression_statement1 of CExpr (eo,_) => eo), 
                         (case expression_statement2 of CExpr (eo,_) => eo), NONE, statement, 
-                   ndi2 (FORleft, statementright)))
+                   ndi2 st (FORleft, statementright)))
 |       FOR LPAREN expression_statement expression_statement expression RPAREN statement    
            (CFor (Left (case expression_statement1 of CExpr (eo,_) => eo), 
                    (case expression_statement2 of CExpr (eo,_) => eo), SOME expression, statement, 
-                   ndi2 (FORleft, statementright)))
+                   ndi2 st (FORleft, statementright)))
 |       FOR LPAREN declaration expression_statement RPAREN statement    
            (CFor (Right declaration, (case expression_statement of CExpr (eo,_) => eo), 
-                   NONE, statement, ndi2 (FORleft, statementright)))
+                   NONE, statement, ndi2 st (FORleft, statementright)))
 |       FOR LPAREN declaration expression_statement expression RPAREN statement    
            (CFor (Right declaration, (case expression_statement of CExpr (eo,_) => eo), 
-                   SOME expression, statement, ndi2 (FORleft, statementright)))
+                   SOME expression, statement, ndi2 st (FORleft, statementright)))
 
 jump_statement: 
         GOTO IDENTIFIER SEMI    
-           (CGoto (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), ndi2 (GOTOleft, SEMIright)))
+           (CGoto (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), ndi2 st (GOTOleft, SEMIright)))
 |       CONTINUE SEMI    
-           (CCont (ndi2 (CONTINUEleft, SEMIright)))
+           (CCont (ndi2 st (CONTINUEleft, SEMIright)))
 |       BREAK SEMI    
-           (CBreak (ndi2 (BREAKleft, SEMIright)))
+           (CBreak (ndi2 st (BREAKleft, SEMIright)))
 |       RETURN SEMI    
-           (CReturn (NONE, ndi2 (RETURNleft, SEMIright)))
+           (CReturn (NONE, ndi2 st (RETURNleft, SEMIright)))
 |       RETURN expression SEMI    
-           (CReturn (SOME expression, ndi2 (RETURNleft, SEMIright)))
+           (CReturn (SOME expression, ndi2 st (RETURNleft, SEMIright)))
 
 translation_unit: 
         external_declaration    
@@ -1825,30 +1809,30 @@ preproc_directive:
         INCLUDE HEADER_NAME
            (let val system = String.isPrefix "<" HEADER_NAME
                 val name = String.substring (HEADER_NAME, 1, String.size HEADER_NAME - 2)
-            in CPPInclude (system, name, ndi2 (INCLUDEleft, HEADER_NAMEright), ndi HEADER_NAMEleft) end)
+            in CPPInclude (system, name, ndi2 st (INCLUDEleft, HEADER_NAMEright), ndi st HEADER_NAMEleft) end)
 |       DEFINE IDENTIFIER constant_expression
-           (CPPDefine (Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), constant_expression,
-                        ndi2 (DEFINEleft, constant_expressionright)))
+           (CPPDefine (Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), constant_expression,
+                        ndi2 st (DEFINEleft, constant_expressionright)))
 |       DEFINE DEFINE_LPAREN RPAREN constant_expression
-           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi DEFINE_LPARENleft), [], constant_expression,
-                           ndi2 (DEFINEleft, constant_expressionright)))
+           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi st DEFINE_LPARENleft), [], constant_expression,
+                           ndi2 st (DEFINEleft, constant_expressionright)))
 |       DEFINE DEFINE_LPAREN identifier_list RPAREN constant_expression
-           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi DEFINE_LPARENleft), identifier_list, constant_expression,
-                           ndi2 (DEFINEleft, constant_expressionright)))
+           (CPPDefineFun (Ident (DEFINE_LPAREN, 0, ndi st DEFINE_LPARENleft), identifier_list, constant_expression,
+                           ndi2 st (DEFINEleft, constant_expressionright)))
 |       IFDEF IDENTIFIER external_declaration_list ENDIF
-           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
-                       ndi2 (IFDEFleft, ENDIFright)))
+           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), external_declaration_list, [],
+                       ndi2 st (IFDEFleft, ENDIFright)))
 |       IFDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
-           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft),
+           (CPPIfdef (false, Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft),
                        external_declaration_list1, external_declaration_list2,
-                       ndi2 (IFDEFleft, ENDIFright)))
+                       ndi2 st (IFDEFleft, ENDIFright)))
 |       IFNDEF IDENTIFIER external_declaration_list ENDIF
-           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft), external_declaration_list, [],
-                       ndi2 (IFNDEFleft, ENDIFright)))
+           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft), external_declaration_list, [],
+                       ndi2 st (IFNDEFleft, ENDIFright)))
 |       IFNDEF IDENTIFIER external_declaration_list PP_ELSE external_declaration_list ENDIF
-           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi IDENTIFIERleft),
+           (CPPIfdef (true, Ident (IDENTIFIER, 0, ndi st IDENTIFIERleft),
                        external_declaration_list1, external_declaration_list2,
-                       ndi2 (IFNDEFleft, ENDIFright)))
+                       ndi2 st (IFNDEFleft, ENDIFright)))
 
 external_declaration_list:    ([])
 |       external_declaration_list external_declaration    
@@ -1857,10 +1841,10 @@ external_declaration_list:    ([])
 function_definition: 
         declaration_specifiers declarator declaration_list compound_statement    
            (CFunDef (declaration_specifiers, declarator, declaration_list, compound_statement, 
-                      ndi2 (declaration_specifiersleft, compound_statementright)))
+                      ndi2 st (declaration_specifiersleft, compound_statementright)))
 |       declaration_specifiers declarator compound_statement    
            (CFunDef (declaration_specifiers, declarator, [], compound_statement, 
-                      ndi2 (declaration_specifiersleft, compound_statementright)))
+                      ndi2 st (declaration_specifiersleft, compound_statementright)))
 
 declaration_list: 
         declaration    
@@ -1869,5 +1853,57 @@ declaration_list:
            (declaration_list @ [declaration])
 \<close>
 
+section\<open>Running the Parser\<close>
+
+text\<open>
+  \<^verbatim>\<open>C11_Parse\<close> runs the generated lexer/parser pair on a source. Every call creates its own
+  \<^verbatim>\<open>C11_State\<close> and gives it to the lexer and to the parser, so calls are independent and may
+  run concurrently. The typedef names of an \<^emph>\<open>accepted\<close> parse are merged into the session's set
+  (\<^verbatim>\<open>C11_Typedefs\<close>); a parse that fails, or a \<open>_reject\<close> parse (which must leave no trace), merges
+  nothing.
+
+  \<open>parse_loud\<close> uses the library's error reporting (\<^ML>\<open>Lex_yacc_state.print_error\<close>, which also
+  leaves error markup in the editor). \<open>parse_quiet\<close> is for the \<open>_reject\<close> commands: a locally
+  declared exception, not \<open>print_error\<close> (which reports PIDE error markup before raising, and
+  raises an exception Isabelle/ML cannot reliably catch by identity across the SML sandbox
+  boundary), so that no spurious error markup is left on expected-to-fail input.
+\<close>
+
+ML\<open>
+structure C11_Parse = struct
+
+structure P = C11.C11Parser
+structure T = C11.C11LrVals.Tokens
+
+fun parse_with commit mk_err ctxt source =
+  let
+    val st = C11_State.init ctxt source
+    val base = #base st
+    val input_text = Lex_yacc_state.text_of base
+    val consumed = Unsynchronized.ref false
+    fun input_string _ = if !consumed then "" else (consumed := true; input_text)
+    val lexer = P.makeLexer input_string st
+    val eof_pos = Lex_yacc_state.get_pos base (String.size input_text)
+    val dummyEOF = T.EOF (eof_pos, eof_pos)
+    val err = mk_err st
+    fun loop lexer =
+      let
+        val (res, lexer) = P.parse (0, lexer, err, st)
+        val (next, lexer) = P.Stream.get lexer
+      in if P.sameToken (next, dummyEOF) then res else loop lexer end
+    val res = loop lexer
+    val _ = (case res of SOME _ => if commit then C11_State.commit st else () | NONE => ())
+  in res end
+
+fun parse_loud ctxt source =
+  parse_with true (fn st => Lex_yacc_state.print_error (#base st)) ctxt source
+
+exception Rejected of string
+fun quiet_error (s : string, _ : Position.T, _ : Position.T) = raise Rejected s
+
+fun parse_quiet ctxt source = parse_with false (K quiet_error) ctxt source
+
+end
+\<close>
 
 end

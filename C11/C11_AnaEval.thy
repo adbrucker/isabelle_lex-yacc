@@ -226,16 +226,22 @@ fun find_decl_pos (C_Ast.CDecl (_, entries, _)) name =
    "analyse_and_eval" call (reset there - see its own note), and skipping a
    repeat. Comments are built purely from strings/positions/records/lists of
    those, both "eqtype"s, so plain "=" already means "the very same source
-   comment", not merely "same text" - a "Synchronized.var", not a functionally
-   threaded parameter through every "walk_*" function, exactly like
-   "C11_Comments.state" itself and for the same reason (thread-safety across
-   Isabelle's parallel checking - see its own comment). *)
+   comment", not merely "same text" - kept per thread for the extent of one walk
+   (see the structure below), not a functionally threaded parameter through every
+   "walk_*" function. *)
 structure Dispatched_Antiqs = struct
-  val state : Position.T C_Ast.comment list Synchronized.var =
-    Synchronized.var "AnaEval.Dispatched_Antiqs.state" []
-  fun reset () = Synchronized.change state (fn _ => [])
-  fun already_dispatched c = member (op =) (Synchronized.value state) c
-  fun mark c = Synchronized.change state (fn cs => c :: cs)
+  (* The set belongs to one walk ("analyse_and_eval" installs a fresh one for its dynamic
+     extent) and is kept per thread: a walk is plain, synchronous recursion on a single
+     thread, so two walks running at the same time cannot see each other's set - a
+     process-wide variable, as before, made them interfere. *)
+  val state : Position.T C_Ast.comment list Unsynchronized.ref Thread_Data.var = Thread_Data.var ()
+  fun current () =
+    (case Thread_Data.get state of
+       SOME r => r
+     | NONE => raise Fail "Dispatched_Antiqs: outside of analyse_and_eval")
+  fun with_fresh f = Thread_Data.setmp state (SOME (Unsynchronized.ref [])) f ()
+  fun already_dispatched c = member (op =) (!(current ())) c
+  fun mark c = let val r = current () in r := c :: !r end
 end
 
 (* A navigation step's coarse target category - "Id"/"Expr"/"Stmt"/"Units",
@@ -1294,7 +1300,7 @@ and walk_translation_unit cenv ctx (C_Ast.CTranslUnit (eds, ni)) =
     val (cenv1, acts1) = walk_ext_decls cenv ctx eds
   in (cenv1, here @ acts1) end
 
-fun analyse_and_eval (root : pos C_Ast.root) thy =
+fun analyse_and_eval0 (root : pos C_Ast.root) thy =
   let
     val cenv0 = get (Context.Theory thy)
     (* The context stack's bottom frame is always the top-level "root" itself
@@ -1305,7 +1311,6 @@ fun analyse_and_eval (root : pos C_Ast.root) thy =
        "Dispatched_Antiqs" (see its own note on "check_antiq") so a comment's
        already-dispatched status never leaks from a previous, unrelated
        parse. *)
-    val _ = Dispatched_Antiqs.reset ()
     fun finish (cenv1, acts) = (Context.theory_map (put cenv1) thy, acts)
   in
     case root of
@@ -1322,6 +1327,9 @@ fun analyse_and_eval (root : pos C_Ast.root) thy =
                         in (cenv', acc @ acts) end)
                   us (cenv0, []))
   end
+
+fun analyse_and_eval root thy =
+  Dispatched_Antiqs.with_fresh (fn () => analyse_and_eval0 root thy)
 
 end
 \<close>

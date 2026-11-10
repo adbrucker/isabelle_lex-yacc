@@ -776,12 +776,14 @@ text\<open>
     "ML" one (runs the body as ML source, nothing document-specific at all),
     which this project takes as independent confirmation the wall is real,
     not a gap specific to this fragment's own architecture.
-  \<^item> \<^bold>\<open>A single, shared, non-reentrant lexer state.\<close> The generated lexer
-    keeps its antiquotation-comment accumulator in one shared, mutable
-    structure (\<^verbatim>\<open>C11_Comments\<close>) rather than a value threaded functionally
-    through parsing, a known constraint on how safely this fragment's parser
-    can be invoked re-entrantly (e.g.\ from within another parse already in
-    progress).
+  \<^item> \<^bold>\<open>The typedef names are the one thing shared between parses.\<close> The parser is
+    re-entrant: the lexer's and the grammar's state (comments, antiquotation scanner, the
+    typedef names seen so far) is one object created per parse (\<^verbatim>\<open>C11_State\<close>), so any
+    number of parses can run at once. The session-wide set of typedef names
+    (\<^verbatim>\<open>C11_Typedefs\<close>) is deliberately shared - a name stays a type name for the rest of
+    the session - but a parse only merges its names into it when it is accepted. Two
+    commands that run at the same time and depend on each other's typedefs are, of course,
+    still ordered by Isabelle's theory-state dependency, not by this.
   \<^item> \<^bold>\<open>Navigation is not total.\<close> \<open>select_ast\<close>'s \<open>r\<close>/\<open>d\<close> phase (\<open>\<section>2.4\<close>) is
     defined for every \<open>cStatement\<close>/\<open>cExpression\<close> constructor, but an \<open>Id\<close> or
     \<open>Units\<close> root is never \<open>r\<close>/\<open>d\<close>-navigable at all (an identifier is always a

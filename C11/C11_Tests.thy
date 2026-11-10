@@ -692,8 +692,9 @@ val _ =
 \<close>
 
 text\<open>Regression test for the error-recovery corruption this feature's
-  registration side effect was originally vulnerable to (see the long note
-  on \<open>C11_Typedefs.snapshot\<close>/\<open>restore\<close> in \<^verbatim>\<open>C11_Parser.thy\<close>): a
+  registration side effect was originally vulnerable to (see the note on
+  \<open>C11_State.register_if_typedef\<close> in \<^verbatim>\<open>C11_Parser.thy\<close>; a parse's names are only
+  merged into the session's set when it is accepted): a
   \<open>c11_reject\<close> fragment reusing a fresh name right next to a malformed
   declaration must never leak a spurious typedef registration for that
   name, even though the fragment drives ML-Yacc's error-recovery path -
@@ -1723,6 +1724,79 @@ c11\<open>int backend_probe_h(void) { return 1; }\<close>
 ML\<open>
 val _ = if length (!BACKEND_LOG) = 1 then ()
         else error "the default backend must do nothing"
+\<close>
+
+
+section\<open>Parallel Parses\<close>
+
+text\<open>
+  Every parse has its own state object (\<^verbatim>\<open>C11_State\<close>), so any number of parses may run at
+  once. Twelve different translation units, with block and line comments (some carrying
+  antiquotations) and a \<open>typedef\<close> of their own, are parsed by \<^ML>\<open>Par_List.map\<close>, ten rounds in a
+  row. Each result must equal a sequential parse's (up to the name of the typedef, which is
+  new in every round), and the typedef names of all accepted parses must end up in the
+  session's set. (With the process-wide state of the earlier version this failed with
+  spurious syntax errors, or comments attached to the wrong program.)
+\<close>
+
+ML\<open>
+local
+  val ctxt = @{context}
+
+  fun prog tag k =
+    let val n = Int.toString k
+    in String.concatWith "\n"
+         ([ "typedef int par_" ^ tag ^ "_t" ^ n ^ ";",
+            "int f" ^ n ^ "(int x) {" ] @
+          List.concat (List.tabulate (20, fn i =>
+            [ "  /* a block comment " ^ n ^ " */",
+              "  // a line comment",
+              "  /*@ probe_ast */",
+              "  if (x > " ^ Int.toString i ^ ") { x = x + " ^ Int.toString (k * 100 + i) ^ "; }" ])) @
+          [ "  par_" ^ tag ^ "_t" ^ n ^ " y = x;", "  return y;", "}" ]) ^ "\n"
+    end
+
+  fun replace_all pat rep s =
+    let
+      fun go acc s =
+        (case Substring.position pat (Substring.full s) of
+           (pre, rest) =>
+             if Substring.isEmpty rest then String.concat (rev (Substring.string pre :: acc))
+             else go (rep :: Substring.string pre :: acc) (Substring.string (Substring.triml (size pat) rest)))
+    in go [] s end
+
+  fun normalize tag text = replace_all ("par_" ^ tag ^ "_t") "par_X_t" text
+
+  fun parse loud text =
+    (case (if loud then C11_Parse.parse_loud else C11_Parse.parse_quiet) ctxt (Input.string text) of
+       SOME r => C_Ast.pp_root r
+     | NONE => error "parallel test: no result")
+
+  (* the reference: the same programs, parsed one after the other, with typedef names of their own *)
+  val reference = List.tabulate (12, fn k => normalize "ref" (parse true (prog "ref" k)))
+in
+  val _ =
+    List.app (fn round =>
+      let
+        val tag = "r" ^ Int.toString round
+        val results =
+          Par_List.map (fn k => Exn.capture (fn () => parse true (prog tag k)) ()) (List.tabulate (12, I))
+      in
+        List.app (fn (k, res) =>
+          (case res of
+             Exn.Res text =>
+               if normalize tag text = nth reference k then ()
+               else error ("parallel parse: wrong result for program " ^ Int.toString k)
+           | Exn.Exn e => error ("parallel parse failed: " ^ Runtime.exn_message e)))
+          (map_index I results)
+      end) (List.tabulate (10, I))
+
+  val _ =
+    if forall (fn (tag, k) => member (op =) (C11_Typedefs.snapshot ()) ("par_" ^ tag ^ "_t" ^ Int.toString k))
+         (map (fn r => ("r" ^ Int.toString r, 7)) (List.tabulate (10, I)))
+    then ()
+    else error "the typedef names of the accepted parses must be in the session's set"
+end
 \<close>
 
 end
