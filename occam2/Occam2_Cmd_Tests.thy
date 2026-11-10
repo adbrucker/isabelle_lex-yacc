@@ -106,6 +106,7 @@ occam2\<open>
 INT x:
 SEQ
   --@ probe_ast[uu]
+  --@ highlight[uu]
   x := 1
   x := 2
 \<close>
