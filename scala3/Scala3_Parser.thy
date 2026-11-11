@@ -900,6 +900,15 @@ yacc_definitions\<open>
 %arg (st) : Scala3_State.T
 %noshift EOF
 
+(* Precedences. TYLOW is a pseudo-token, the lowest of all: a rule marked
+   "%prec TYLOW" loses against the shift of any token declared after it. It
+   declares, for the cases where the grammar is ambiguous and Scala means the
+   longer reading (a type continuing with an operator, a refinement or "with";
+   "(implicit", "(using"; a statement list absorbing a separator ...), that
+   shifting is intended - a precedence resolves a conflict silently, where the
+   default of the tool would report it. The levels are, from the lowest: TYLOW;
+   the tokens that begin or continue a modifier, parameter or statement;
+   ARROW; the expression operators; "." "[" "#" "@" "<:"; "{" and "with". *)
 %nonassoc TYLOW
 %right ABSTRACT AS CATCH COLON EXTENSION FINAL FINALLY IF IMPLICIT INFIX INLINE
 %right LAZY LPAREN OPAQUE OPEN OVERRIDE PRIVATE PROTECTED SEALED TRANSPARENT

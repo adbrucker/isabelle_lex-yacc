@@ -743,14 +743,19 @@ text\<open>
   \<^item> \<^bold>\<open>Interpolated strings are not parsed.\<close> The expressions inside \<open>${\<dots>}\<close> are
     skipped over, balanced, and kept as text; names used inside them are not
     hyperlinked.
-  \<^item> \<^bold>\<open>Conflicts.\<close> ml-yacc reports 123 shift/reduce and 71 reduce/reduce conflicts
-    and one rule that is never reduced (visible in the exported
-    \<^verbatim>\<open>Scala3.grm.desc\<close> when \<open>ml_lex_yacc\<close> is run with \<open>[verbose]\<close>). They come
-    from the soft keywords, which the grammar accepts as identifiers and as
-    keywords, and from the optional parts of the Scala syntax; they are resolved
-    by the defaults of yacc (shift against reduce; the earlier rule against the
-    later) and by the precedence declarations, and the result is exercised by
-    the corpus and the round-trip tests, but not analysed one by one.
+  \<^item> \<^bold>\<open>Conflicts.\<close> ml-yacc reports no shift/reduce conflict and 12
+    reduce/reduce conflicts (visible in the exported \<^verbatim>\<open>Scala3.grm.desc\<close> when
+    \<open>ml_lex_yacc\<close> is run with \<open>[verbose]\<close>). The shift/reduce conflicts of the
+    grammar - a type continuing with an operator, a refinement or \<open>with\<close>,
+    \<open>(implicit\<close> and \<open>(using\<close>, a statement list absorbing a separator, and so
+    on - were all cases in which shifting is the reading Scala intends; they are
+    resolved by precedence declarations (the reducing rules have the
+    pseudo-precedence \<open>TYLOW\<close>, the continuing tokens a higher one) and not
+    left to the default of the tool. The reduce/reduce conflicts that remain
+    are the soft modifiers \<open>open\<close>, \<open>infix\<close>, \<open>inline\<close>, \<open>opaque\<close> and
+    \<open>transparent\<close> before an identifier or an annotation inside \<open>(using \<dots>)\<close>,
+    where a type and a parameter cannot be told apart by one token, and
+    \<open>()\<close> followed by \<open>[\<close>; yacc takes the rule that comes first, the modifier.
   \<^item> \<^bold>\<open>One operator simplification.\<close> Every operator ending in a colon is
     right-associative at the level of \<open>::\<close>, not at the level of its first
     character (\<open>\<section>2.1\<close>).
