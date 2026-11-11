@@ -1,0 +1,18 @@
+chapter AFP
+
+(* Independent of the parent "../Isabelle_Lex-Yacc" session and of the other
+   front-ends ("../C11", "../occam2", "../scala3", "../MicroRust"): the
+   "directories" entry reaches "LexYacc.thy"/"YaccLib.thy" for
+   "AdaSpark_Parser.thy"'s own relative import, which makes the sessions
+   unable to share one build graph. Build with
+   "isabelle build -d AdaSpark AdaSpark" - never together with the other
+   front-ends in the same invocation. "AdaSpark/ROOTS" makes the manual's
+   sub-session visible to "-d AdaSpark". *)
+session "AdaSpark" (AFP) = HOL +
+  options [timeout = 1200]
+  directories
+    "../Isabelle_Lex-Yacc"
+  theories
+    AdaSpark (global)
+    AdaSpark_Tests
+    AdaSpark_Cmd_Tests
