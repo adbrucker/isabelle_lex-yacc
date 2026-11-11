@@ -3,7 +3,24 @@
  *
  * All rights reserved.
  *
- * Authors: Burkhart Wolff, Achim D. Brucker (University of Exeter), Claude Sonnet 5.5
+ * Authors: Burkhart Wolff, Claude Sonnet 5.5
+ *
+ * This is a LLM-generated replication of the Isabelle/C version 2 design
+ * to the programming language occam 2. It provides an efficient parser for occam 2,
+ * deeply integrated into the Isabelle/PIDE document model, allowing external
+ * files as well as in-theory code-snippets which are transparent to the underlying
+ * theory. It provides an API for the generated AST’s, and an API to hook up
+ * semantic backends that compile these AST’s to theory extensions in Isabelle/HOL.
+ * Members of the family come with an occam 2-specific antiquotation mechanism
+ * allowing programmable links to the semantic backends as necessary for
+ * support of program-annotations with HOL formulas.
+ *
+ * This session is part of the Isabelle Programming Language Toolkit (Isabelle/PLTk).
+ * The generation has been done with Claude Sonnet 5.5; while the replicants come
+ * with a detailed (generated) test-suite for occam 2, I expect that human users might find
+ * errors or inconsistencies; experience reports and comments are therefore welcomed.
+ * The concrete and abstract syntax, being generated from Isabelle/LexYacc specifications,
+ * should be easy to modify and adapt.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
