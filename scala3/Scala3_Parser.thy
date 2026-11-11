@@ -828,6 +828,14 @@ fun ndi2 st (p1, p2) =
    range is exactly the name. *)
 fun mkid st (s, l, r) = Ident (s, 0, ndi2 st (l, r))
 
+(* The soft modifiers are told from names by the layout stream, which delivers
+   the five words as SOFTMOD when they play the part of a modifier. *)
+fun soft_modifier k =
+  (case k of
+     "OPEN" => MOpen | "INLINE" => MInline | "TRANSPARENT" => MTransparent
+   | "INFIX" => MInfix | "OPAQUE" => MOpaque
+   | _ => raise Fail ("soft_modifier: " ^ k))
+
 (* In a pattern a lower-case (or "_"-prefixed) identifier is a variable binder;
    anything else, and every backquoted identifier, is a stable identifier. *)
 fun is_varid s = s <> ""
@@ -908,11 +916,13 @@ yacc_definitions\<open>
    shifting is intended - a precedence resolves a conflict silently, where the
    default of the tool would report it. The levels are, from the lowest: TYLOW;
    the tokens that begin or continue a modifier, parameter or statement;
-   ARROW; the expression operators; "." "[" "#" "@" "<:"; "{" and "with". *)
+   ARROW; the expression operators; "." "[" "#" "@" "<:"; "{" and "with".
+   (The soft modifiers are not a matter of precedence: the layout stream tells
+   them from names, see "is_soft_modifier".) *)
 %nonassoc TYLOW
 %right ABSTRACT AS CATCH COLON EXTENSION FINAL FINALLY IF IMPLICIT INFIX INLINE
 %right LAZY LPAREN OPAQUE OPEN OVERRIDE PRIVATE PROTECTED SEALED TRANSPARENT
-%right NEWLINE SEMI UNDERSCORE USING VAL VAR
+%right NEWLINE SEMI SOFTMOD UNDERSCORE USING VAL VAR
 %right ARROW CTXARROW
 %left MATCH
 %nonassoc LOWIF
@@ -939,7 +949,7 @@ yacc_definitions\<open>
       | AS of string | EXTENSION of string | INFIX of string | INLINE of string
           | OPAQUE of string
       | OPEN of string | TRANSPARENT of string | USING of string
-      | TYLOW
+      | TYLOW | SOFTMOD of string
       | PLUS of string | MINUS of string | STAR of string | BAR of string
           | BANG of string
       | TILDE of string | QMARK of string
@@ -1039,6 +1049,8 @@ yacc_definitions\<open>
       |        def_clauses of Position.T sClause list
       |        def_clauses_ne of Position.T sClause list
       |        def_clause of Position.T sClause
+      |        given_clause of Position.T sClause
+      |        given_clauses_ne of Position.T sClause list
       |        dparams of Position.T sParam list
       |        dparam of Position.T sParam
       |        dparam_pre of Position.T sAnnot list * modifier list
@@ -1125,16 +1137,8 @@ modifier:
         (MLazy)
 |       OVERRIDE
         (MOverride)
-|       OPEN
-        (MOpen)
-|       INLINE
-        (MInline)
-|       TRANSPARENT
-        (MTransparent)
-|       INFIX
-        (MInfix)
-|       OPAQUE
-        (MOpaque)
+|       SOFTMOD
+        (soft_modifier SOFTMOD)
 |       PRIVATE
         (MPrivate NONE)
 |       PROTECTED
@@ -1160,10 +1164,10 @@ mods_ne:
 dparam_pre:
         annotations_ne %prec TYLOW
         ((annotations_ne, []))
-|       INLINE
-        (([], [MInline]))
-|       annotations_ne INLINE
-        ((annotations_ne, [MInline]))
+|       SOFTMOD
+        (([], [soft_modifier SOFTMOD]))
+|       annotations_ne SOFTMOD
+        ((annotations_ne, [soft_modifier SOFTMOD]))
 cmodifier:
         ABSTRACT
         (MAbstract)
@@ -1177,16 +1181,8 @@ cmodifier:
         (MLazy)
 |       OVERRIDE
         (MOverride)
-|       OPEN
-        (MOpen)
-|       INLINE
-        (MInline)
-|       TRANSPARENT
-        (MTransparent)
-|       INFIX
-        (MInfix)
-|       OPAQUE
-        (MOpaque)
+|       SOFTMOD
+        (soft_modifier SOFTMOD)
 |       PRIVATE
         (MPrivate NONE)
 |       PROTECTED
@@ -2040,6 +2036,25 @@ def_clause:
 |       LPAREN USING fun_arg_types RPAREN
         (PClause (CUsing, map (anon_param st) fun_arg_types,
                   ndi2 st (LPARENleft, RPARENright)))
+given_clause:
+        LBRACKET tparams RBRACKET
+        (TClause (tparams, ndi2 st (LBRACKETleft, RBRACKETright)))
+|       LPAREN dparams RPAREN
+        (PClause (CPlain, dparams, ndi2 st (LPARENleft, RPARENright)))
+|       LPAREN dparams COMMA RPAREN
+        (PClause (CPlain, dparams, ndi2 st (LPARENleft, RPARENright)))
+|       LPAREN IMPLICIT dparams RPAREN
+        (PClause (CImplicit, dparams, ndi2 st (LPARENleft, RPARENright)))
+|       LPAREN USING dparams RPAREN
+        (PClause (CUsing, dparams, ndi2 st (LPARENleft, RPARENright)))
+|       LPAREN USING fun_arg_types RPAREN
+        (PClause (CUsing, map (anon_param st) fun_arg_types,
+                  ndi2 st (LPARENleft, RPARENright)))
+given_clauses_ne:
+        given_clause
+        ([given_clause])
+|       given_clauses_ne given_clause
+        (given_clauses_ne @ [given_clause])
 dparams:
         dparam
         ([dparam])
@@ -2189,9 +2204,9 @@ given_def:
         ((fn (l, an, ms) =>
           DGiven (an, ms, NONE, [], infix_type, #1 given_tail, #2 given_tail,
                   [], ndi2 st (l, given_tailright))))
-|       def_clauses_ne COLON infix_type given_tail
+|       given_clauses_ne COLON infix_type given_tail
         ((fn (l, an, ms) =>
-          DGiven (an, ms, NONE, def_clauses_ne, infix_type, #1 given_tail,
+          DGiven (an, ms, NONE, given_clauses_ne, infix_type, #1 given_tail,
                   #2 given_tail, [], ndi2 st (l, given_tailright))))
 given_tail:
         EQUALS expr
@@ -2302,6 +2317,13 @@ fun entry_token Entry_Unit p = T.ENTRY_UNIT (p, p)
   | entry_token Entry_Expr p = T.ENTRY_EXPR (p, p)
   | entry_token Entry_Type p = T.ENTRY_TYPE (p, p)
   | entry_token Entry_Id p = T.ENTRY_ID (p, p)
+
+val soft_modifier_kinds = ["INFIX", "INLINE", "OPAQUE", "OPEN", "TRANSPARENT"]
+
+val modifier_follow_kinds =
+  ["VAL", "VAR", "DEF", "TYPE", "CLASS", "TRAIT", "OBJECT", "ENUM", "GIVEN",
+   "CASE", "CASEMOD", "ABSTRACT", "FINAL", "SEALED", "IMPLICIT", "LAZY",
+   "OVERRIDE", "PRIVATE", "PROTECTED"] @ soft_modifier_kinds
 
 val can_end_kinds =
   ["IDENT", "INT_LIT", "FLOAT_LIT", "CHAR_LIT", "STRING_LIT", "INTERP_LIT",
@@ -2416,6 +2438,24 @@ fun layout_stream err entry st raw_lex pos eof_pos =
             end
       in scan 0 0 end
 
+    (* One of the five soft words is a modifier, not a name, if what follows is
+       a modifier, a definition keyword or an annotation (written as "@a", not
+       as a pattern binder "x @ p"), or a parameter name and a colon
+       ("inline x: Int"), on the same line: a word that ends a line ends a
+       statement, as the name it is. *)
+    fun is_soft_modifier (lay0 : Scala3_State.layout) =
+      member (op =) soft_modifier_kinds (#kind lay0) andalso
+        let
+          val (_, l1) = peek 0
+          val k1 = #kind l1
+        in
+          #nl l1 = 0 andalso
+          (member (op =) modifier_follow_kinds k1
+          orelse (k1 = "AT" andalso #start l1 > #stop lay0
+                  andalso #start (#2 (peek 1)) = #stop l1)
+          orelse (k1 = "IDENT" andalso #kind (#2 (peek 1)) = "COLON"))
+        end
+
     fun update_regions (lay : Scala3_State.layout) =
       (case #kind lay of
          "LPAREN" => regions := RParen :: !regions
@@ -2447,6 +2487,7 @@ fun layout_stream err entry st raw_lex pos eof_pos =
                  #kind lay0 = "CASE"
                    andalso member (op =) ["CLASS", "OBJECT"]
                      (#kind (#2 (peek 0)))
+               val is_softmod = is_soft_modifier lay0
                val case_kind = if #kind lay0 = "CASE" andalso not is_casemod
                  then SOME (classify_case ()) else NONE
                val (tok, lay) =
@@ -2454,6 +2495,9 @@ fun layout_stream err entry st raw_lex pos eof_pos =
                  then (T.CASEMOD (pos (#start lay0), pos (#stop lay0)),
                        {nl = #nl lay0, start = #start lay0, stop =
                         #stop lay0, kind = "CASEMOD"})
+                 else if is_softmod
+                 then (T.SOFTMOD (#kind lay0, pos (#start lay0),
+                                  pos (#stop lay0)), lay0)
                  else if case_kind = SOME Enum_case
                  then (T.ENUMCASE (pos (#start lay0), pos (#stop lay0)),
                        {nl = #nl lay0, start = #start lay0, stop =

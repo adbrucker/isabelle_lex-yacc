@@ -743,19 +743,21 @@ text\<open>
   \<^item> \<^bold>\<open>Interpolated strings are not parsed.\<close> The expressions inside \<open>${\<dots>}\<close> are
     skipped over, balanced, and kept as text; names used inside them are not
     hyperlinked.
-  \<^item> \<^bold>\<open>Conflicts.\<close> ml-yacc reports no shift/reduce conflict and 12
-    reduce/reduce conflicts (visible in the exported \<^verbatim>\<open>Scala3.grm.desc\<close> when
-    \<open>ml_lex_yacc\<close> is run with \<open>[verbose]\<close>). The shift/reduce conflicts of the
-    grammar - a type continuing with an operator, a refinement or \<open>with\<close>,
-    \<open>(implicit\<close> and \<open>(using\<close>, a statement list absorbing a separator, and so
-    on - were all cases in which shifting is the reading Scala intends; they are
-    resolved by precedence declarations (the reducing rules have the
-    pseudo-precedence \<open>TYLOW\<close>, the continuing tokens a higher one) and not
-    left to the default of the tool. The reduce/reduce conflicts that remain
-    are the soft modifiers \<open>open\<close>, \<open>infix\<close>, \<open>inline\<close>, \<open>opaque\<close> and
-    \<open>transparent\<close> before an identifier or an annotation inside \<open>(using \<dots>)\<close>,
-    where a type and a parameter cannot be told apart by one token, and
-    \<open>()\<close> followed by \<open>[\<close>; yacc takes the rule that comes first, the modifier.
+  \<^item> \<^bold>\<open>No conflicts.\<close> ml-yacc reports neither shift/reduce nor reduce/reduce
+    conflicts. Both kinds were removed deliberately and not tolerated: where
+    shifting is the reading Scala intends - a type continuing with an operator,
+    a refinement or \<open>with\<close>, \<open>(implicit\<close> and \<open>(using\<close>, a statement list
+    absorbing a separator, and so on - the grammar declares it by precedence
+    (the reducing rules have the pseudo-precedence \<open>TYLOW\<close>, the continuing
+    tokens a higher one); the soft words \<open>open\<close>, \<open>infix\<close>, \<open>inline\<close>, \<open>opaque\<close>
+    and \<open>transparent\<close>, which are modifiers or names, are told apart by the
+    layout stream with one or two tokens of look-ahead (a modifier if a modifier,
+    a definition keyword, an annotation or a parameter name and a colon follows on
+    the same line, a name otherwise), as the Scala scanner does; and \<open>given\<close>
+    has a clause list of its own, in which the empty clause \<open>()\<close> is not
+    allowed. The price: a soft word that is used as the name of an operator, or a
+    modifier followed by a newline, is read as a name, and \<open>given ()[T]: \<dots>\<close>
+    is rejected.
   \<^item> \<^bold>\<open>One operator simplification.\<close> Every operator ending in a colon is
     right-associative at the level of \<open>::\<close>, not at the level of its first
     character (\<open>\<section>2.1\<close>).

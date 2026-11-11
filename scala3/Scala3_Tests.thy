@@ -176,6 +176,14 @@ val _ = roundtrip ["object A {", "  transparent inline def f = 1", "}"]
 val _ = roundtrip ["object A {", "  val open = 1", "  open + 1", "}"]
 val _ = roundtrip ["extension (x: Int) {", "  def foo = 1", "}"]
 val _ = roundtrip ["object A {", "  f(using 1)", "}"]
+val _ = roundtrip ["class C(private open val x: Int)"]
+val _ = roundtrip ["object A {", "  def f(using inline x: Int) = x", "}"]
+val _ = roundtrip ["object A {", "  def f(using open) = 1", "}"]
+val _ = roundtrip ["object A {", "  inline given x: Int = 1", "}"]
+val _ = roundtrip ["object A {", "  inline lazy val x = 1", "}"]
+(* a soft word that ends a line, or is a pattern binder, is a name *)
+val _ = roundtrip ["object A {", "  val inline = 1", "  inline", "  def g = 2", "}"]
+val _ = ignore (show "object A { x match { case open @ Some(_) => open } }")
 val _ = roundtrip ["class C { self =>", "  def f = 1", "}"]
 val _ = roundtrip ["class C { self: Int =>", "  def f = 1", "}"]
 
