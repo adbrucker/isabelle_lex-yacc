@@ -266,7 +266,8 @@ and pp_stats n stats =
   String.concat (map_index (fn (i, s) =>
     let val text = pp_stat n s
     in ind n ^ (if i > 0 andalso String.isPrefix "{" text then ";" else "")
-      ^ text ^ "\n" end) stats)
+             ^ text ^ "\n" 
+    end) stats)
 
 and pp_prefix n anns mods =
   String.concat (map (fn a => pp_annot n a ^ " ") anns)
@@ -275,52 +276,49 @@ and pp_prefix n anns mods =
 and pp_def n d = (case d of
     DVal (anns, mods, isvar, pats, t, rhs, _) =>
       pp_prefix n anns mods ^ (if isvar then "var " else "val ") ^
-      (case t of SOME t1 =>
-       colon_after (commas (pp_pat n) pats) ^ pp_type n t1 | NONE =>
-         commas (pp_pat n) pats) ^
+      (case t of SOME t1 => colon_after (commas (pp_pat n) pats) ^ pp_type n t1 
+               | NONE => commas (pp_pat n) pats) ^
       (case rhs of SOME e => " = " ^ pp_expr n e | NONE => "")
   | DDef (anns, mods, id, clauses, t, rhs, _) =>
       pp_prefix n anns mods ^ "def " ^
-      (case t of SOME t1 =>
-       colon_after (name id ^ String.concat (map (pp_clause n) clauses))
-         ^ pp_type n t1
+      (case t of SOME t1 => colon_after (name id ^ String.concat (map (pp_clause n) clauses))
+                            ^ pp_type n t1
                | NONE => name id ^ String.concat (map (pp_clause n) clauses)) ^
       (case rhs of SOME e => " = " ^ pp_expr n e | NONE => "")
   | DType (anns, mods, id, clauses, bounds, rhs, _) =>
       pp_prefix n anns mods ^ "type " ^ name id
-        ^ String.concat (map (pp_clause n) clauses) ^ pp_bounds n bounds ^
-      (case rhs of SOME t => " = " ^ pp_type n t | NONE => "")
+        ^ String.concat (map (pp_clause n) clauses) ^ pp_bounds n bounds 
+        ^ (case rhs of SOME t => " = " ^ pp_type n t | NONE => "")
   | DClass (anns, mods, kind, id, tps, cmods, clauses, tmpl, _) =>
       pp_prefix n anns mods ^
       (case kind of
-         KClass => "class " | KTrait => "trait " | KObject =>
-           "object " | KEnum => "enum "
-       | KCaseClass => "case class " | KCaseObject =>
-         "case object " | KPackageObject => "package object ") ^
-      name id ^ (case tps of [] => "" | _ =>
-                 "[" ^ commas (pp_tparam n) tps ^ "]") ^
-      String.concat (map (fn m => " " ^ pp_modifier m) cmods) ^
-      String.concat (map (pp_clause n) clauses) ^ pp_template n tmpl
+         KClass => "class " | KTrait => "trait " | KObject => "object " | KEnum => "enum "
+       | KCaseClass => "case class " | KCaseObject => "case object " 
+       | KPackageObject => "package object ") ^ name id 
+                            ^ (case tps of [] => "" 
+                                        | _ => "[" ^ commas (pp_tparam n) tps ^ "]") 
+                            ^ String.concat (map (fn m => " " ^ pp_modifier m) cmods) 
+                            ^ String.concat (map (pp_clause n) clauses) ^ pp_template n tmpl
   | DGiven (anns, mods, id, clauses, t, rhs, body, _, _) =>
       pp_prefix n anns mods ^ "given "
-        ^ (case id of SOME i => colon_after (name i) | NONE => "") ^
-      (case clauses of [] => "" | _ =>
-       String.concat (map (pp_clause n) clauses) ^ ": ") ^ pp_type n t ^
-      (case rhs of SOME e => " = " ^ pp_expr n e | NONE => "") ^
-      (case body of SOME b => " " ^ pp_template_body n b | NONE => "")
+        ^ (case id of SOME i => colon_after (name i) | NONE => "") 
+        ^ (case clauses of [] => "" 
+                        | _ => String.concat (map (pp_clause n) clauses) ^ ": ") ^ pp_type n t 
+                               ^ (case rhs of SOME e => " = " ^ pp_expr n e | NONE => "") 
+                               ^ (case body of SOME b => " " ^ pp_template_body n b | NONE => "")
   | DExtension (clauses, stats, _) =>
-      "extension " ^ String.concat (map (pp_clause n) clauses) ^ " {\n"
+       "extension " ^ String.concat (map (pp_clause n) clauses) ^ " {\n"
         ^ pp_stats (n + 1) stats ^ ind n ^ "}"
   | DEnumCase (anns, mods, ids, tps, clauses, parents, _) =>
-      pp_prefix n anns mods ^ "case " ^ commas name ids ^
-      (case tps of [] => "" | _ => "[" ^ commas (pp_tparam n) tps ^ "]") ^
-      String.concat (map (pp_clause n) clauses) ^
-      (case parents of [] => "" | _ =>
-       " extends " ^ String.concatWith " with " (map (pp_parent n) parents))
+      pp_prefix n anns mods ^ "case " ^ commas name ids 
+      ^ (case tps of [] => "" | _ => "[" ^ commas (pp_tparam n) tps ^ "]") 
+      ^ String.concat (map (pp_clause n) clauses) 
+      ^ (case parents of [] => "" 
+                       | _ => " extends " ^ String.concatWith " with " (map (pp_parent n) parents))
   | DPackage (path, body, _) =>
       "package " ^ pp_expr n path ^
-      (case body of SOME stats =>
-       " {\n" ^ pp_stats (n + 1) stats ^ ind n ^ "}" | NONE => ""))
+      (case body of SOME stats => " {\n" ^ pp_stats (n + 1) stats ^ ind n ^ "}" 
+                  | NONE => ""))
 
 fun pp_root r = (case r of
     Id id => name id

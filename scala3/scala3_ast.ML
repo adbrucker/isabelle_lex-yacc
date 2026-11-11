@@ -97,154 +97,135 @@ and 'a sTypeBounds = Bounds
   of 'a sType option * 'a sType option           (* >: lower, <: upper *)
 
 and 'a sTypeParam =
-    TParam of 'a sAnnot list * int * 'a ident * 'a sTypeParam list * 'a
-      sTypeBounds * 'a sType list * 'a nodeInfo
+    TParam of 'a sAnnot list * int * 'a ident * 'a sTypeParam list 
+              * 'a sTypeBounds * 'a sType list * 'a nodeInfo
     (* annotations, variance (0 invariant, 1 covariant "+", 2 contravariant
        "-"), name ("_" for an anonymous one), higher-kinded parameters, bounds,
        context bounds *)
 
-and 'a sParam =
-    Param of 'a sAnnot list * modifier list * int * 'a ident option * 'a
-      sType * 'a sExpr option * 'a nodeInfo
+and 'a sParam = Param of 'a sAnnot list * modifier list * int * 'a ident option 
+                         * 'a sType * 'a sExpr option * 'a nodeInfo
     (* annotations, modifiers, 0 plain / 1 val / 2 var (class parameters), name
        (NONE: a "using" clause of bare types), type, default value *)
 
-and 'a sClause =
-    PClause of clauseKind * 'a sParam list * 'a nodeInfo
-  | TClause of 'a sTypeParam list * 'a nodeInfo           (* [T, U] *)
+and 'a sClause = PClause of clauseKind * 'a sParam list * 'a nodeInfo
+               | TClause of 'a sTypeParam list * 'a nodeInfo  (* [T, U] *)
 
-and 'a sArg =
-    AExpr of 'a sExpr
-  | ANamed of 'a ident * 'a sExpr * 'a nodeInfo           (* id = e *)
+and 'a sArg = AExpr of 'a sExpr
+            | ANamed of 'a ident * 'a sExpr * 'a nodeInfo     (* id = e *)
 
-and 'a sBinding = Binding
-  of 'a ident option * 'a sType option * 'a nodeInfo   (* NONE: "_" *)
+and 'a sBinding = Binding of 'a ident option (* NONE: "_" *) 
+                             * 'a sType option * 'a nodeInfo   
 
 and 'a sExpr =
     EIdent of 'a ident
-  | ESelect of 'a sExpr * 'a ident * 'a nodeInfo          (* e.id *)
-  | EThis of 'a ident option * 'a nodeInfo                (* [C.]this *)
-  | ESuper of 'a ident option * 'a ident option * 'a
-      nodeInfo   (* [C.]super[T] *)
+  | ESelect of 'a sExpr * 'a ident * 'a nodeInfo              (* e.id *)
+  | EThis of 'a ident option * 'a nodeInfo                    (* [C.]this *)
+  | ESuper of 'a ident option * 'a ident option * 'a nodeInfo (* [C.]super[T] *)
   | ELit of 'a sLit
   | EApply of 'a sExpr * 'a sArg list * bool * 'a
       nodeInfo      (* f(args); true: (using args) *)
-  | ETypeApply of 'a sExpr * 'a sType list * 'a nodeInfo        (* e[T] *)
+  | ETypeApply of 'a sExpr * 'a sType list * 'a nodeInfo      (* e[T] *)
   | EInfix of 'a sExpr * 'a ident * 'a sExpr * 'a nodeInfo
-  | EPrefix
-      of 'a ident * 'a sExpr * 'a nodeInfo                (* -e, +e, ~e, !e *)
+  | EPrefix of 'a ident * 'a sExpr * 'a nodeInfo              (* -e, +e, ~e, !e *)
   | EPostfix of 'a sExpr * 'a ident * 'a nodeInfo
   | EAssign of 'a sExpr * 'a sExpr * 'a nodeInfo
-  | ETyped of 'a sExpr * 'a sType * 'a nodeInfo                 (* e: T *)
-  | EAnnotated of 'a sExpr * 'a sAnnot list * 'a nodeInfo       (* e: @ann *)
-  | ESplat of 'a sExpr * 'a nodeInfo                            (* e: _* *)
-  | ELambda
-      of 'a sBinding list * 'a sExpr * bool * 'a
-        nodeInfo  (* (x, y) => e; true: ?=> *)
-  | EBlock of 'a sStat list * 'a nodeInfo                       (* { stats } *)
-  | ECases of 'a sCase list * 'a
-      nodeInfo                       (* { case p => e } *)
+  | ETyped of 'a sExpr * 'a sType * 'a nodeInfo               (* e: T *)
+  | EAnnotated of 'a sExpr * 'a sAnnot list * 'a nodeInfo     (* e: @ann *)
+  | ESplat of 'a sExpr * 'a nodeInfo                          (* e: _* *)
+  | ELambda of 'a sBinding list * 'a sExpr * bool 
+               * 'a nodeInfo                                  (* (x, y) => e; true: ?=> *)
+  | EBlock of 'a sStat list * 'a nodeInfo                     (* { stats } *)
+  | ECases of 'a sCase list * 'a nodeInfo                     (* { case p => e } *)
   | EIf of 'a sExpr * 'a sExpr * 'a sExpr option * 'a nodeInfo
   | EWhile of 'a sExpr * 'a sExpr * 'a nodeInfo
   | ETry of 'a sExpr * 'a sExpr option * 'a sExpr option * 'a nodeInfo
-    (* body, handler (an ECases, or an expression), finalizer *)
+            (* body, handler (an ECases, or an expression), finalizer *)
   | EThrow of 'a sExpr * 'a nodeInfo
   | EReturn of 'a sExpr option * 'a nodeInfo
-  | EFor of 'a sEnum list * bool * 'a sExpr * 'a nodeInfo      (* true: yield *)
+  | EFor of 'a sEnum list * bool * 'a sExpr * 'a nodeInfo     (* true: yield *)
   | EMatch of 'a sExpr * 'a sCase list * 'a nodeInfo
   | ENew of 'a sParent list * 'a sTemplateBody option * 'a nodeInfo
-  | ETuple of 'a sExpr list * 'a
-      nodeInfo                       (* () is ETuple [] *)
+  | ETuple of 'a sExpr list * 'a nodeInfo                     (* () is ETuple [] *)
   | EParen of 'a sExpr * 'a nodeInfo
-  | EPlaceholder of 'a nodeInfo                                 (* _ *)
+  | EPlaceholder of 'a nodeInfo                               (* _ *)
 
 and 'a sCase = Case
-  of 'a sPat * 'a sExpr option * 'a sStat list * 'a
-    nodeInfo   (* pattern, guard, body *)
+  of 'a sPat * 'a sExpr option * 'a sStat list 
+     * 'a nodeInfo                                            (* pattern, guard, body *)
 
 and 'a sEnum =
-    EnGen of bool * 'a sPat * 'a sExpr * 'a
-      nodeInfo           (* [case] p <- e *)
-  | EnGuard of 'a sExpr * 'a nodeInfo                          (* if e *)
-  | EnVal of 'a sPat * 'a sExpr * 'a nodeInfo                  (* p = e *)
+    EnGen of bool * 'a sPat * 'a sExpr * 'a nodeInfo          (* [case] p <- e *)
+  | EnGuard of 'a sExpr * 'a nodeInfo                         (* if e *)
+  | EnVal of 'a sPat * 'a sExpr * 'a nodeInfo                 (* p = e *)
 
 and 'a sPat =
-    PVar of 'a
-      ident                                           (* a lower-case binder *)
+    PVar of 'a ident                                          (* a lower-case binder *)
   | PWild of 'a nodeInfo
   | PLit of 'a sLit
-  | PRef of 'a
-      sExpr                                           (* a stable
-          identifier: A, a.B, `x` *)
-  | PApply of 'a sExpr * 'a sType list * 'a sPat list * 'a
-      nodeInfo   (* Foo[T](p, q) *)
+  | PRef of 'a sExpr                                          (* a stable identifier: A, a.B, `x` *)
+  | PApply of 'a sExpr * 'a sType list * 'a sPat list 
+              * 'a nodeInfo                                   (* Foo[T](p, q) *)
   | PTuple of 'a sPat list * 'a nodeInfo
   | PInfix of 'a sPat * 'a ident * 'a sPat * 'a nodeInfo
   | PAlt of 'a sPat list * 'a nodeInfo
-  | PBind of 'a ident * 'a sPat * 'a nodeInfo                  (* x @ p *)
-  | PTyped of 'a sPat * 'a sType * 'a nodeInfo                 (* p: T *)
-  | PSplat of 'a sPat * 'a
-      nodeInfo                            (* xs* in an argument list *)
+  | PBind of 'a ident * 'a sPat * 'a nodeInfo                 (* x @ p *)
+  | PTyped of 'a sPat * 'a sType * 'a nodeInfo                (* p: T *)
+  | PSplat of 'a sPat * 'a nodeInfo                           (* xs* in an argument list *)
   | PGiven of 'a sType * 'a nodeInfo
 
 and 'a sAnnot = Annot of 'a sType * 'a sArg list list * 'a nodeInfo
 
-and 'a sParent = Parent
-  of 'a sType * 'a sArg list list * bool list * 'a nodeInfo
-    (* the type, the argument lists, and for each list whether it was written
-       (using ...) *)
+and 'a sParent = Parent of 'a sType * 'a sArg list list * bool list * 'a nodeInfo
+    (* the type, the argument lists, and for each list whether it was written (using ...) *)
 
 and 'a sSelf = Self of 'a ident * 'a sType option * 'a nodeInfo
 
-and 'a sTemplateBody = TemplateBody
-  of 'a sSelf option * 'a sStat list * 'a nodeInfo
+and 'a sTemplateBody = TemplateBody of 'a sSelf option * 'a sStat list * 'a nodeInfo
 
-and 'a sTemplate = Template
-  of 'a sParent list * 'a ident list * 'a sTemplateBody option * 'a nodeInfo
+and 'a sTemplate = Template of 'a sParent list * 'a ident list * 'a sTemplateBody option * 'a nodeInfo
     (* parents, "derives" classes, body *)
 
 and 'a sSelector =
-    SelName of 'a ident * 'a ident option * 'a
-      nodeInfo        (* a [as b | => b], "_" as target = hiding *)
-  | SelWild of 'a nodeInfo                                     (* * or _ *)
+    SelName of 'a ident * 'a ident option * 'a nodeInfo      (* a [as b | => b], "_" 
+                                                                as target = hiding *)
+  | SelWild of 'a nodeInfo                                   (* * or _ *)
   | SelGiven of 'a sType option * 'a nodeInfo
 
 and 'a sImport = ImportExpr of 'a sExpr * 'a sSelector list * 'a nodeInfo
 
 and 'a sStat =
     SExpr of 'a sExpr
-  | SImport
-      of bool * 'a sImport list * 'a nodeInfo            (* true: export *)
+  | SImport of bool * 'a sImport list * 'a nodeInfo          (* true: export *)
   | SDef of 'a sDef
 
 and 'a sDef =
-    DVal of 'a sAnnot list * modifier list * bool * 'a sPat list * 'a sType
-      option * 'a sExpr option * 'a nodeInfo
+    DVal of 'a sAnnot list * modifier list * bool 
+             * 'a sPat list * 'a sType option * 'a sExpr option * 'a nodeInfo
     (* val/var (true: var), patterns (several names: "val a, b: T"), type,
        right-hand side (NONE: a declaration, or "= _" is an EPlaceholder) *)
-  | DDef of 'a sAnnot list * modifier list * 'a ident * 'a sClause list * 'a
-      sType option * 'a sExpr option * 'a nodeInfo
+  | DDef of 'a sAnnot list * modifier list * 'a ident * 'a sClause list 
+            * 'a sType option * 'a sExpr option * 'a nodeInfo
     (* the name of a secondary constructor is "this" *)
-  | DType of 'a sAnnot list * modifier list * 'a ident * 'a sClause list * 'a
-      sTypeBounds * 'a sType option * 'a nodeInfo
-  | DClass of 'a sAnnot list * modifier list * classKind * 'a ident * 'a
-      sTypeParam list
-              * modifier list * 'a sClause list * 'a sTemplate * 'a nodeInfo
+  | DType of 'a sAnnot list * modifier list * 'a ident * 'a sClause list 
+             * 'a sTypeBounds * 'a sType option * 'a nodeInfo
+  | DClass of 'a sAnnot list * modifier list * classKind * 'a ident 
+              * 'a sTypeParam list * modifier list * 'a sClause list 
+              * 'a sTemplate * 'a nodeInfo
     (* annotations, modifiers, kind, name, type parameters, constructor
        modifiers (private, annotations are dropped), constructor parameter
        clauses, template *)
-  | DGiven of 'a sAnnot list * modifier list * 'a ident option * 'a sClause
-      list * 'a sType
-              * 'a sExpr option * 'a sTemplateBody option * 'a sParent
-                list * 'a nodeInfo
+  | DGiven of 'a sAnnot list * modifier list * 'a ident option 
+               * 'a sClause list * 'a sType * 'a sExpr option 
+               * 'a sTemplateBody option * 'a sParent list
+               * 'a nodeInfo
     (* name, parameter clauses of a conditional given, the given type, "= e" or
        a template *)
   | DExtension of 'a sClause list * 'a sStat list * 'a nodeInfo
     (* clauses (type parameters, using clauses, the receiver parameter, further
        using clauses), the extension methods *)
-  | DEnumCase
-      of 'a sAnnot list * modifier list * 'a ident list * 'a sTypeParam
-        list * 'a sClause list
+  | DEnumCase of 'a sAnnot list * modifier list * 'a ident list 
+                 * 'a sTypeParam list * 'a sClause list
                  * 'a sParent list * 'a nodeInfo
     (* "case A, B" or "case C(x: Int) extends E" *)
   | DPackage of 'a sExpr * 'a sStat list option * 'a nodeInfo
@@ -255,9 +236,8 @@ datatype 'a root =
     Id of 'a ident
   | Expr of 'a sExpr
   | Type of 'a sType
-  | Stat of 'a
-      sStat          (* never produced by a parse: the closest context
-                      of an annotation on a definition *)
+  | Stat of 'a sStat          (* never produced by a parse: the closest context
+                                 of an annotation on a definition *)
   | Pat of 'a sPat            (* likewise *)
   | Unit of 'a sStat list     (* a compilation unit *)
 
@@ -273,58 +253,54 @@ fun nodeInfo_of_ident (Ident (_, _, ni)) = ni
 fun ident_name (Ident (s, _, _)) = s
 
 fun nodeInfo_of_lit l = (case l of
-    LInt (_, ni) => ni | LFloat (_, ni) => ni | LChar (_, ni) =>
-      ni | LString (_, _, ni) => ni
-  | LInterp (_, _, _, ni) => ni | LBool (_, ni) => ni | LNull ni => ni)
+    LInt (_, ni) => ni | LFloat (_, ni) => ni | LChar (_, ni) => ni 
+  | LString (_, _, ni) => ni | LInterp (_, _, _, ni) => ni | LBool (_, ni) => ni | LNull ni => ni)
 
 fun nodeInfo_of_type t = (case t of
-    TName id => nodeInfo_of_ident id | TSelect (_, _, ni) =>
-      ni | TSingleton (_, ni) => ni
+    TName id => nodeInfo_of_ident id 
+  | TSelect (_, _, ni) => ni | TSingleton (_, ni) => ni
   | TProject (_, _, ni) => ni | TApply (_, _, ni) => ni | TTuple (_, ni) => ni
   | TFun (_, _, _, ni) => ni | TByName (_, ni) => ni | TRepeated (_, ni) => ni
-  | TInfix (_, _, _, ni) => ni | TWith (_, _, ni) => ni | TRefine (_, _, ni) =>
-    ni
-  | TAnnot (_, _, ni) => ni | TWild (_, ni) => ni | TLit (_, ni) =>
-    ni | TLambda (_, _, ni) => ni
-  | TPolyFun (_, _, ni) => ni | TMatch (_, _, ni) => ni)
+  | TInfix (_, _, _, ni) => ni | TWith (_, _, ni) => ni | TRefine (_, _, ni) => ni
+  | TAnnot (_, _, ni) => ni | TWild (_, ni) => ni | TLit (_, ni) => ni 
+  | TLambda (_, _, ni) => ni | TPolyFun (_, _, ni) => ni | TMatch (_, _, ni) => ni)
 
 fun nodeInfo_of_expr e = (case e of
-    EIdent id => nodeInfo_of_ident id | ESelect (_, _, ni) =>
-      ni | EThis (_, ni) => ni
-  | ESuper (_, _, ni) => ni | ELit l =>
-    nodeInfo_of_lit l | EApply (_, _, _, ni) => ni
-  | ETypeApply (_, _, ni) => ni | EInfix (_, _, _, ni) =>
-    ni | EPrefix (_, _, ni) => ni
-  | EPostfix (_, _, ni) => ni | EAssign (_, _, ni) => ni | ETyped (_, _, ni) =>
-    ni
-  | EAnnotated (_, _, ni) => ni | ESplat (_, ni) =>
-    ni | ELambda (_, _, _, ni) => ni
-  | EBlock (_, ni) => ni | ECases (_, ni) => ni | EIf (_, _, _, ni) =>
-    ni | EWhile (_, _, ni) => ni
-  | ETry (_, _, _, ni) => ni | EThrow (_, ni) => ni | EReturn (_, ni) =>
-    ni | EFor (_, _, _, ni) => ni
-  | EMatch (_, _, ni) => ni | ENew (_, _, ni) => ni | ETuple (_, ni) =>
-    ni | EParen (_, ni) => ni
+    EIdent id => nodeInfo_of_ident id | ESelect (_, _, ni) => ni | EThis (_, ni) => ni
+  | ESuper (_, _, ni) => ni | ELit l => nodeInfo_of_lit l | EApply (_, _, _, ni) => ni
+  | ETypeApply (_, _, ni) => ni | EInfix (_, _, _, ni) => ni | EPrefix (_, _, ni) => ni
+  | EPostfix (_, _, ni) => ni | EAssign (_, _, ni) => ni | ETyped (_, _, ni) => ni
+  | EAnnotated (_, _, ni) => ni | ESplat (_, ni) => ni | ELambda (_, _, _, ni) => ni
+  | EBlock (_, ni) => ni | ECases (_, ni) => ni | EIf (_, _, _, ni) => ni 
+  | EWhile (_, _, ni) => ni | ETry (_, _, _, ni) => ni | EThrow (_, ni) => ni 
+  | EReturn (_, ni) => ni | EFor (_, _, _, ni) => ni
+  | EMatch (_, _, ni) => ni | ENew (_, _, ni) => ni | ETuple (_, ni) => ni | EParen (_, ni) => ni
   | EPlaceholder ni => ni)
 
-fun nodeInfo_of_pat p = (case p of
-    PVar id => nodeInfo_of_ident id | PWild ni => ni | PLit l =>
-      nodeInfo_of_lit l
-  | PRef e => nodeInfo_of_expr e | PApply (_, _, _, ni) =>
-    ni | PTuple (_, ni) => ni
-  | PInfix (_, _, _, ni) => ni | PAlt (_, ni) => ni | PBind (_, _, ni) => ni
-  | PTyped (_, _, ni) => ni | PSplat (_, ni) => ni | PGiven (_, ni) => ni)
+fun nodeInfo_of_pat p = 
+       (case p of
+           PVar id => nodeInfo_of_ident id 
+         | PWild ni => ni 
+         | PLit l => nodeInfo_of_lit l
+         | PRef e => nodeInfo_of_expr e 
+         | PApply (_, _, _, ni) => ni 
+         | PTuple (_, ni) => ni
+         | PInfix (_, _, _, ni) => ni 
+         | PAlt (_, ni) => ni 
+         | PBind (_, _, ni) => ni
+         | PTyped (_, _, ni) => ni 
+         | PSplat (_, ni) => ni 
+         | PGiven (_, ni) => ni)
 
 fun nodeInfo_of_def d = (case d of
     DVal (_, _, _, _, _, _, ni) => ni | DDef (_, _, _, _, _, _, ni) => ni
-  | DType (_, _, _, _, _, _, ni) => ni | DClass (_, _, _, _, _, _, _, _, ni) =>
-    ni
+  | DType (_, _, _, _, _, _, ni) => ni | DClass (_, _, _, _, _, _, _, _, ni) => ni
   | DGiven (_, _, _, _, _, _, _, _, ni) => ni | DExtension (_, _, ni) => ni
   | DEnumCase (_, _, _, _, _, _, ni) => ni | DPackage (_, _, ni) => ni)
 
 fun nodeInfo_of_stat s = (case s of
-    SExpr e => nodeInfo_of_expr e | SImport (_, _, ni) => ni | SDef d =>
-      nodeInfo_of_def d)
+                             SExpr e => nodeInfo_of_expr e | SImport (_, _, ni) => ni 
+                           | SDef d => nodeInfo_of_def d)
 
 fun pos_of_expr e = pos_of_NodeInfo (nodeInfo_of_expr e)
 fun pos_of_type t = pos_of_NodeInfo (nodeInfo_of_type t)
