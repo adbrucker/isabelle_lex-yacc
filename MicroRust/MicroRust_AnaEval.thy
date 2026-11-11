@@ -1,4 +1,4 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay
  *
  * All rights reserved.
@@ -14,17 +14,18 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 
 theory MicroRust_AnaEval
@@ -34,43 +35,55 @@ begin
 section\<open>Analyse and Eval\<close>
 
 text\<open>
-  \<open>analyse_and_eval\<close> is the MicroRust counterpart of the passes of the same name of the other
-  front-ends (\<^verbatim>\<open>C11_AnaEval.thy\<close>, \<^verbatim>\<open>Occam2_AnaEval.thy\<close>, \<^verbatim>\<open>Scala3_AnaEval.thy\<close>, whose long
-  explanations apply here and are not repeated): a single, purely functional, scoped walk over a
-  parsed \<open>root\<close>, threading \<open>renv\<close> through the descent, collecting every antiquotation action
-  paired with its \<open>level\<close> instead of applying it, and hyperlinking every name use to its
-  declaration. What is specific to Rust:
+  \<open>analyse_and_eval\<close> is the MicroRust counterpart of the passes of the same name
+  of the other front-ends (\<^verbatim>\<open>C11_AnaEval.thy\<close>, \<^verbatim>\<open>Occam2_AnaEval.thy\<close>,
+  \<^verbatim>\<open>Scala3_AnaEval.thy\<close>, whose long explanations apply here and are not
+  repeated): a single, purely functional, scoped walk over a parsed \<open>root\<close>,
+  threading \<open>renv\<close> through the descent, collecting every antiquotation action
+  paired with its \<open>level\<close> instead of applying it, and hyperlinking every name
+  use to its declaration. What is specific to Rust:
 
-  \<^item> \<^bold>\<open>Two name spaces.\<close> A type (a struct, enum, trait, type alias, module or generic parameter) is
-    looked up in \<open>types\<close>, a value (a function, constant, static, variable, parameter) in \<open>terms\<close>. A
-    tuple or unit struct declares a name in both. In an expression a lone name is looked up among the
-    values first; the first segment of a longer path (\<open>Vec::new\<close>, \<open>m::f\<close>, \<open>E::A\<close>) among the types
-    first. Later segments are not resolved (that would need types and modules).
-  \<^item> \<^bold>\<open>Scoping.\<close> A function (generic parameters, then the parameters, then the body), a block, a closure,
-    a match arm (its pattern variables are visible in the guard and the body), \<open>if let\<close> and
-    \<open>while let\<close> (the variables scope over the body only, not the \<open>else\<close> branch), \<open>for\<close> (over the loop
-    body), a module, an \<open>impl\<close> and a \<open>trait\<close> are scopes. Scoping is shadow-and-restore on the two
-    tables (the environment is a value, so a scope simply does not hand its extension back).
-  \<^item> \<^bold>\<open>Forward references.\<close> The items of a module (and of a source file, and of a block) are visible
-    throughout it: a function may call one defined further down. A \<open>let\<close> is visible only after its
-    statement, and its initializer does not see the variables it binds.
-  \<^item> \<^bold>\<open>Patterns.\<close> A lone name in a pattern is a binder if it starts with a lower-case letter or
-    \<open>_\<close> (or is marked \<open>mut\<close>, or has a sub-pattern \<open>x @ p\<close>); otherwise it is a use of a constant, unit
-    struct or variant - Rust's naming convention.
-  \<^item> \<^bold>\<open>Imports\<close> register the imported names, in both name spaces, at their path segment (the alias
-    for a renamed one); a use is hyperlinked to it. A glob import registers nothing. The members of an
-    \<open>impl\<close> or \<open>trait\<close> are not entered into the environment, but their declaration sites are reported.
-  \<^item> \<^bold>\<open>Names that resolve nowhere are not marked.\<close> A Rust name routinely comes from the prelude, a glob
-    import or the standard library, none of which this pass sees; underlining them would drown the
-    useful markup. Field and method names (\<open>e.f\<close>, \<open>e.m()\<close>) are not resolved either (that needs types).
-  \<^item> \<^bold>\<open>The source file\<close> (\<open>Crate\<close>) is the one root whose names persist: after \<open>microrust\<close> has analysed a
-    file, its top-level names stay in \<open>renv\<close> for the following units.
-  \<^item> \<^bold>\<open>Closest context and navigation\<close> as in the other front-ends: expressions, types, patterns,
-    statements (other than expression statements, which are their expression) and items push their
-    own node (\<open>Expr\<close>, \<open>Type\<close>, \<open>Pat\<close>, \<open>Stmt\<close>, \<open>Item\<close>); everything else (blocks, arms, parameters, fields,
-    generic parameters, ...) uses \<open>hd ctx\<close>. The children of a node are, in source order, its
-    sub-expressions, sub-types, sub-patterns, statements and items; blocks are flattened into their
-    parent.
+  \<^item> \<^bold>\<open>Two name spaces.\<close> A type (a struct, enum, trait, type alias, module or
+    generic parameter) is looked up in \<open>types\<close>, a value (a function, constant,
+    static, variable, parameter) in \<open>terms\<close>. A tuple or unit struct declares a
+    name in both. In an expression a lone name is looked up among the values
+    first; the first segment of a longer path (\<open>Vec::new\<close>, \<open>m::f\<close>, \<open>E::A\<close>) among
+    the types first. Later segments are not resolved (that would need types and
+    modules).
+  \<^item> \<^bold>\<open>Scoping.\<close> A function (generic parameters, then the parameters, then the
+    body), a block, a closure, a match arm (its pattern variables are visible in
+    the guard and the body), \<open>if let\<close> and \<open>while let\<close> (the variables scope over
+    the body only, not the \<open>else\<close> branch), \<open>for\<close> (over the loop body), a module,
+    an \<open>impl\<close> and a \<open>trait\<close> are scopes. Scoping is shadow-and-restore on the two
+    tables (the environment is a value, so a scope simply does not hand its
+    extension back).
+  \<^item> \<^bold>\<open>Forward references.\<close> The items of a module (and of a source file, and of a
+    block) are visible throughout it: a function may call one defined further
+    down. A \<open>let\<close> is visible only after its statement, and its initializer does
+    not see the variables it binds.
+  \<^item> \<^bold>\<open>Patterns.\<close> A lone name in a pattern is a binder if it starts with a
+    lower-case letter or \<open>_\<close> (or is marked \<open>mut\<close>, or has a sub-pattern \<open>x @ p\<close>);
+    otherwise it is a use of a constant, unit struct or variant - Rust's naming
+    convention.
+  \<^item> \<^bold>\<open>Imports\<close> register the imported names, in both name spaces, at their path
+    segment (the alias for a renamed one); a use is hyperlinked to it. A glob
+    import registers nothing. The members of an \<open>impl\<close> or \<open>trait\<close> are not
+    entered into the environment, but their declaration sites are reported.
+  \<^item> \<^bold>\<open>Names that resolve nowhere are not marked.\<close> A Rust name routinely comes from
+    the prelude, a glob import or the standard library, none of which this pass
+    sees; underlining them would drown the useful markup. Field and method names
+    (\<open>e.f\<close>, \<open>e.m()\<close>) are not resolved either (that needs types).
+  \<^item> \<^bold>\<open>The source file\<close> (\<open>Crate\<close>) is the one root whose names persist: after
+    \<open>microrust\<close> has analysed a file, its top-level names stay in \<open>renv\<close> for the
+    following units.
+  \<^item> \<^bold>\<open>Closest context and navigation\<close> as in the other front-ends: expressions,
+    types, patterns, statements (other than expression statements, which are
+    their expression) and items push their own node (\<open>Expr\<close>, \<open>Type\<close>, \<open>Pat\<close>,
+    \<open>Stmt\<close>, \<open>Item\<close>); everything else (blocks, arms, parameters, fields, generic
+    parameters, ...) uses \<open>hd ctx\<close>. The children of a node are, in source order,
+    its sub-expressions, sub-types, sub-patterns, statements and items; blocks
+    are flattened into their parent.
+
 \<close>
 ML\<open>
 structure AnaEval = struct
@@ -86,8 +99,8 @@ fun types_of (mk {types, ...} : renv) = types
 fun set_tables (terms', types') (mk {terms = _, types = _, rust_antiq, units}) =
   mk {terms = terms', types = types', rust_antiq = rust_antiq, units = units}
 
-(* The position a "root" itself spans: what a "type_antiq_fun" sees as its own "current term". A
-   source file has no single span. *)
+(* The position a "root" itself spans: what a "type_antiq_fun" sees as its own
+   "current term". A source file has no single span. *)
 fun pos_of_root (A.Id id) = A.pos_of_ident id
   | pos_of_root (A.Expr e) = A.pos_of_expr e
   | pos_of_root (A.Type t) = A.pos_of_type t
@@ -97,12 +110,14 @@ fun pos_of_root (A.Id id) = A.pos_of_ident id
   | pos_of_root (A.Body b) = A.pos_of_block b
   | pos_of_root (A.Crate _) = Position.none
 
-(* Exactly-once dispatch of every physical antiquotation, whatever number of AST nodes share its
-   leftmost source position - the same design as in the other front-ends. The set of comments
-   already dispatched belongs to one walk ("analyse_and_eval" installs a fresh one for its dynamic
-   extent) and is kept per thread, so two walks running at the same time cannot see each other's. *)
+(* Exactly-once dispatch of every physical antiquotation, whatever number of AST
+   nodes share its leftmost source position - the same design as in the other
+   front-ends. The set of comments already dispatched belongs to one walk
+   ("analyse_and_eval" installs a fresh one for its dynamic extent) and is kept
+   per thread, so two walks running at the same time cannot see each other's. *)
 structure Dispatched_Antiqs = struct
-  val state : Position.T A.comment list Unsynchronized.ref Thread_Data.var = Thread_Data.var ()
+  val state : Position.T A.comment list Unsynchronized.ref Thread_Data.var =
+    Thread_Data.var ()
   fun current () =
     (case Thread_Data.get state of
        SOME r => r
@@ -112,7 +127,8 @@ structure Dispatched_Antiqs = struct
   fun mark c = let val r = current () in r := c :: !r end
 end
 
-(* A navigation step's coarse target category, ignoring the constructor within. *)
+(* A navigation step's coarse target category, ignoring the constructor within.
+   *)
 fun category (A.Id _)    = 0
   | category (A.Expr _)  = 1
   | category (A.Type _)  = 2
@@ -133,6 +149,7 @@ fun run_length (ctx as top :: _) =
    returning the unconsumed "(r|d)*" suffix together with the resulting
    stack. Derived directly from the user's own worked examples (each
    rule below cited by number):
+
    \<^item> Rule 1: "[u]" (the *whole* string, nothing left after it) on
      "[expr, ...]" is "that expr, unchanged" - a lone, final "u" is a no-op:
      "select_u" returns "ctx" as-is once it sees "up" with an empty tail.
@@ -150,6 +167,7 @@ fun run_length (ctx as top :: _) =
      necessarily final) "u" step against the smaller stack, i.e. "U" with a
      trivial run always moves past it, whereas a written-out "u" alone would
      not (rule 1) - "U" and "u" are deliberately not fully interchangeable. *)
+
 fun select_u ([], ctx) = ([], ctx)
   | select_u (A.up :: rest_navi, ctx) =
       if null rest_navi then ([], ctx)
@@ -163,32 +181,41 @@ fun select_u ([], ctx) = ([], ctx)
                 [_] => select_u (A.up :: rest_navi, ctx)
               | _ :: rest_ctx => select_u (A.up :: rest_navi, rest_ctx))
       end
-  | select_u (navi, ctx) = (navi, ctx) (* first "r"/"d": the "(u|U)*" phase is over *)
+  | select_u (navi, ctx) =
+      (navi, ctx) (* first "r"/"d": the "(u|U)*" phase is over *)
 
-(* The ordered list of children "r"/"d" may navigate into (see the top-of-theory note):
-   sub-expressions, sub-types, sub-patterns, statements and items in source order; nodes without a
-   "root" counterpart (blocks, arms, parameters, fields, generic parameters, ...) are flattened
-   into their parent's list or dropped. *)
+(* The ordered list of children "r"/"d" may navigate into (see the top-of-theory
+   note): sub-expressions, sub-types, sub-patterns, statements and items in
+   source order; nodes without a "root" counterpart (blocks, arms, parameters,
+   fields, generic parameters, ...) are flattened into their parent's list or
+   dropped. *)
 fun opt_expr eo = (case eo of SOME e => [A.Expr e] | NONE => [])
 fun opt_type to = (case to of SOME t => [A.Type t] | NONE => [])
 fun opt_pat po = (case po of SOME p => [A.Pat p] | NONE => [])
 
-fun stmt_root s = (case s of A.SExpr (e, _, _) => A.Expr e | A.SItem it => A.Item it | _ => A.Stmt s)
+fun stmt_root s =
+  (case s of A.SExpr (e, _, _) => A.Expr e | A.SItem it => A.Item it | _ =>
+   A.Stmt s)
 
-fun block_children (A.Block (stmts, tail, _)) = map stmt_root stmts @ opt_expr tail
+fun block_children (A.Block (stmts, tail, _)) = map stmt_root stmts
+  @ opt_expr tail
 fun opt_block_children bo = (case bo of SOME b => block_children b | NONE => [])
 
 fun garg_children g = (case g of
-    A.GType t => [A.Type t] | A.GConst e => [A.Expr e] | A.GBind (_, t) => [A.Type t]
+    A.GType t => [A.Type t] | A.GConst e => [A.Expr e] | A.GBind (_, t) =>
+      [A.Type t]
   | A.GLifetime _ => [])
-fun gargs_children ga = (case ga of NONE => [] | SOME (A.GArgs (_, args)) => maps garg_children args)
+fun gargs_children ga =
+  (case ga of NONE => [] | SOME (A.GArgs (_, args)) => maps garg_children args)
 fun path_children (A.Path (qself, _, segs, _)) =
   (case qself of
      NONE => []
-   | SOME (t, tr) => A.Type t :: (case tr of SOME p => path_children p | NONE => [])) @
+   | SOME (t, tr) =>
+     A.Type t :: (case tr of SOME p => path_children p | NONE => [])) @
   maps (fn A.Seg (_, ga, _) => gargs_children ga) segs
 
-fun bound_children b = (case b of A.BTrait (_, p, _) => path_children p | A.BLifetime _ => [])
+fun bound_children b =
+  (case b of A.BTrait (_, p, _) => path_children p | A.BLifetime _ => [])
 fun gparam_children g = (case g of
     A.GPLifetime _ => []
   | A.GPType (_, bs, def, _) => maps bound_children bs @ opt_type def
@@ -201,11 +228,15 @@ fun fnparam_children p = (case p of
   | A.PParam (_, pat, t, _) => [A.Pat pat, A.Type t])
 fun fielddef_children (A.FieldDef (_, _, _, t, _)) = [A.Type t]
 fun fields_children fs = (case fs of
-    A.FUnit => [] | A.FNamed fds => maps fielddef_children fds | A.FTuple fds => maps fielddef_children fds)
-fun variant_children (A.Variant (_, _, fs, disc, _)) = fields_children fs @ opt_expr disc
+    A.FUnit => [] | A.FNamed fds =>
+      maps fielddef_children fds | A.FTuple fds => maps fielddef_children fds)
+fun variant_children (A.Variant (_, _, fs, disc, _)) = fields_children fs
+  @ opt_expr disc
 
-fun cond_children c = (case c of A.CExpr e => [A.Expr e] | A.CLet (p, e, _) => [A.Pat p, A.Expr e])
-fun arm_children (A.Arm (_, p, g, body, _)) = A.Pat p :: opt_expr g @ [A.Expr body]
+fun cond_children c =
+  (case c of A.CExpr e => [A.Expr e] | A.CLet (p, e, _) => [A.Pat p, A.Expr e])
+fun arm_children (A.Arm (_, p, g, body, _)) = A.Pat p :: opt_expr g
+  @ [A.Expr body]
 fun cparam_children (A.CParam (p, t, _)) = A.Pat p :: opt_type t
 fun fieldinit_children (A.FieldInit (_, eo, _)) = opt_expr eo
 
@@ -239,7 +270,8 @@ fun children_of_pat p = (case p of
   | A.PMut (p1, _) => [A.Pat p1])
 
 fun children_of_expr e = (case e of
-    A.ELit _ => [] | A.EHol _ => [] | A.EEps _ => [] | A.ELogLit _ => [] | A.EYield _ => []
+    A.ELit _ => [] | A.EHol _ => [] | A.EEps _ => [] | A.ELogLit _ =>
+      [] | A.EYield _ => []
   | A.EContinue _ => []
   | A.EPath p => path_children p
   | A.EUnary (_, e1, _) => [A.Expr e1]
@@ -248,7 +280,8 @@ fun children_of_expr e = (case e of
   | A.ECast (e1, t, _) => [A.Expr e1, A.Type t]
   | A.ETry (e1, _) => [A.Expr e1]
   | A.ECall (f, args, _) => A.Expr f :: map A.Expr args
-  | A.EMethod (r, _, ga, args, _) => A.Expr r :: gargs_children ga @ map A.Expr args
+  | A.EMethod (r, _, ga, args, _) =>
+    A.Expr r :: gargs_children ga @ map A.Expr args
   | A.EField (e1, _, _) => [A.Expr e1]
   | A.ETupIdx (e1, _, _) => [A.Expr e1]
   | A.EIndex (a, b, _) => [A.Expr a, A.Expr b]
@@ -257,7 +290,8 @@ fun children_of_expr e = (case e of
   | A.EParen (e1, _) => [A.Expr e1]
   | A.EArray (es, _) => map A.Expr es
   | A.ERepeat (a, b, _) => [A.Expr a, A.Expr b]
-  | A.EStruct (p, fs, base, _) => path_children p @ maps fieldinit_children fs @ opt_expr base
+  | A.EStruct (p, fs, base, _) =>
+    path_children p @ maps fieldinit_children fs @ opt_expr base
   | A.EBlock (_, b, _) => block_children b
   | A.EUnsafe (b, _) => block_children b
   | A.ESeq (b, _) => block_children b
@@ -266,7 +300,8 @@ fun children_of_expr e = (case e of
   | A.ELoop (_, b, _) => block_children b
   | A.EFor (_, p, it, b, _) => [A.Pat p, A.Expr it] @ block_children b
   | A.EMatch (s, arms, _) => A.Expr s :: maps arm_children arms
-  | A.EClosure (_, ps, ret, body, _) => maps cparam_children ps @ opt_type ret @ [A.Expr body]
+  | A.EClosure (_, ps, ret, body, _) =>
+    maps cparam_children ps @ opt_type ret @ [A.Expr body]
   | A.EReturn (eo, _) => opt_expr eo
   | A.EBreak (_, eo, _) => opt_expr eo
   | A.ELog (a, b, _) => [A.Expr a, A.Expr b]
@@ -276,25 +311,32 @@ fun children_of_expr e = (case e of
   | A.EAttr (_, e1, _) => [A.Expr e1])
 
 fun children_of_stmt s = (case s of
-    A.SLet (_, p, t, init, els, _) => A.Pat p :: opt_type t @ opt_expr init @ opt_block_children els
+    A.SLet (_, p, t, init, els, _) =>
+      A.Pat p :: opt_type t @ opt_expr init @ opt_block_children els
   | A.SExpr (e, _, _) => [A.Expr e]
   | A.SItem it => [A.Item it]
   | A.SEmpty _ => [])
 
 fun children_of_item (A.MkItem (_, _, kind, _)) = (case kind of
     A.IFn (_, _, gps, params, ret, wh, body) =>
-      maps gparam_children gps @ maps fnparam_children params @ opt_type ret @ maps where_children wh @
+      maps gparam_children gps @ maps fnparam_children params @ opt_type ret
+        @ maps where_children wh @
       opt_block_children body
-  | A.IStruct (_, gps, wh, fs) => maps gparam_children gps @ maps where_children wh @ fields_children fs
-  | A.IEnum (_, gps, wh, vs) => maps gparam_children gps @ maps where_children wh @ maps variant_children vs
+  | A.IStruct (_, gps, wh, fs) =>
+    maps gparam_children gps @ maps where_children wh @ fields_children fs
+  | A.IEnum (_, gps, wh, vs) =>
+    maps gparam_children gps @ maps where_children wh @ maps variant_children vs
   | A.IImpl (_, gps, tr, t, wh, items) =>
-      maps gparam_children gps @ (case tr of SOME p => path_children p | NONE => []) @ [A.Type t] @
+      maps gparam_children gps
+        @ (case tr of SOME p => path_children p | NONE => []) @ [A.Type t] @
       maps where_children wh @ map A.Item items
   | A.ITrait (_, _, gps, sups, wh, items) =>
-      maps gparam_children gps @ maps bound_children sups @ maps where_children wh @ map A.Item items
+      maps gparam_children gps @ maps bound_children sups
+        @ maps where_children wh @ map A.Item items
   | A.IConst (_, t, e) => A.Type t :: opt_expr e
   | A.IStatic (_, _, t, e) => A.Type t :: opt_expr e
-  | A.ITypeAlias (_, gps, bs, t) => maps gparam_children gps @ maps bound_children bs @ opt_type t
+  | A.ITypeAlias (_, gps, bs, t) =>
+    maps gparam_children gps @ maps bound_children bs @ opt_type t
   | A.IUse _ => []
   | A.IMod (_, items) => (case items of SOME is => map A.Item is | NONE => []))
 
@@ -306,7 +348,8 @@ fun children_of _ (A.Expr e) = children_of_expr e
   | children_of _ (A.Body b) = block_children b
   | children_of _ (A.Crate items) = map A.Item items
   | children_of antiq_pos (A.Id _) =
-      error ("select_ast: an identifier is a leaf, no \"r\"/\"d\" children" ^ Position.here antiq_pos)
+      error ("select_ast: an identifier is a leaf, no \"r\"/\"d\" children"
+             ^ Position.here antiq_pos)
 
 (* Resolves the "(r|d)*" suffix against a single "node" (the result of
    "select_u"'s ascent phase): "r" advances a 1-based cursor rightward among
@@ -324,18 +367,23 @@ fun children_of _ (A.Expr e) = children_of_expr e
    "[navi]" bracket - "antiq_pos" is the closest thing available to "where
    the string was written", and is what a user actually needs to jump to. *)
 fun select_rd (antiq_pos, [], node) = node
-  | select_rd (antiq_pos, navi as A.down :: _, node) = select_count_r (antiq_pos, 1, navi, node)
-  | select_rd (antiq_pos, A.right :: rest, node) = select_count_r (antiq_pos, 1, rest, node)
+  | select_rd (antiq_pos, navi as A.down :: _, node) =
+      select_count_r (antiq_pos, 1, navi, node)
+  | select_rd (antiq_pos, A.right :: rest, node) =
+      select_count_r (antiq_pos, 1, rest, node)
   | select_rd (antiq_pos, A.up :: _, _) =
       error ("select_ast: \"u\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
   | select_rd (antiq_pos, A.Up :: _, _) =
       error ("select_ast: \"U\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
-and select_count_r (antiq_pos, n, A.right :: rest, node) = select_count_r (antiq_pos, n + 1, rest, node)
+and select_count_r (antiq_pos, n, A.right :: rest, node) =
+  select_count_r (antiq_pos, n + 1, rest, node)
   | select_count_r (antiq_pos, n, A.down :: rest, node) =
       let val cs = children_of antiq_pos node in
         if n > length cs then
-          error ("select_ast: navigation index " ^ Int.toString n ^ " out of range (only " ^
-                 Int.toString (length cs) ^ " navigable children here)" ^ Position.here antiq_pos)
+          error ("select_ast: navigation index " ^ Int.toString n
+                 ^ " out of range (only " ^
+                 Int.toString (length cs) ^ " navigable children here)"
+                   ^ Position.here antiq_pos)
         else select_rd (antiq_pos, rest, List.nth (cs, n - 1))
       end
   | select_count_r (antiq_pos, _, A.up :: _, _) =
@@ -343,8 +391,8 @@ and select_count_r (antiq_pos, n, A.right :: rest, node) = select_count_r (antiq
   | select_count_r (antiq_pos, _, A.Up :: _, _) =
       error ("select_ast: \"U\" after \"r\"" ^ Position.here antiq_pos)
   | select_count_r (antiq_pos, _, [], _) =
-      error ("select_ast: navigation string ends with a dangling \"r\", expected a final \"d\"" ^
-             Position.here antiq_pos)
+      error ("select_ast: navigation string ends with a dangling \"r\", " ^
+             "expected a final \"d\"" ^ Position.here antiq_pos)
 
 (* Maps an antiquotation's own "navi list" (the "@tag[navi] ..." bracket -
    see "A.navi") together with the closest-surrounding-context stack to
@@ -363,81 +411,92 @@ fun select_ast antiq_pos navi ctx =
    "ni"'s comment list by tag in "renv"'s "rust_antiq", instantiates it with
    (renv, select_ast tag_pos navi ctx, level), and pairs the resulting
    "Context.generic -> Context.generic" with its level - "select_ast" (and so
-   "children_of",
-   which can "error") is only forced when an "Antiquotation" genuinely needs
-   it, never for an ordinary "Raw_txt" or an empty comment list. "tag_pos"
-   (the antiquotation's own tag position, previously discarded here) is
-   passed through purely so a "select_ast" navigation error can be reported
+   "children_of", which can "error") is only forced when an "Antiquotation"
+   genuinely needs it, never for an ordinary "Raw_txt" or an empty comment list.
+   "tag_pos" (the antiquotation's own tag position, previously discarded here)
+   is passed through purely so a "select_ast" navigation error can be reported
    at "@tag[navi] ..." itself rather than at whatever AST node the failed
    navigation happened to reach - see the note on "select_rd". An
    "Antiquotation" already dispatched earlier in this same walk (see
    "Dispatched_Antiqs" above) is silently skipped the second (or third, ...)
    time some other node sharing its position reaches it - whichever node the
    walk reaches *first* (which, since every "walk_*" checks its own
-   antiquotations before recursing into its children, is always the
-   outermost of any nodes genuinely tied at one position) is the one that
-   wins. The handler receives "(body, body_pos)", not just "body" - see
-   "type_antiq_fun" in MicroRust_Env.thy for why the cartouche's own position now
-   travels all the way to the handler instead of being discarded here - and
-   the *resolved* AST node ("select_ast tag_pos navi ctx"), not the raw navi
-   list: a handler is never itself responsible for interpreting "up"/"Up"/
-   "right"/"down". *)
+   antiquotations before recursing into its children, is always the outermost of
+   any nodes genuinely tied at one position) is the one that wins. The handler
+   receives "(body, body_pos)", not just "body" - see "type_antiq_fun" in
+   MicroRust_Env.thy for why the cartouche's own position now travels all the
+   way to the handler instead of being discarded here - and the *resolved* AST
+   node ("select_ast tag_pos navi ctx"), not the raw navi list: a handler is
+   never itself responsible for interpreting "up"/"Up"/ "right"/"down". *)
 fun check_antiq renv (ctx : pos A.root list) (ni : pos A.nodeInfo)
     : (int * (Context.generic -> Context.generic)) list =
   case ni of
     A.OnlyPos _ => []
   | A.NodeInfo (cs, _) =>
       List.mapPartial
-        (fn c as A.Antiquotation ({tag = (tag, tag_pos)}, navi, {level}, {cartouche = (body, body_pos)}) =>
+        (fn c as A.Antiquotation
+         ({tag = (tag, tag_pos)}, navi, {level},
+          {cartouche = (body, body_pos)}) =>
               if Dispatched_Antiqs.already_dispatched c then NONE
               else
                 let val mk {rust_antiq, ...} = renv in
                   case Symtab.lookup rust_antiq tag of
                     NONE =>
-                      error ("analyse_and_eval: no antiquotation handler registered for tag " ^
-                             quote tag)
+                      error ("analyse_and_eval: no antiquotation handler " ^
+                             "registered for tag " ^ quote tag)
                   | SOME antiq_fun =>
                       (Dispatched_Antiqs.mark c;
-                       SOME (level, antiq_fun (renv, select_ast tag_pos navi ctx, level) (body, body_pos)))
+                       SOME (level,
+                             antiq_fun
+                               (renv, select_ast tag_pos navi ctx, level)
+                                 (body, body_pos)))
                 end
           | A.Raw_txt _ => NONE)
         cs
 
 
-(* The full-token range a name spans, starting at "pos" (an identifier's "nodeInfo" carries a
-   bare point, which would make an entity report claim a single character). *)
+(* The full-token range a name spans, starting at "pos" (an identifier's
+   "nodeInfo" carries a bare point, which would make an entity report claim a
+   single character). *)
 fun name_range (name, pos) =
-  Position.range_position (Position.range (pos, Position.symbol_explode name pos))
+  Position.range_position
+    (Position.range (pos, Position.symbol_explode name pos))
 
 fun report_decl kind name decl_pos =
   let val range_pos = name_range (name, decl_pos)
-  in Position.report range_pos (Position.entity_markup kind (name, range_pos)) end
+  in Position.report range_pos (Position.entity_markup kind (name, range_pos))
+    end
 
-(* Hyperlinks a use of "name" to its declaration, if it resolves; nothing is reported if it does
-   not (see the top-of-theory note). *)
+(* Hyperlinks a use of "name" to its declaration, if it resolves; nothing is
+   reported if it does not (see the top-of-theory note). *)
 fun use_in table name use_pos =
   (case Symtab.lookup table name of
      NONE => ()
    | SOME k =>
        Position.report (name_range (name, use_pos))
-         (Position.entity_markup (describe_kind k) (name, name_range (name, pos_of_kind k))))
+         (Position.entity_markup (describe_kind k)
+          (name, name_range (name, pos_of_kind k))))
 
-fun use_term renv (A.Ident (name, _, ni)) = use_in (terms_of renv) name (A.pos_of_NodeInfo ni)
-fun use_type renv (A.Ident (name, _, ni)) = use_in (types_of renv) name (A.pos_of_NodeInfo ni)
+fun use_term renv (A.Ident (name, _, ni)) =
+  use_in (terms_of renv) name (A.pos_of_NodeInfo ni)
+fun use_type renv (A.Ident (name, _, ni)) =
+  use_in (types_of renv) name (A.pos_of_NodeInfo ni)
 
 fun reg_term mk_kind renv (A.Ident (name, _, ni)) =
   let
     val pos = A.pos_of_NodeInfo ni
     val kind = mk_kind pos
     val _ = report_decl (describe_kind kind) name pos
-  in set_tables (Symtab.update (name, kind) (terms_of renv), types_of renv) renv end
+  in set_tables (Symtab.update (name, kind) (terms_of renv), types_of renv)
+    renv end
 
 fun reg_type mk_kind renv (A.Ident (name, _, ni)) =
   let
     val pos = A.pos_of_NodeInfo ni
     val kind = mk_kind pos
     val _ = report_decl (describe_kind kind) name pos
-  in set_tables (terms_of renv, Symtab.update (name, kind) (types_of renv)) renv end
+  in set_tables (terms_of renv, Symtab.update (name, kind) (types_of renv))
+    renv end
 
 (* An imported name: registered in both name spaces, at its selector. *)
 fun reg_import renv (id as A.Ident (name, _, ni)) =
@@ -445,7 +504,9 @@ fun reg_import renv (id as A.Ident (name, _, ni)) =
     val pos = A.pos_of_NodeInfo ni
     val kind = Import pos
     val _ = report_decl (describe_kind kind) name pos
-  in set_tables (Symtab.update (name, kind) (terms_of renv), Symtab.update (name, kind) (types_of renv)) renv end
+  in set_tables
+    (Symtab.update (name, kind) (terms_of renv),
+     Symtab.update (name, kind) (types_of renv)) renv end
 
 (* Runs "f" in a nested scope: both tables are restored on exit. *)
 fun scoped renv f =
@@ -455,7 +516,8 @@ fun scoped renv f =
   in (set_tables (terms, types) renv1, acts) end
 
 fun seq (f : renv -> 'a -> renv * acts) renv xs =
-  fold (fn x => fn (e, acc) => let val (e', a) = f e x in (e', acc @ a) end) xs (renv, [])
+  fold (fn x => fn (e, acc) => let val (e', a) = f e x in (e', acc @ a) end) xs
+    (renv, [])
 
 fun opt f renv x = (case x of NONE => (renv, []) | SOME y => f renv y)
 
@@ -464,16 +526,18 @@ fun opt_list x = (case x of SOME y => [y] | NONE => [])
 (* A compact wrapper for the antiquotations a node carries (its "nodeInfo"). *)
 fun chk renv ctx ni = check_antiq renv ctx ni
 
-(* A name starting with a lower-case letter or "_" in a pattern is a binder; Rust's naming
-   convention (enforced by a lint) makes everything else a constant, a unit struct or a variant. *)
-fun is_binder_name s = s <> "" andalso (let val c = String.sub (s, 0) in Char.isLower c orelse c = #"_" end)
+(* A name starting with a lower-case letter or "_" in a pattern is a binder;
+   Rust's naming convention (enforced by a lint) makes everything else a
+   constant, a unit struct or a variant. *)
+fun is_binder_name s = s <> ""
+  andalso (let val c = String.sub (s, 0) in Char.isLower c orelse c = #"_" end)
 
 val keyword_names = ["self", "Self", "super", "crate"]
 
 datatype order = Term_first | Type_first
 
-(* Hyperlinks the use of a name to its declaration, trying the name space the position makes more
-   likely first. *)
+(* Hyperlinks the use of a name to its declaration, trying the name space the
+   position makes more likely first. *)
 fun use_name senv order (A.Ident (name, _, ni)) =
   if member (op =) keyword_names name then ()
   else
@@ -488,10 +552,12 @@ fun use_name senv order (A.Ident (name, _, ni)) =
        | NONE => ())
     end
 
-(* A name entered into the second name space without a second declaration site (a tuple or unit
-   struct is a type and a value). *)
+(* A name entered into the second name space without a second declaration site
+   (a tuple or unit struct is a type and a value). *)
 fun alias_term mk_kind senv (A.Ident (name, _, ni)) =
-  set_tables (Symtab.update (name, mk_kind (A.pos_of_NodeInfo ni)) (terms_of senv), types_of senv) senv
+  set_tables
+    (Symtab.update (name, mk_kind (A.pos_of_NodeInfo ni)) (terms_of senv),
+     types_of senv) senv
 
 fun decl_only mk_kind (A.Ident (name, _, ni)) =
   let val pos = A.pos_of_NodeInfo ni
@@ -500,11 +566,13 @@ fun decl_only mk_kind (A.Ident (name, _, ni)) =
 fun optl f x = (case x of NONE => [] | SOME y => f y)
 
 fun use_names u = (case u of
-    A.UName (path, alias, _) => (case alias of SOME a => [a] | NONE => [List.last path])
+    A.UName (path, alias, _) =>
+      (case alias of SOME a => [a] | NONE => [List.last path])
   | A.UGlob _ => []
   | A.UGroup (_, us, _) => maps use_names us)
 
-(* The names an item declares, visible throughout the scope it belongs to (forward references). *)
+(* The names an item declares, visible throughout the scope it belongs to
+   (forward references). *)
 fun predeclare senv (A.MkItem (_, _, kind, _)) =
   (case kind of
      A.IFn (_, name, _, _, _, _, _) => reg_term Fn senv name
@@ -518,20 +586,25 @@ fun predeclare senv (A.MkItem (_, _, kind, _)) =
    | A.IStatic (_, name, _, _) => reg_term Static senv name
    | A.ITypeAlias (name, _, _, _) => reg_type Alias senv name
    | A.IUse u =>
-       fold (fn id => fn s => if A.ident_name id = "self" then s else reg_import s id) (use_names u) senv
+       fold (fn id => fn s =>
+             if A.ident_name id = "self" then s
+               else reg_import s id) (use_names u) senv
    | A.IMod (name, _) => reg_type Mod senv name)
 
-fun predeclare_items senv items = fold (fn it => fn s => predeclare s it) items senv
+fun predeclare_items senv items =
+  fold (fn it => fn s => predeclare s it) items senv
 
 fun walk_path order senv ctx (A.Path (qself, global, segs, _)) : acts =
   let
     val a1 = (case qself of
                 NONE => []
-              | SOME (t, tr) => walk_type senv ctx t @ optl (walk_path Type_first senv ctx) tr)
+              | SOME (t, tr) =>
+                walk_type senv ctx t @ optl (walk_path Type_first senv ctx) tr)
     val _ =
       if global orelse is_some qself then ()
       else (case segs of
-              A.Seg (id, _, _) :: _ => use_name senv (if length segs > 1 then Type_first else order) id
+              A.Seg (id, _, _) :: _ =>
+                use_name senv (if length segs > 1 then Type_first else order) id
             | [] => ())
     val a2 = maps (fn A.Seg (_, ga, _) => walk_gargs senv ctx ga) segs
   in a1 @ a2 end
@@ -547,7 +620,8 @@ and walk_gargs senv ctx ga : acts =
                       | A.GLifetime _ => [])) args)
 
 and walk_bound senv ctx b : acts =
-  (case b of A.BTrait (_, p, _) => walk_path Type_first senv ctx p | A.BLifetime _ => [])
+  (case b of A.BTrait (_, p, _) =>
+   walk_path Type_first senv ctx p | A.BLifetime _ => [])
 
 and walk_type senv ctx (t : pos A.rType) : acts =
   let
@@ -571,7 +645,8 @@ and walk_type senv ctx (t : pos A.rType) : acts =
      | A.TDyn (bs, _) => maps (walk_bound senv ctx') bs)
   end
 
-(* A pattern binds its variables (kind "mk_kind") into the environment it returns. *)
+(* A pattern binds its variables (kind "mk_kind") into the environment it
+   returns. *)
 and walk_pat mk_kind senv ctx (p : pos A.rPat) : renv * acts =
   let
     val ctx' = A.Pat p :: ctx
@@ -586,10 +661,12 @@ and walk_pat mk_kind senv ctx (p : pos A.rPat) : renv * acts =
        | A.PIdent (r, m, id, sub, _) =>
            let
              val s1 =
-               if r orelse m orelse is_some sub orelse is_binder_name (A.ident_name id)
+               if r orelse m orelse is_some sub
+                 orelse is_binder_name (A.ident_name id)
                then reg_term mk_kind senv id
                else (use_name senv Term_first id; senv)
-           in (case sub of SOME p1 => walk_pat mk_kind s1 ctx' p1 | NONE => (s1, [])) end
+           in (case sub of SOME p1 => walk_pat mk_kind s1 ctx' p1 | NONE =>
+               (s1, [])) end
        | A.PRange (lo, hi, _, _) => many senv (opt_list lo @ opt_list hi)
        | A.PPath pa => (senv, walk_path Term_first senv ctx' pa)
        | A.PTupleStruct (pa, ps, _) =>
@@ -645,7 +722,8 @@ and walk_expr senv ctx (e : pos A.rExpr) : acts =
      | A.ECast (e1, t, _) => w e1 @ walk_type senv ctx' t
      | A.ETry (e1, _) => w e1
      | A.ECall (f, args, _) => w f @ maps w args
-     | A.EMethod (r, _, ga, args, _) => w r @ walk_gargs senv ctx' ga @ maps w args
+     | A.EMethod (r, _, ga, args, _) =>
+       w r @ walk_gargs senv ctx' ga @ maps w args
      | A.EField (e1, _, _) => w e1
      | A.ETupIdx (e1, _, _) => w e1
      | A.EIndex (a, b, _) => w a @ w b
@@ -657,7 +735,9 @@ and walk_expr senv ctx (e : pos A.rExpr) : acts =
      | A.EStruct (p, fs, base, _) =>
          walk_path Type_first senv ctx' p @
          maps (fn A.FieldInit (id, eo, ni) =>
-                 chk senv ctx' ni @ (case eo of SOME e1 => w e1 | NONE => (use_name senv Term_first id; []))) fs @
+                 chk senv ctx' ni
+                   @ (case eo of SOME e1 => w e1 | NONE =>
+                      (use_name senv Term_first id; []))) fs @
          optl w base
      | A.EBlock (_, b, _) => walk_block senv ctx' b
      | A.EUnsafe (b, _) => walk_block senv ctx' b
@@ -689,8 +769,10 @@ and walk_expr senv ctx (e : pos A.rExpr) : acts =
      | A.EReturn (eo, _) => optl w eo
      | A.EBreak (_, eo, _) => optl w eo
      | A.ELog (a, b, _) => w a @ w b
-     | A.EMacro (p, _, args, _) => walk_path Term_first senv ctx' p @ maps w args
-     | A.EMacroRepeat (p, a, b, _) => walk_path Term_first senv ctx' p @ w a @ w b
+     | A.EMacro (p, _, args, _) =>
+       walk_path Term_first senv ctx' p @ maps w args
+     | A.EMacroRepeat (p, a, b, _) =>
+       walk_path Term_first senv ctx' p @ w a @ w b
      | A.EMatches (e1, p, _) => w e1 @ #2 (walk_pat Local senv ctx' p)
      | A.EAttr (_, e1, _) => w e1)
   end
@@ -701,8 +783,8 @@ and walk_arm senv ctx (A.Arm (_, p, g, body, ni)) : acts =
     val (s1, a1) = walk_pat Local senv ctx p
   in a0 @ a1 @ optl (walk_expr s1 ctx) g @ walk_expr s1 ctx body end
 
-(* A block is a scope: its items are visible throughout (local functions may be mutually
-   recursive), a "let" only after its statement. *)
+(* A block is a scope: its items are visible throughout (local functions may be
+   mutually recursive), a "let" only after its statement. *)
 and walk_block senv ctx (A.Block (stmts, tail, ni)) : acts =
   let
     val a0 = chk senv ctx ni
@@ -739,14 +821,16 @@ and walk_gparams senv ctx gps : renv * acts =
       maps (fn g =>
               (case g of
                  A.GPType (_, bs, def, ni) =>
-                   chk s1 ctx ni @ maps (walk_bound s1 ctx) bs @ optl (walk_type s1 ctx) def
+                   chk s1 ctx ni @ maps (walk_bound s1 ctx) bs
+                     @ optl (walk_type s1 ctx) def
                | A.GPConst (_, t, ni) => chk s1 ctx ni @ walk_type s1 ctx t
                | A.GPLifetime (_, _, ni) => chk s1 ctx ni)) gps
   in (s1, acts) end
 
 and walk_where senv ctx w : acts =
   (case w of
-     A.WType (t, bs, ni) => chk senv ctx ni @ walk_type senv ctx t @ maps (walk_bound senv ctx) bs
+     A.WType (t, bs, ni) =>
+       chk senv ctx ni @ walk_type senv ctx t @ maps (walk_bound senv ctx) bs
    | A.WLifetime (_, _, ni) => chk senv ctx ni)
 
 and walk_fields senv ctx fs : acts =
@@ -756,11 +840,14 @@ and walk_fields senv ctx fs : acts =
    | A.FTuple fds => maps (walk_fielddef senv ctx) fds)
 
 and walk_fielddef senv ctx (A.FieldDef (_, _, name, t, ni)) : acts =
-  chk senv ctx ni @ (case name of SOME id => (decl_only Local id; []) | NONE => []) @ walk_type senv ctx t
+  chk senv ctx ni
+    @ (case name of SOME id => (decl_only Local id; []) | NONE => [])
+      @ walk_type senv ctx t
 
 and walk_fnparam senv ctx p : renv * acts =
   (case p of
-     A.PSelf (_, _, _, t, ni) => (senv, chk senv ctx ni @ optl (walk_type senv ctx) t)
+     A.PSelf (_, _, _, t, ni) =>
+       (senv, chk senv ctx ni @ optl (walk_type senv ctx) t)
    | A.PParam (_, pat, t, ni) =>
        let
          val a0 = chk senv ctx ni
@@ -772,8 +859,8 @@ and walk_items senv ctx items : renv * acts =
   let val s1 = predeclare_items senv items
   in (s1, maps (walk_item s1 ctx) items) end
 
-(* An associated item (of an "impl" or a "trait") declares no name in the environment, but its
-   declaration site is reported. *)
+(* An associated item (of an "impl" or a "trait") declares no name in the
+   environment, but its declaration site is reported. *)
 and walk_assoc senv ctx (it as A.MkItem (_, _, kind, _)) : acts =
   let
     val _ = (case kind of
@@ -809,7 +896,8 @@ and walk_item senv ctx (it as A.MkItem (_, _, kind, ni)) : acts =
            val a3 =
              maps (fn A.Variant (_, id, fs, disc, vni) =>
                      (decl_only Variant id;
-                      chk s1 ctx' vni @ walk_fields s1 ctx' fs @ optl (walk_expr s1 ctx') disc)) vs
+                      chk s1 ctx' vni @ walk_fields s1 ctx' fs
+                        @ optl (walk_expr s1 ctx') disc)) vs
          in a1 @ a2 @ a3 end
      | A.IImpl (_, gps, tr, t, wh, items) =>
          let
@@ -826,8 +914,10 @@ and walk_item senv ctx (it as A.MkItem (_, _, kind, ni)) : acts =
            val a3 = maps (walk_where s1 ctx') wh
            val a4 = maps (walk_assoc s1 ctx') items
          in a1 @ a2 @ a3 @ a4 end
-     | A.IConst (_, t, e) => walk_type senv ctx' t @ optl (walk_expr senv ctx') e
-     | A.IStatic (_, _, t, e) => walk_type senv ctx' t @ optl (walk_expr senv ctx') e
+     | A.IConst (_, t, e) =>
+       walk_type senv ctx' t @ optl (walk_expr senv ctx') e
+     | A.IStatic (_, _, t, e) =>
+       walk_type senv ctx' t @ optl (walk_expr senv ctx') e
      | A.ITypeAlias (_, gps, bs, t) =>
          let val (s1, a1) = walk_gparams senv ctx' gps
          in a1 @ maps (walk_bound s1 ctx') bs @ optl (walk_type s1 ctx') t end
@@ -841,7 +931,8 @@ and walk_item senv ctx (it as A.MkItem (_, _, kind, ni)) : acts =
 fun analyse_and_eval0 (root : pos A.root) thy =
   let
     val renv0 = get (Context.Theory thy)
-    (* The bottom frame is always the top-level root itself, so "ctx" is never empty. *)
+    (* The bottom frame is always the top-level root itself, so "ctx" is never
+       empty. *)
     val ctx0 = [root]
     fun finish (renv1, acts) = (Context.theory_map (put renv1) thy, acts)
     fun drop acts = (thy, acts)
@@ -869,14 +960,15 @@ end
 subsection\<open>Some Basic Antiquotation Settings\<close>
 
 text\<open>
-  The same eight demonstration antiquotations as C11's (\<open>C11_AnaEval.thy\<close>, whose notes on
-  each apply unchanged): \<open>probe_renv\<close>, \<open>probe_ast\<close>, \<open>highlight\<close>, \<open>term\<close>, \<open>ML\<close>, \<open>text\<close>,
-  \<open>definition\<close> and \<open>lemma\<close>. They are written in a MicroRust comment as
-  \<^verbatim>\<open>//@ term \<open>x + 1 = (2::nat)\<close>\<close> (or in a \<^verbatim>\<open>/*@ ... */\<close> comment, or anywhere in a comment as
-  \<^verbatim>\<open>@term \<open>...\<close>\<close>) and attach to the node that begins on the next token; \<^verbatim>\<open>@tag[navi](level)\<close> selects another node and an
+  The same eight demonstration antiquotations as C11's (\<open>C11_AnaEval.thy\<close>, whose
+  notes on each apply unchanged): \<open>probe_renv\<close>, \<open>probe_ast\<close>, \<open>highlight\<close>,
+  \<open>term\<close>, \<open>ML\<close>, \<open>text\<close>, \<open>definition\<close> and \<open>lemma\<close>. They are written in a
+  MicroRust comment as \<^verbatim>\<open>//@ term \<open>x + 1 = (2::nat)\<close>\<close> (or in a \<^verbatim>\<open>/*@ ... */\<close>
+  comment, or anywhere in a comment as \<^verbatim>\<open>@term \<open>...\<close>\<close>) and attach to the node
+  that begins on the next token; \<^verbatim>\<open>@tag[navi](level)\<close> selects another node and an
   evaluation order exactly as in C11. Handlers are registered under their tag in
-  \<open>renv\<close>'s \<open>rust_antiq\<close> table; nothing here knows MicroRust, only the \<open>root\<close> they are
-  handed.
+  \<open>renv\<close>'s \<open>rust_antiq\<close> table; nothing here knows MicroRust, only the \<open>root\<close>
+  they are handed.
 \<close>
 
 declare [[ML_catch_all = true]]
@@ -885,19 +977,24 @@ ML\<open>
 val RENV = Unsynchronized.ref(REnv.empty_renv);
 val probe_renv = let fun probe (renv, _ , _) (_ : string * Position.T) thy =
                               (RENV := renv; thy)
-                 in  REnv.store_antiq ("probe_renv",  REnv.lift_theory_antiq probe) end
+                 in  REnv.store_antiq
+                   ("probe_renv",  REnv.lift_theory_antiq probe) end
 
-val RUST_AST = Unsynchronized.ref((MicroRust_Ast.Crate []): (Position.T MicroRust_Ast.root) )
+val RUST_AST =
+  Unsynchronized.ref((MicroRust_Ast.Crate []): (Position.T MicroRust_Ast.root) )
 val probe_ast = let fun probe (_, ast , l) (_ : string * Position.T) thy =
                               (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ MicroRust_Pp.pp_root ast);
                                RUST_AST := ast; thy)
-                in  REnv.store_antiq ("probe_ast",  REnv.lift_theory_antiq probe) end
+                in  REnv.store_antiq
+                  ("probe_ast",  REnv.lift_theory_antiq probe) end
 
 val highlight = let fun probe (_, ast , _) (_ : string * Position.T) thy =
-                              (Position.report (AnaEval.pos_of_root ast) Markup.intensify;
+                              (Position.report (AnaEval.pos_of_root ast)
+                               Markup.intensify;
                                thy)
-                in  REnv.store_antiq ("highlight",  REnv.lift_theory_antiq probe) end
+                in  REnv.store_antiq
+                  ("highlight",  REnv.lift_theory_antiq probe) end
 
 (* The cartouche body as an "Input.source" with the body's own real position,
    rebuilt from the merged range position the lexer records: see the long note
@@ -910,10 +1007,11 @@ fun body_source (body, body_pos) =
   in Input.source true body (start_pos, end_pos) end
 
 (* A genuine HOL term, read against the theory's current context; a malformed
-   term is a real Isabelle error positioned in the MicroRust source. The catch-all
-   handler is needed because "Syntax.read_term" fails with "Par_Exn", not
-   "ERROR". *)
-val RUST_TERM_PROBE = Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
+   term is a real Isabelle error positioned in the MicroRust source. The
+   catch-all handler is needed because "Syntax.read_term" fails with "Par_Exn",
+   not "ERROR". *)
+val RUST_TERM_PROBE =
+  Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
 val term_antiq =
   let
     fun probe (_, ast, _) (body, body_pos) thy =
@@ -951,8 +1049,10 @@ val text_antiq =
       let
         val ctxt = Proof_Context.init_global thy
         val source = body_source (body, body_pos)
-        val _ = Context_Position.reports ctxt (Document_Output.document_reports source)
-        val latex = Document_Output.output_document ctxt {markdown = true} source
+        val _ = Context_Position.reports ctxt
+          (Document_Output.document_reports source)
+        val latex =
+          Document_Output.output_document ctxt {markdown = true} source
       in (RUST_TEXT_PROBE := latex; thy) end
   in REnv.store_antiq ("text", REnv.lift_theory_antiq probe) end
 
@@ -966,7 +1066,9 @@ val definition_antiq =
         val source = body_source (body, body_pos)
         val keywords = Keyword.no_major_keywords (Thy_Header.get_keywords' ctxt)
         val parser =
-          Scan.option Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name ":" -- Parse.prop) --
+          Scan.option
+            Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name
+                                     ":" -- Parse.prop) --
             Parse_Spec.if_assumes -- Parse.for_fixes
         val (((decl, spec), prems), params) =
           Parse.read_embedded ctxt keywords parser source
@@ -975,7 +1077,8 @@ val definition_antiq =
             else error ("definition antiquotation: " ^ Runtime.exn_message exn ^
                          Position.here (AnaEval.pos_of_root ast))
         val lthy' =
-          #2 (Specification.definition_cmd {verbose = false} decl params prems spec
+          #2 (Specification.definition_cmd {verbose = false} decl params prems
+              spec
                 (Named_Target.theory_init thy))
       in Local_Theory.exit_global lthy' end
   in REnv.store_antiq ("definition", REnv.lift_theory_antiq probe) end
@@ -991,7 +1094,8 @@ val lemma_antiq =
           (Binding.empty_atts, [Element.Fixes fixes, Element.Assumes assumes],
            Element.Shows shows))
     val parser =
-      short_statement -- (Parse.$$$ "by" |-- Method.parse -- Scan.option Method.parse)
+      short_statement -- (Parse.$$$ "by" |-- Method.parse -- Scan.option
+                          Method.parse)
     fun probe (_, ast, _) (body, body_pos) thy =
       let
         val ctxt = Proof_Context.init_global thy
@@ -1004,10 +1108,12 @@ val lemma_antiq =
         val ((binding, elems, concl), (m1, m2)) =
           Parse.read_embedded ctxt keywords parser source handle exn => fail exn
         val lthy' =
-          (Specification.theorem_cmd {verbose = false, long = false, kind = Thm.theoremK}
+          (Specification.theorem_cmd {verbose = false, long = false, kind =
+                                      Thm.theoremK}
              NONE (K I) binding [] elems concl
              (Named_Target.theory_init thy)
-           |> tap (fn _ => (Method.report m1; Option.map Method.report m2 |> ignore))
+           |> tap (fn _ =>
+                   (Method.report m1; Option.map Method.report m2 |> ignore))
            |> Proof.global_terminal_proof (m1, m2))
           handle exn => fail exn
       in Local_Theory.exit_global lthy' end

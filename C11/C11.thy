@@ -3,7 +3,7 @@
  *
  * Authors: Burkhart Wolff, Claude Sonnet 5.5
  *
- * This is a LLM-generated replication of the Isabelle/C version 2 design
+ * This is an LLM-generated replication of the Isabelle/C version 2 design
  * to the programming language C11. It provides an efficient parser for C11,
  * deeply integrated into the Isabelle/PIDE document model, allowing external
  * files as well as in-theory code-snippets which are transparent to the underlying
