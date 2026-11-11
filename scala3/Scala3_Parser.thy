@@ -903,7 +903,7 @@ yacc_definitions\<open>
 %nonassoc TYLOW
 %right ABSTRACT AS CATCH COLON EXTENSION FINAL FINALLY IF IMPLICIT INFIX INLINE
 %right LAZY LPAREN OPAQUE OPEN OVERRIDE PRIVATE PROTECTED SEALED TRANSPARENT
-%right UNDERSCORE USING VAL VAR
+%right NEWLINE SEMI UNDERSCORE USING VAL VAR
 %right ARROW CTXARROW
 %left MATCH
 %nonassoc LOWIF
@@ -1821,23 +1821,23 @@ enumerator:
 |       pattern_t EQUALS expr
         (EnVal (pattern_t, expr, ndi2 st (pattern_tleft, exprright)))
 stat_seq:
-        
+        %prec TYLOW
         ([])
 |       stat_list
         (stat_list)
 stat_list:
-        stat_seq_ne
+        stat_seq_ne %prec TYLOW
         (stat_seq_ne)
-|       semis
+|       semis %prec TYLOW
         ([])
-|       semis stat_seq_ne
+|       semis stat_seq_ne %prec TYLOW
         (stat_seq_ne)
 stat_seq_ne:
         stat
         ([stat])
 |       stat_seq_ne semis stat
         (stat_seq_ne @ [stat])
-|       stat_seq_ne semis
+|       stat_seq_ne semis %prec TYLOW
         (stat_seq_ne)
 stat:
         IMPORT import_exprs
