@@ -36,11 +36,25 @@ on which such tools can be built, e.g. for Isabelle's own Scala sources.
 * **Soft keywords** (`given`, `using`, `extension`, `inline`, `opaque`, `open`,
   `transparent`, `infix`, `end`, `derives`, `as`, `?`, `*`, `-`, `+`,
   `|`, `&` ...) are accepted as ordinary names where Scala permits it, and
-  recognised as keywords by their position.
+  recognised as keywords by their position. `inline`, `open`, `infix`, `opaque`
+  and `transparent` are told apart (modifier or name) by the layout stream with
+  one or two tokens of look-ahead, as the Scala scanner does.
 * Interpolated strings are kept as raw tokens (embedded expressions are not
   parsed); nested block comments are supported.
 * The Scaladoc-style `@tags` are *not* antiquotations; an antiquotation needs
   the `//@` / `/*@` marker.
+
+## Grammar status: conflict free
+
+ml-yacc reports **no shift/reduce and no reduce/reduce conflict** for the
+grammar (it had 123 and 71). Where shifting is the reading Scala intends (a type
+continuing with an operator, a refinement or `with`; `(implicit`, `(using`; a
+statement list absorbing a separator ...), the grammar declares it with
+precedences rather than leaving it to the tool's default: the reducing rules
+carry the pseudo-precedence `TYLOW`, the continuing tokens a higher one. The soft
+modifiers are decided by the layout stream, and `given` has a clause list of
+its own without the empty clause `()`. Each step was checked by comparing the
+AST of all 380 Isabelle Scala files before and after.
 
 ## Tested against Isabelle's own sources
 
