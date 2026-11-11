@@ -13,3 +13,7 @@ output
 
 # scala3_export output of Scala3_Cmd_Tests.thy (regenerated on every build)
 /scala3/*.scala
+
+# microrust_export output of MicroRust_Cmd_Tests.thy (regenerated on every build) - not
+# MicroRust/examples/*.rs, which are genuine fixtures
+/MicroRust/*.rs
