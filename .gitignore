@@ -18,3 +18,4 @@ output
 # MicroRust/examples/*.rs, which are genuine fixtures
 /MicroRust/*.rs
 /MicroRust/manual/*.rs
+/scala3/manual/*.scala

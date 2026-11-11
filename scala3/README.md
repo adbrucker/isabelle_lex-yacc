@@ -59,6 +59,7 @@ pretty-printer's output for each parses again to the same text (idempotence).
 | `Scala3_Tests.thy` | parser-level tests (round trip, idempotence, rejection, parallel parses) |
 | `Scala3_Cmd_Tests.thy` | command-level tests (binding, navigation, levels, files, export, backend) |
 | `examples/` | `Lists.scala`, `Pipeline.scala`, read by `scala3_file` in the tests |
+| `manual/` | the manual (`Scala3_Manual.thy`) as a sub-session that produces the PDF |
 
 ## Building
 
@@ -66,8 +67,13 @@ Build the session on its own, never together with the other sessions of this
 repository. Isabelle2026 is the supported version.
 
 ```sh
-isabelle build -d scala3 Scala3
+isabelle build -d scala3 Scala3            # all theories and tests
+isabelle build -d scala3 Scala3_Manual     # the manual: manual/output/document.pdf
 ```
+
+`scala3/ROOTS` makes the manual's sub-session visible to `-d scala3`. To work
+interactively, open a theory importing `Scala3` with
+`isabelle jedit -d scala3 -l Scala3`.
 
 `scala3_export` writes `.scala` files next to the exporting theory; they are
 generated on every build and git-ignored.

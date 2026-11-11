@@ -1,0 +1,22 @@
+chapter AFP
+
+(* The Isabelle/Scala 3 manual, a sub-session of "Scala3" (../ROOT): it imports
+   the global theory "Scala3" and runs its live examples against the real
+   commands.
+
+   Generate the PDF with
+
+     isabelle build -d scala3 Scala3_Manual
+
+   which writes "manual/output/document.pdf" ("output" is git-ignored). The
+   LaTeX sources are in "document/": "root.tex" (the same style as the C11,
+   occam 2 and MicroRust manuals, uses the lualatex/fontspec setup of
+   Isabelle's own document build) and "root.bib" (copied from the MicroRust
+   manual, plus the Scala 3 syntax summary). *)
+session "Scala3_Manual" (AFP) = "Scala3" +
+  options [timeout = 1200, document = pdf, document_output = "output"]
+  theories
+    Scala3_Manual
+  document_files
+    "root.tex"
+    "root.bib"
