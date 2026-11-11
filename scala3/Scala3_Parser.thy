@@ -901,6 +901,9 @@ yacc_definitions\<open>
 %noshift EOF
 
 %nonassoc TYLOW
+%right ABSTRACT AS CATCH COLON EXTENSION FINAL FINALLY IF IMPLICIT INFIX INLINE
+%right LAZY LPAREN OPAQUE OPEN OVERRIDE PRIVATE PROTECTED SEALED TRANSPARENT
+%right UNDERSCORE USING VAL VAR
 %right ARROW CTXARROW
 %left MATCH
 %nonassoc LOWIF
@@ -1102,7 +1105,7 @@ name:
         (mkid st (IDENT, IDENTleft, IDENTright))
 |       AS
         (mkid st (AS, ASleft, ASright))
-|       EXTENSION
+|       EXTENSION %prec TYLOW
         (mkid st (EXTENSION, EXTENSIONleft, EXTENSIONright))
 |       INFIX
         (mkid st (INFIX, INFIXleft, INFIXright))
@@ -1114,7 +1117,7 @@ name:
         (mkid st (OPEN, OPENleft, OPENright))
 |       TRANSPARENT
         (mkid st (TRANSPARENT, TRANSPARENTleft, TRANSPARENTright))
-|       USING
+|       USING %prec TYLOW
         (mkid st (USING, USINGleft, USINGright))
 opname:
         PLUS
@@ -1370,7 +1373,7 @@ ctx_bounds:
 |       ctx_bounds COLON typ
         (ctx_bounds @ [typ])
 annotation:
-        AT simple_type par_argss
+        AT simple_type par_argss %prec TYLOW
         (Annot (simple_type, map #1 par_argss,
                 ndi2 st (ATleft, par_argssright)))
 annotations_plain:
@@ -1390,7 +1393,7 @@ modifier:
         (MFinal)
 |       SEALED
         (MSealed)
-|       IMPLICIT
+|       IMPLICIT %prec TYLOW
         (MImplicit)
 |       LAZY
         (MLazy)
@@ -1458,7 +1461,7 @@ expr_nb:
                ndi2 st (TRYleft, finally_partright)))
 |       THROW expr
         (EThrow (expr, ndi2 st (THROWleft, exprright)))
-|       RETURN
+|       RETURN %prec TYLOW
         (EReturn (NONE, ndi2 st (RETURNleft, RETURNright)))
 |       RETURN expr
         (EReturn (SOME expr, ndi2 st (RETURNleft, exprright)))
@@ -1481,12 +1484,12 @@ expr_nb:
 |       infix_expr
         (infix_expr)
 catch_part:
-        
+        %prec TYLOW
         (NONE)
 |       CATCH expr
         (SOME expr)
 finally_part:
-        
+        %prec TYLOW
         (NONE)
 |       FINALLY expr
         (SOME expr)
@@ -1574,11 +1577,11 @@ prefix_expr:
         (EPrefix (mkid st (TILDE, TILDEleft, TILDEright), simple_expr,
                   ndi2 st (TILDEleft, simple_exprright)))
 simple_expr:
-        name
+        name %prec TYLOW
         (EIdent name)
-|       THIS
+|       THIS %prec TYLOW
         (EThis (NONE, ndi2 st (THISleft, THISright)))
-|       SUPER
+|       SUPER %prec TYLOW
         (ESuper (NONE, NONE, ndi2 st (SUPERleft, SUPERright)))
 |       SUPER LBRACKET name RBRACKET
         (ESuper (NONE, SOME name, ndi2 st (SUPERleft, RBRACKETright)))
@@ -1588,7 +1591,7 @@ simple_expr:
         (EPlaceholder (ndi2 st (UNDERSCOREleft, UNDERSCOREright)))
 |       block_expr
         (block_expr)
-|       NEW new_parents
+|       NEW new_parents %prec TYLOW
         (ENew (new_parents, NONE, ndi2 st (NEWleft, new_parentsright)))
 |       NEW new_parents template_body
         (ENew (new_parents, SOME template_body,
@@ -1601,7 +1604,7 @@ simple_expr:
         (ESelect (simple_expr, any_id, ndi2 st (simple_exprleft, any_idright)))
 |       simple_expr DOT THIS
         (this_of st (simple_expr, simple_exprleft, THISright))
-|       simple_expr DOT SUPER
+|       simple_expr DOT SUPER %prec TYLOW
         (super_of st (simple_expr, NONE, simple_exprleft, SUPERright))
 |       simple_expr DOT SUPER LBRACKET name RBRACKET
         (super_of st (simple_expr, SOME name, simple_exprleft, RBRACKETright))
@@ -1751,7 +1754,7 @@ infix_pattern:
                  simple_pattern,
                    ndi2 st (infix_patternleft, simple_patternright)))
 simple_pattern:
-        UNDERSCORE
+        UNDERSCORE %prec TYLOW
         (PWild (ndi2 st (UNDERSCOREleft, UNDERSCOREright)))
 |       UNDERSCORE STAR
         (PSplat (PWild (ndi2 st (UNDERSCOREleft, UNDERSCOREright)),
@@ -1986,7 +1989,7 @@ dparam:
         (Param (#1 dparam_pre, #2 dparam_pre, 0, SOME name, param_type,
                 opt_default, ndi2 st (dparam_preleft, opt_defaultright)))
 dparam_pre:
-        annotations_ne
+        annotations_ne %prec TYLOW
         ((annotations_ne, []))
 |       INLINE
         (([], [MInline]))
@@ -2030,7 +2033,7 @@ cparam:
                 param_type, opt_default,
                   ndi2 st (cparam_headleft, opt_defaultright)))
 cparam_head:
-        mods_ne
+        mods_ne %prec TYLOW
         ((#1 mods_ne, #2 mods_ne, 0))
 |       VAL
         (([], [], 1))
@@ -2096,7 +2099,7 @@ constr_apps:
 |       constr_apps WITH constr_app
         (constr_apps @ [constr_app])
 constr_app:
-        simple_type par_argss
+        simple_type par_argss %prec TYLOW
         (Parent (simple_type, map #1 par_argss, map #2 par_argss,
                  ndi2 st (simple_typeleft, par_argssright)))
 enum_case:
