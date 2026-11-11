@@ -2067,14 +2067,18 @@ opt_extends_parents:
         (constr_apps)
 template_body:
         LBRACE stat_seq RBRACE
-        (TemplateBody (NONE, stat_seq, ndi2 st (LBRACEleft, RBRACEright)))
+        (case stat_seq of
+           [SExpr (ELambda ([Binding (SOME nm, NONE, bni)],
+                            EBlock (rest, _), false, _))] =>
+             TemplateBody (SOME (Self (nm, NONE, bni)), rest,
+                           ndi2 st (LBRACEleft, RBRACEright))
+         | _ => TemplateBody (NONE, stat_seq,
+                              ndi2 st (LBRACEleft, RBRACEright)))
 |       LBRACE self_type stat_seq RBRACE
         (TemplateBody
          (SOME self_type, stat_seq, ndi2 st (LBRACEleft, RBRACEright)))
 self_type:
-        name ARROW
-        (Self (name, NONE, ndi2 st (nameleft, ARROWright)))
-|       name COLON infix_type ARROW
+        name COLON infix_type ARROW
         (Self (name, SOME infix_type, ndi2 st (nameleft, ARROWright)))
 |       THIS COLON infix_type ARROW
         (Self (mkid st ("this", THISleft, THISright), SOME infix_type,
