@@ -98,6 +98,11 @@ isabelle build -d MicroRust MicroRust            # all theories and tests
 isabelle build -d MicroRust MicroRust_Manual     # the manual: manual/output/document.pdf
 ```
 
+The manual is generated, not stored in the repository: building
+`MicroRust_Manual` writes it to `MicroRust/manual/output/document.pdf` (the
+`output` folders are git-ignored). Building the session with `-c` regenerates it
+from scratch.
+
 `MicroRust/ROOTS` makes the manual's sub-session visible to `-d MicroRust`. To
 work interactively, open a theory importing `MicroRust` with
 `isabelle jedit -d MicroRust -l MicroRust`.

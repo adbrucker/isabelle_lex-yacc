@@ -85,6 +85,10 @@ isabelle build -d scala3 Scala3            # all theories and tests
 isabelle build -d scala3 Scala3_Manual     # the manual: manual/output/document.pdf
 ```
 
+The manual is generated, not stored in the repository: building `Scala3_Manual`
+writes it to `scala3/manual/output/document.pdf` (the `output` folders
+are git-ignored). Building the session with `-c` regenerates it from scratch.
+
 `scala3/ROOTS` makes the manual's sub-session visible to `-d scala3`. To work
 interactively, open a theory importing `Scala3` with
 `isabelle jedit -d scala3 -l Scala3`.

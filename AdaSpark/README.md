@@ -92,6 +92,11 @@ isabelle build -d AdaSpark AdaSpark            # all theories and tests
 isabelle build -d AdaSpark AdaSpark_Manual     # the manual: manual/output/document.pdf
 ```
 
+The manual is generated, not stored in the repository: building
+`AdaSpark_Manual` writes it to `AdaSpark/manual/output/document.pdf` (the
+`output` folders are git-ignored). Building the session with `-c` regenerates it
+from scratch.
+
 `AdaSpark/ROOTS` makes the manual's sub-session visible to `-d AdaSpark`. To
 work interactively, open a theory importing `AdaSpark` with
 `isabelle jedit -d AdaSpark -l AdaSpark`.

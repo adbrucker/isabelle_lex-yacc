@@ -80,6 +80,10 @@ isabelle build -d occam2 Occam2            # all theories and tests
 isabelle build -d occam2 Occam2_Manual     # the manual: manual/output/document.pdf
 ```
 
+The manual is generated, not stored in the repository: building `Occam2_Manual`
+writes it to `occam2/manual/output/document.pdf` (the `output` folders
+are git-ignored). Building the session with `-c` regenerates it from scratch.
+
 `occam2/ROOTS` makes the manual's sub-session visible to `-d occam2`. To work
 interactively, open a theory importing `Occam2` with
 `isabelle jedit -d occam2 -l Occam2`.
