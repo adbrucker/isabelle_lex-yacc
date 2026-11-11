@@ -158,6 +158,47 @@ val _ = if is_infix_with "&&" (expr_of "a < b && c > d") then ()
   else error "&& binds weaker than <"
 \<close>
 
+subsection\<open>Soft keywords, modifiers and self types\<close>
+
+text\<open>
+  The words \<open>inline\<close>, \<open>open\<close>, \<open>infix\<close>, \<open>opaque\<close>, \<open>transparent\<close>,
+  \<open>extension\<close> and \<open>using\<close> are modifiers or names depending on context; a
+  modifier wins where both readings are possible. A template body that starts
+  with \<open>name =>\<close> has a self type, not a lambda statement.
+\<close>
+
+ML\<open>
+val _ = roundtrip ["object A {", "  def f(inline x: Int) = x", "}"]
+val _ = roundtrip ["class C(open x: Int)"]
+val _ = roundtrip ["object A {", "  @deprecated infix def f(x: Int) = x", "}"]
+val _ = roundtrip ["object A {", "  @deprecated open class B", "}"]
+val _ = roundtrip ["object A {", "  transparent inline def f = 1", "}"]
+val _ = roundtrip ["object A {", "  val open = 1", "  open + 1", "}"]
+val _ = roundtrip ["extension (x: Int) {", "  def foo = 1", "}"]
+val _ = roundtrip ["object A {", "  f(using 1)", "}"]
+val _ = roundtrip ["class C { self =>", "  def f = 1", "}"]
+val _ = roundtrip ["class C { self: Int =>", "  def f = 1", "}"]
+
+(* the first template body of a class, if the source is a single class *)
+fun template_body s =
+  (case parse_entry Scala3_Parse.Entry_Unit s of
+     SOME (Scala3_Ast.Unit
+           [Scala3_Ast.SDef (Scala3_Ast.DClass
+              (_, _, _, _, _, _, _,
+               Scala3_Ast.Template (_, _, SOME body, _), _))]) => body
+   | _ => error ("not a class with a body: " ^ s))
+
+val _ = (case template_body "class C { self => def f = 1 }" of
+           Scala3_Ast.TemplateBody (SOME (Scala3_Ast.Self _), [_], _) => ()
+         | _ => error "an untyped self type must be a Self, not a lambda")
+val _ = (case template_body "class C { self: Int => def f = 1 }" of
+           Scala3_Ast.TemplateBody (SOME (Scala3_Ast.Self _), [_], _) => ()
+         | _ => error "a typed self type must be a Self")
+val _ = (case template_body "class C { def f = 1 }" of
+           Scala3_Ast.TemplateBody (NONE, [_], _) => ()
+         | _ => error "no self type expected")
+\<close>
+
 subsection\<open>Rejected programs\<close>
 
 ML\<open>

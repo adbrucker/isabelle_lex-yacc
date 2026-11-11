@@ -988,6 +988,9 @@ yacc_definitions\<open>
       |        modifier of modifier
       |        mod_item of Position.T sAnnot list * modifier list
       |        mods_ne of Position.T sAnnot list * modifier list
+      |        cmodifier of modifier
+      |        cmod_item of Position.T sAnnot list * modifier list
+      |        cmods_ne of Position.T sAnnot list * modifier list
       |        expr of Position.T sExpr
       |        expr_nb of Position.T sExpr
       |        infix_expr of Position.T sExpr
@@ -1100,6 +1103,103 @@ opt_nl:
         (())
 |       NEWLINE
         (())
+modifier:
+        ABSTRACT
+        (MAbstract)
+|       FINAL
+        (MFinal)
+|       SEALED
+        (MSealed)
+|       IMPLICIT %prec TYLOW
+        (MImplicit)
+|       LAZY
+        (MLazy)
+|       OVERRIDE
+        (MOverride)
+|       OPEN
+        (MOpen)
+|       INLINE
+        (MInline)
+|       TRANSPARENT
+        (MTransparent)
+|       INFIX
+        (MInfix)
+|       OPAQUE
+        (MOpaque)
+|       PRIVATE
+        (MPrivate NONE)
+|       PROTECTED
+        (MProtected NONE)
+|       PRIVATE LBRACKET name RBRACKET
+        (MPrivate (SOME (ident_name name)))
+|       PROTECTED LBRACKET name RBRACKET
+        (MProtected (SOME (ident_name name)))
+|       PRIVATE LBRACKET THIS RBRACKET
+        (MPrivate (SOME "this"))
+|       PROTECTED LBRACKET THIS RBRACKET
+        (MProtected (SOME "this"))
+mod_item:
+        annotation opt_nl
+        (([annotation], []))
+|       modifier
+        (([], [modifier]))
+mods_ne:
+        mod_item
+        (mod_item)
+|       mods_ne mod_item
+        ((#1 mods_ne @ #1 mod_item, #2 mods_ne @ #2 mod_item))
+dparam_pre:
+        annotations_ne %prec TYLOW
+        ((annotations_ne, []))
+|       INLINE
+        (([], [MInline]))
+|       annotations_ne INLINE
+        ((annotations_ne, [MInline]))
+cmodifier:
+        ABSTRACT
+        (MAbstract)
+|       FINAL
+        (MFinal)
+|       SEALED
+        (MSealed)
+|       IMPLICIT %prec TYLOW
+        (MImplicit)
+|       LAZY
+        (MLazy)
+|       OVERRIDE
+        (MOverride)
+|       OPEN
+        (MOpen)
+|       INLINE
+        (MInline)
+|       TRANSPARENT
+        (MTransparent)
+|       INFIX
+        (MInfix)
+|       OPAQUE
+        (MOpaque)
+|       PRIVATE
+        (MPrivate NONE)
+|       PROTECTED
+        (MProtected NONE)
+|       PRIVATE LBRACKET name RBRACKET
+        (MPrivate (SOME (ident_name name)))
+|       PROTECTED LBRACKET name RBRACKET
+        (MProtected (SOME (ident_name name)))
+|       PRIVATE LBRACKET THIS RBRACKET
+        (MPrivate (SOME "this"))
+|       PROTECTED LBRACKET THIS RBRACKET
+        (MProtected (SOME "this"))
+cmod_item:
+        annotation opt_nl
+        (([annotation], []))
+|       cmodifier
+        (([], [cmodifier]))
+cmods_ne:
+        cmod_item
+        (cmod_item)
+|       cmods_ne cmod_item
+        ((#1 cmods_ne @ #1 cmod_item, #2 cmods_ne @ #2 cmod_item))
 name:
         IDENT
         (mkid st (IDENT, IDENTleft, IDENTright))
@@ -1386,51 +1486,6 @@ annotations_ne:
         ([annotation])
 |       annotations_ne annotation opt_nl
         (annotations_ne @ [annotation])
-modifier:
-        ABSTRACT
-        (MAbstract)
-|       FINAL
-        (MFinal)
-|       SEALED
-        (MSealed)
-|       IMPLICIT %prec TYLOW
-        (MImplicit)
-|       LAZY
-        (MLazy)
-|       OVERRIDE
-        (MOverride)
-|       OPEN
-        (MOpen)
-|       INLINE
-        (MInline)
-|       TRANSPARENT
-        (MTransparent)
-|       INFIX
-        (MInfix)
-|       OPAQUE
-        (MOpaque)
-|       PRIVATE
-        (MPrivate NONE)
-|       PROTECTED
-        (MProtected NONE)
-|       PRIVATE LBRACKET name RBRACKET
-        (MPrivate (SOME (ident_name name)))
-|       PROTECTED LBRACKET name RBRACKET
-        (MProtected (SOME (ident_name name)))
-|       PRIVATE LBRACKET THIS RBRACKET
-        (MPrivate (SOME "this"))
-|       PROTECTED LBRACKET THIS RBRACKET
-        (MProtected (SOME "this"))
-mod_item:
-        annotation opt_nl
-        (([annotation], []))
-|       modifier
-        (([], [modifier]))
-mods_ne:
-        mod_item
-        (mod_item)
-|       mods_ne mod_item
-        ((#1 mods_ne @ #1 mod_item, #2 mods_ne @ #2 mod_item))
 expr:
         lam_params expr
         (ELambda (#1 lam_params, expr, #2 lam_params,
@@ -1988,13 +2043,6 @@ dparam:
 |       dparam_pre name COLON param_type opt_default
         (Param (#1 dparam_pre, #2 dparam_pre, 0, SOME name, param_type,
                 opt_default, ndi2 st (dparam_preleft, opt_defaultright)))
-dparam_pre:
-        annotations_ne %prec TYLOW
-        ((annotations_ne, []))
-|       INLINE
-        (([], [MInline]))
-|       annotations_ne INLINE
-        ((annotations_ne, [MInline]))
 opt_default:
         
         (NONE)
@@ -2033,16 +2081,16 @@ cparam:
                 param_type, opt_default,
                   ndi2 st (cparam_headleft, opt_defaultright)))
 cparam_head:
-        mods_ne %prec TYLOW
-        ((#1 mods_ne, #2 mods_ne, 0))
+        cmods_ne %prec TYLOW
+        ((#1 cmods_ne, #2 cmods_ne, 0))
 |       VAL
         (([], [], 1))
 |       VAR
         (([], [], 2))
-|       mods_ne VAL
-        ((#1 mods_ne, #2 mods_ne, 1))
-|       mods_ne VAR
-        ((#1 mods_ne, #2 mods_ne, 2))
+|       cmods_ne VAL
+        ((#1 cmods_ne, #2 cmods_ne, 1))
+|       cmods_ne VAR
+        ((#1 cmods_ne, #2 cmods_ne, 2))
 class_def:
         name opt_tparams_clause opt_ctor_mods cparam_clauses opt_template
         ((fn kind => fn (l, an, ms) =>
