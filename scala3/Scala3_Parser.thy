@@ -900,6 +900,8 @@ yacc_definitions\<open>
 %arg (st) : Scala3_State.T
 %noshift EOF
 
+%nonassoc TYLOW
+%right ARROW CTXARROW
 %left MATCH
 %nonassoc LOWIF
 %nonassoc ELSE
@@ -914,6 +916,8 @@ yacc_definitions\<open>
 %left PLUS MINUS OPADD
 %left STAR OPMUL
 %left OPOTHER TILDE
+%right DOT LBRACKET HASH AT SUBTYPE
+%nonassoc LBRACE WITH
 
 %term
         IDENT of string | INT_LIT of string | FLOAT_LIT of string | CHAR_LIT
@@ -923,6 +927,7 @@ yacc_definitions\<open>
       | AS of string | EXTENSION of string | INFIX of string | INLINE of string
           | OPAQUE of string
       | OPEN of string | TRANSPARENT of string | USING of string
+      | TYLOW
       | PLUS of string | MINUS of string | STAR of string | BAR of string
           | BANG of string
       | TILDE of string | QMARK of string
@@ -1171,7 +1176,7 @@ literal:
 |       NULL
         (LNull (ndi2 st (NULLleft, NULLright)))
 typ:
-        infix_type
+        infix_type %prec TYLOW
         (infix_type)
 |       infix_type ARROW typ
         (mk_fun st (false, infix_type, typ, infix_typeleft, typright))
@@ -1194,7 +1199,7 @@ type_case:
 |       CASE UNDERSCORE ARROW typ opt_semis
         (TypeCase (NONE, typ, ndi2 st (CASEleft, typright)))
 infix_type:
-        refined_type
+        refined_type %prec TYLOW
         (refined_type)
 |       infix_type IDENT opt_nl refined_type
         (TInfix (infix_type, mkid st (IDENT, IDENTleft, IDENTright),
@@ -1239,16 +1244,16 @@ infix_type:
         (TInfix (infix_type, mkid st (OPOTHER, OPOTHERleft, OPOTHERright),
                  refined_type, ndi2 st (infix_typeleft, refined_typeright)))
 refined_type:
-        annot_type
+        annot_type %prec TYLOW
         (annot_type)
 |       refined_type LBRACE stat_seq RBRACE
         (TRefine (SOME refined_type, stat_seq,
                   ndi2 st (refined_typeleft, RBRACEright)))
-|       refined_type WITH annot_type
+|       refined_type WITH annot_type %prec TYLOW
         (TWith (refined_type, annot_type,
                 ndi2 st (refined_typeleft, annot_typeright)))
 annot_type:
-        simple_type
+        simple_type %prec TYLOW
         (simple_type)
 |       annot_type annotation
         ((case annot_type of TAnnot (t, anns, ni) =>
@@ -1318,9 +1323,9 @@ param_type:
         (TByName (TRepeated (typ, ndi2 st (typleft, STARright)),
                   ndi2 st (ARROWleft, STARright)))
 opt_bounds:
-        
+        %prec TYLOW
         (Bounds (NONE, NONE))
-|       SUPERTYPE typ
+|       SUPERTYPE typ %prec TYLOW
         (Bounds (SOME typ, NONE))
 |       SUBTYPE typ
         (Bounds (NONE, SOME typ))
@@ -1636,7 +1641,7 @@ par_args:
 |       LPAREN USING exprs_in_parens RPAREN
         ((map to_arg exprs_in_parens, true))
 par_argss:
-        
+        %prec TYLOW
         ([])
 |       par_argss par_args
         (par_argss @ [par_args])
