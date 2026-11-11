@@ -1,24 +1,25 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay 2026
  *
  * Authors: Burkhart Wolff, Claude Sonnet 5.5
  *
- * This is an LLM-generated replication of the Isabelle/C version 2 design
- * to the programming language C11. It provides an efficient parser for C11,
- * deeply integrated into the Isabelle/PIDE document model, allowing external
- * files as well as in-theory code-snippets which are transparent to the underlying
+ * This is an LLM-generated replication of the Isabelle/C version 2 design to
+ * the programming language C11. It provides an efficient parser for C11, deeply
+ * integrated into the Isabelle/PIDE document model, allowing external files as
+ * well as in-theory code-snippets which are transparent to the underlying
  * theory. It provides an API for the generated AST’s, and an API to hook up
- * semantic backends that compile these AST’s to theory extensions in Isabelle/HOL.
- * Members of the family come with a C11-specific antiquotation mechanism
- * allowing programmable links to the semantic backends as necessary for
- * support of program-annotations with HOL formulas.
+ * semantic backends that compile these AST’s to theory extensions in
+ * Isabelle/HOL. Members of the family come with a C11-specific antiquotation
+ * mechanism allowing programmable links to the semantic backends as necessary
+ * for support of program-annotations with HOL formulas.
  *
- * This session is part of the Isabelle Programming Language Toolkit (Isabelle/PLTk).
- * The generation has been done with Claude Sonnet 5.5; while the replicants come
- * with a detailed (generated) test-suite for C11, I expect that human users might find
- * errors or inconsistencies; experience reports and comments are therefore welcomed.
- * The concrete and abstract syntax, being generated from Isabelle/LexYacc specifications,
- * should be easy to modify and adapt.
+ * This session is part of the Isabelle Programming Language Toolkit
+ * (Isabelle/PLTk). The generation has been done with Claude Sonnet 5.5; while
+ * the replicants come with a detailed (generated) test-suite for C11, I expect
+ * that human users might find errors or inconsistencies; experience reports and
+ * comments are therefore welcomed. The concrete and abstract syntax, being
+ * generated from Isabelle/LexYacc specifications, should be easy to modify and
+ * adapt.
  *
  * All rights reserved.
  *
@@ -33,23 +34,25 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 theory C11
   imports  "C11_Parser" "C11_AnaEval"
   keywords "c11" "c11_ident" "c11_expr" "c11_statement" "c11_predef" :: thy_decl
   and      "c11_file" :: thy_load
-  and      "c11_reject" "c11_ident_reject" "c11_expr_reject" "c11_statement_reject" :: diag
+  and      "c11_reject" "c11_ident_reject" "c11_expr_reject"
+    "c11_statement_reject" :: diag
   and      "set_cenv_default" "reset_cenv" :: thy_decl
   and      "setup_backend" :: thy_decl
   and      "c11_export_h" "c11_export_c" :: thy_decl
@@ -57,49 +60,53 @@ theory C11
 begin
 
 text\<open>
-  This theory implements the ANSI C11 grammar as a ml-lex/ml-yacc lexer/parser pair,
-  ported from the reference grammar published at 
+  This theory implements the ANSI C11 grammar as a ml-lex/ml-yacc lexer/parser
+  pair, ported from the reference grammar published at
   \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-y.html\<close> (Yacc) and
-  \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011 ISO C
-  standard. Semantic actions build a real abstract syntax tree, defined in
-  \<^verbatim>\<open>c11_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST) and
-  instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
-  \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which carries
-  not just a position but also, where present, the source comments and \<open>@tag \<open>...\<close>\<close>
-  antiquotations attached to that node (see \<^verbatim>\<open>C11_Comments\<close>, below, and the
-  \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c11_ast.ML\<close> itself). The grammar's
-  own start symbol accepts a bare identifier, a standalone expression, a standalone
-  statement, or a whole translation unit, wrapping whichever one actually matched into
-  \<^verbatim>\<open>c_ast_root\<close>'s \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close> case respectively - a bare identifier
-  resolves to \<open>Id\<close>, not to the (also grammatically valid) one-token \<open>Expr\<close> reading, since
-  \<open>start_rule\<close> lists the \<open>IDENTIFIER\<close> alternative first and ml-yacc's reduce/reduce
-  conflict resolution favours the earlier-declared rule. A handful of deliberate,
-  documented simplifications keep this a tractable single pass rather than a full
-  semantic C front-end: array-declarator type-qualifier lists are dropped (\<^verbatim>\<open>cArraySize\<close>
-  has no room for them); a parenthesized declarator that itself has a pointer prefix
-  \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully correct
-  suffix-binding precedence (the classic C "declarator inversion" problem, needing a
-  genuine closure-based rewrite to solve properly); \<open>_Imaginary\<close> maps onto the same
-  \<open>CComplexType0\<close> as \<open>_Complex\<close>, since \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from
-  language-c - has no separate case for it; and a small fragment of the C preprocessor is
-  recognized directly and kept as genuine AST nodes rather than being silently discarded -
-  see the dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
-  how \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them. Constant-literal
-  parsing (integer bases/suffixes, character/string escapes) is similarly modest rather
-  than exhaustive; see the comments on \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close>
-  below. Following the reference grammar's own note, identifiers are never lexed as
-  \<open>TYPEDEF_NAME\<close> or
-  \<open>ENUMERATION_CONSTANT\<close> (which would require a symbol table); these tokens remain
-  part of the grammar, but are only ever produced were a symbol table to be added later.
-  The grammar has two known shift/reduce conflicts (the dangling \<open>ELSE\<close> and the
-  \<open>ATOMIC\<close>/\<open>type_name\<close> ambiguity), both correctly resolved by ml-yacc's default
-  shift preference, exactly as documented for the reference grammar.
+  \<^verbatim>\<open>https://www.quut.com/c/ANSI-C-grammar-l-2011.html\<close> (Lex), based on the 2011
+  ISO C standard. Semantic actions build a real abstract syntax tree, defined in
+  \<^verbatim>\<open>c11_ast.ML\<close> (a hand-pruned port of the \<^verbatim>\<open>Isabelle_C\<close> AFP entry's own C11 AST)
+  and instantiated here with \<^verbatim>\<open>Position.T\<close> as the position/annotation type: every
+  \<^verbatim>\<open>cXxx\<close> constructor's own trailing field is a \<^verbatim>\<open>Position.T nodeInfo\<close>, which
+  carries not just a position but also, where present, the source comments and
+  \<open>@tag \<open>...\<close>\<close> antiquotations attached to that node (see \<^verbatim>\<open>C11_Comments\<close>, below,
+  and the \<^verbatim>\<open>merge_nodeInfo\<close>/\<^verbatim>\<open>nodeInfo_of_CXxx\<close> family in \<^verbatim>\<open>c11_ast.ML\<close> itself).
+  The grammar's own start symbol accepts a bare identifier, a standalone
+  expression, a standalone statement, or a whole translation unit, wrapping
+  whichever one actually matched into \<^verbatim>\<open>c_ast_root\<close>'s \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close>
+  case respectively - a bare identifier resolves to \<open>Id\<close>, not to the (also
+  grammatically valid) one-token \<open>Expr\<close> reading, since \<open>start_rule\<close> lists the
+  \<open>IDENTIFIER\<close> alternative first and ml-yacc's reduce/reduce conflict resolution
+  favours the earlier-declared rule. A handful of deliberate, documented
+  simplifications keep this a tractable single pass rather than a full semantic
+  C front-end: array-declarator type-qualifier lists are dropped (\<^verbatim>\<open>cArraySize\<close>
+  has no room for them); a parenthesized declarator that itself has a pointer
+  prefix \<^emph>\<open>and\<close> further suffixes attached outside the parens does not get fully
+  correct suffix-binding precedence (the classic C "declarator inversion"
+  problem, needing a genuine closure-based rewrite to solve properly);
+  \<open>_Imaginary\<close> maps onto the same \<open>CComplexType0\<close> as \<open>_Complex\<close>, since
+  \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cTypeSpecifier\<close> - inherited from language-c - has no separate
+  case for it; and a small fragment of the C preprocessor is recognized directly
+  and kept as genuine AST nodes rather than being silently discarded - see the
+  dedicated paragraph on \<open>preproc_directive\<close> below for exactly which forms and
+  how \<^verbatim>\<open>c11_ast.ML\<close>'s \<open>cPreprocDirective\<close>/\<open>CPPExt0\<close> represent them.
+  Constant-literal parsing (integer bases/suffixes, character/string escapes) is
+  similarly modest rather than exhaustive; see the comments on
+  \<open>parse_c_integer\<close>/\<open>parse_c_char\<close>/\<open>unescape_c\<close> below. Following the reference
+  grammar's own note, identifiers are never lexed as \<open>TYPEDEF_NAME\<close> or
+  \<open>ENUMERATION_CONSTANT\<close> (which would require a symbol table); these tokens
+  remain part of the grammar, but are only ever produced were a symbol table to
+  be added later. The grammar has two known shift/reduce conflicts (the dangling
+  \<open>ELSE\<close> and the \<open>ATOMIC\<close>/\<open>type_name\<close> ambiguity), both correctly resolved by
+  ml-yacc's default shift preference, exactly as documented for the reference
+  grammar.
 
-  As a departure from the reference grammar (which assumes translation phases 1..5,
-  including preprocessing, have already run), this theory additionally recognizes a
-  small fragment of the C preprocessor directly (ISO C11 6.10, Annex A.3), kept as
-  genuine \<open>preproc_directive\<close> syntax tree nodes usable wherever an external
-  declaration may appear, rather than being silently discarded like a comment:
+  As a departure from the reference grammar (which assumes translation phases
+  1..5, including preprocessing, have already run), this theory additionally
+  recognizes a small fragment of the C preprocessor directly (ISO C11 6.10,
+  Annex A.3), kept as genuine \<open>preproc_directive\<close> syntax tree nodes usable
+  wherever an external declaration may appear, rather than being silently
+  discarded like a comment:
 
   \<^item> \<open>#include <file>\<close> and \<open>#include "file"\<close>. The lexer switches into a dedicated
     \<open>INCLUDE\<close> start state right after \<open>#include\<close> so that the header name's \<open>< >\<close>
@@ -116,102 +123,109 @@ text\<open>
     lookahead could not - but with a syntactic constant expression as the
     replacement body rather than an arbitrary preprocessing-token sequence.
   \<^item> \<open>#ifdef name \<dots> #endif\<close>, \<open>#ifndef name \<dots> #endif\<close>, and their \<open>#else\<close> variants,
-    bracketing a (possibly empty) sequence of external declarations. Since \<open>#else\<close>
-    would otherwise clash with the \<open>ELSE\<close> keyword of \<open>if\<dots>else\<close>, it is lexed as the
-    separate token \<open>PP_ELSE\<close>.
+    bracketing a (possibly empty) sequence of external declarations. Since
+    \<open>#else\<close> would otherwise clash with the \<open>ELSE\<close> keyword of \<open>if\<dots>else\<close>, it is
+    lexed as the separate token \<open>PP_ELSE\<close>.
 
   This fragment is purely syntactic, not a real preprocessor: \<open>#define\<close> does not
-  perform macro expansion, and \<open>#ifdef\<close>/\<open>#ifndef\<close> do not consult a macro-definition
-  table to decide which branch is live: \<^emph>\<open>both\<close> branches must simply be
-  syntactically well-formed. \<open>#include\<close> is the one exception: since \<open>c11_predef\<close>
-  (below), it has the one further semantics of applying whichever header effect
-  was registered under that exact name (\<^verbatim>\<open>CEnv.predefined_envs\<close>) to \<open>cenv\<close> at
-  that point - still a no-op, as before, for any header \<open>c11_predef\<close> never
-  declared anywhere in scope.
+  perform macro expansion, and \<open>#ifdef\<close>/\<open>#ifndef\<close> do not consult a
+  macro-definition table to decide which branch is live: \<^emph>\<open>both\<close> branches must
+  simply be syntactically well-formed. \<open>#include\<close> is the one exception: since
+  \<open>c11_predef\<close> (below), it has the one further semantics of applying whichever
+  header effect was registered under that exact name (\<^verbatim>\<open>CEnv.predefined_envs\<close>) to
+  \<open>cenv\<close> at that point - still a no-op, as before, for any header \<open>c11_predef\<close>
+  never declared anywhere in scope.
 \<close>
 
 section\<open>Relation to Isabelle/C (AFP)\<close>
 
 text\<open>
-  This theory is a small-scale, from-scratch re-design to the
-  \<^verbatim>\<open>Isabelle_C\<close> AFP entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
+  This theory is a small-scale, from-scratch re-design to the \<^verbatim>\<open>Isabelle_C\<close> AFP
+  entry (Tuong and Wolff, \<^url>\<open>https://www.isa-afp.org/entries/Isabelle_C.html\<close>),
   which provides a full C11/C18 front-end for Isabelle built around its \<^emph>\<open>own\<close>
   hand-written, PIDE-integrated incremental lexer/parser (\<^verbatim>\<open>C_Lex\<close>, \<^verbatim>\<open>C_Parser\<close>,
-  \<^verbatim>\<open>C_Grammar_Rule\<close>, \<open>\<dots>\<close>). This theory deliberately does \<^emph>\<open>not\<close> depend on \<^verbatim>\<open>Isabelle_C\<close>
-  or its machinery; the point is to see how far the same \<^emph>\<open>user-facing shape\<close> can be
-  reproduced on top of the generic, off-the-shelf \<^verbatim>\<open>ml_lex_yacc\<close> command of this
-  \<^verbatim>\<open>Isabelle_Lex-Yacc\<close> framework instead - i.e. plain ml-lex/ml-yacc, not a bespoke
-  parser combinator. Three aspects of \<^verbatim>\<open>Isabelle_C\<close>'s interface are mirrored here, each
-  necessarily only a syntactic sliver of the original:
+  \<^verbatim>\<open>C_Grammar_Rule\<close>, \<open>\<dots>\<close>). This theory deliberately does \<^emph>\<open>not\<close> depend on
+  \<^verbatim>\<open>Isabelle_C\<close> or its machinery; the point is to see how far the same
+  \<^emph>\<open>user-facing shape\<close> can be reproduced on top of the generic, off-the-shelf
+  \<^verbatim>\<open>ml_lex_yacc\<close> command of this \<^verbatim>\<open>Isabelle_Lex-Yacc\<close> framework instead - i.e.
+  plain ml-lex/ml-yacc, not a bespoke parser combinator. Three aspects of
+  \<^verbatim>\<open>Isabelle_C\<close>'s interface are mirrored here, each necessarily only a syntactic
+  sliver of the original:
 
-  \<^enum> \<^bold>\<open>Inline and file-based entry points.\<close> \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C \<open>...\<close>\<close> command (inline
-    source) and \<^verbatim>\<open>C_file \<open>path\<close>\<close> command (external \<open>.c\<close> file, read relative to the
-    theory's master directory) correspond here to \<open>c11 \<open>...\<close>\<close> and \<open>c11_file \<open>path\<close>\<close>
-    below - the latter built directly on \<^verbatim>\<open>Resources.parse_file\<close> /
-    \<^verbatim>\<open>Token.file_source\<close>, the same Isabelle/Pure machinery used by the built-in
-    \<^verbatim>\<open>ML_file\<close>/\<^verbatim>\<open>SML_file\<close> commands, so that file positions and build-dependency
-    tracking come for free.
+  \<^enum> \<^bold>\<open>Inline and file-based entry points.\<close> \<^verbatim>\<open>Isabelle_C\<close>'s \<^verbatim>\<open>C \<open>...\<close>\<close> command
+    (inline source) and \<^verbatim>\<open>C_file \<open>path\<close>\<close> command (external \<open>.c\<close> file, read
+    relative to the theory's master directory) correspond here to \<open>c11 \<open>...\<close>\<close>
+    and \<open>c11_file \<open>path\<close>\<close> below - the latter built directly on
+    \<^verbatim>\<open>Resources.parse_file\<close> / \<^verbatim>\<open>Token.file_source\<close>, the same Isabelle/Pure
+    machinery used by the built-in \<^verbatim>\<open>ML_file\<close>/\<^verbatim>\<open>SML_file\<close> commands, so that file
+    positions and build-dependency tracking come for free.
   \<^enum> \<^bold>\<open>Antiquotation-carrying comments.\<close> \<^verbatim>\<open>Isabelle_C\<close> lets \<open>/*@ \<dots> */\<close> and \<open>//@ \<dots>\<close>
     comments carry Isar-level \<^emph>\<open>annotation commands\<close> (\<open>ensures\<close>, \<open>invariant\<close>, a
-    user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax tree
-    and executed as the file is processed. Here, the lexer instead \<^emph>\<open>lexically\<close>
-    recognizes the shape \<open>@tag(level) \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag, an optional
-    parenthesized integer \<open>level\<close> (\<open>0\<close> when omitted, e.g. plain \<open>@tag \<open>...\<close>\<close>),
-    optionally followed by whitespace, and a body - either a properly-nested Isabelle
-    cartouche \<open>\<open>\<dots>\<close>\<close> or, as an equivalent alternative notation, a double-quoted
-    string \<open>"\<dots>"\<close> - reporting both as PIDE markup (\<^ML>\<open>Markup.antiquote\<close> /
-    \<^ML>\<open>Markup.cartouche\<close> for the cartouche spelling, \<^ML>\<open>Markup.antiquote\<close> alone
-    for the tag+string spelling since it is matched as a single token) instead of
-    discarding them as opaque comment text. Nothing is \<^emph>\<open>executed\<close>: this recognizer
-    has no notion of an annotation command language, only of where one \<^emph>\<open>could\<close> be
-    hooked in later. Since a cartouche can nest, recognizing it needs more than one
-    regular-expression rule and a small amount of \<^verbatim>\<open>lex_user_declarations\<close> state (a
-    depth counter); see the \<open>ANTIQ\<close> lexer state below for how that turns into a
-    well-defined \<^emph>\<open>non-expert-mode\<close> ml-lex specification - no \<open>[expert]\<close> switch
-    turned out to be necessary after all. A double-quoted body, by contrast, cannot
-    nest, so \<open>@tag(level) "..."\<close> is matched by a single, longer regular-expression
+    user-registered \<open>setup \<open>...\<close>\<close>, \<open>\<dots>\<close>), spliced into the surrounding C syntax
+    tree and executed as the file is processed. Here, the lexer instead
+    \<^emph>\<open>lexically\<close> recognizes the shape \<open>@tag(level) \<open>...\<close>\<close> - an \<open>@\<close>-prefixed tag,
+    an optional parenthesized integer \<open>level\<close> (\<open>0\<close> when omitted, e.g. plain
+    \<open>@tag \<open>...\<close>\<close>), optionally followed by whitespace, and a body - either a
+    properly-nested Isabelle cartouche \<open>\<open>\<dots>\<close>\<close> or, as an equivalent alternative
+    notation, a double-quoted string \<open>"\<dots>"\<close> - reporting both as PIDE markup
+    (\<^ML>\<open>Markup.antiquote\<close> / \<^ML>\<open>Markup.cartouche\<close> for the cartouche spelling,
+    \<^ML>\<open>Markup.antiquote\<close> alone for the tag+string spelling since it is matched as
+    a single token) instead of discarding them as opaque comment text. Nothing
+    is \<^emph>\<open>executed\<close>: this recognizer has no notion of an annotation command
+    language, only of where one \<^emph>\<open>could\<close> be hooked in later. Since a cartouche
+    can nest, recognizing it needs more than one regular-expression rule and a
+    small amount of \<^verbatim>\<open>lex_user_declarations\<close> state (a depth counter); see the
+    \<open>ANTIQ\<close> lexer state below for how that turns into a well-defined
+    \<^emph>\<open>non-expert-mode\<close> ml-lex specification - no \<open>[expert]\<close> switch turned out to
+    be necessary after all. A double-quoted body, by contrast, cannot nest, so
+    \<open>@tag(level) "..."\<close> is matched by a single, longer regular-expression
     alternative competing with the plain \<open>@tag(level)\<close> one for the same input -
-    ml-lex's usual longest-match rule then picks the string-body alternative whenever
-    a quote genuinely follows the tag (with only horizontal whitespace in between,
-    never across other text or a newline), and falls back to the plain, bodyless tag
-    match otherwise; this is what keeps an unrelated \<open>"\<close> elsewhere in a comment (an
-    apostrophe-free quotation, say) from ever being mistaken for an antiquotation
-    body - unlike the cartouche form, which (see below) is recognized whenever it
-    occurs in a comment, tag or no tag. Comments and antiquotations are, beyond that
-    markup, now also genuinely
-    \<^emph>\<open>registered\<close>: \<^verbatim>\<open>C11_Comments\<close> (defined just above the lexer/parser definition,
-    \<^verbatim>\<open>SML_import\<close>ed into the lex/yacc sandbox the same way \<^verbatim>\<open>YaccLib.thy\<close> already
-    does for \<^verbatim>\<open>Position\<close>/\<open>Markup\<close>) accumulates raw text and antiquotation fragments as
-    the lexer scans them and attaches each batch to whichever real token follows, so
-    the grammar can fold them into that token's \<^verbatim>\<open>nodeInfo\<close> once it decides which AST
-    node owns them - see the fuller rationale on \<^verbatim>\<open>C11_Comments\<close> itself for why
-    attachment happens at the token's own lex time rather than at the point some later
-    LALR(1) reduction gets around to it. Recognizing a genuine nested cartouche this way
-    surfaced a latent, previously invisible bug in \<open>OPENCART\<close>/\<open>CLOSECART\<close> themselves.
-    Isabelle's cartouche-open and cartouche-close symbols are each spelled, in the raw
-    source text ml-lex's generated scanner actually reads character by character, as a
-    literal backslash followed by an angle-bracketed name - seven and eight raw
-    characters respectively, not one special codepoint. As a plain ml-lex regular
-    expression this needs \<^emph>\<open>three\<close> backslashes, not one: one escaped pair to match
-    that leading literal backslash, and a second escaped pair for the angle bracket right
-    after it, since a bare, unescaped angle bracket is ml-lex's own syntax for a start-state
-    prefix (as in the \<open><INITIAL>\<close> seen throughout the rules below) rather than a literal
-    character - the letters of the symbol's name and its closing angle bracket need no
-    escaping of their own. With only one backslash, as the original definitions had it, the
-    pattern silently compiled to matching the six-character angle-bracketed name alone,
-    missing its leading backslash - invisible before now because the antiquotation content
-    it should have captured was simply discarded either way.
+    ml-lex's usual longest-match rule then picks the string-body alternative
+    whenever a quote genuinely follows the tag (with only horizontal whitespace
+    in between, never across other text or a newline), and falls back to the
+    plain, bodyless tag match otherwise; this is what keeps an unrelated \<open>"\<close>
+    elsewhere in a comment (an apostrophe-free quotation, say) from ever being
+    mistaken for an antiquotation body - unlike the cartouche form, which (see
+    below) is recognized whenever it occurs in a comment, tag or no tag.
+    Comments and antiquotations are, beyond that markup, now also genuinely
+    \<^emph>\<open>registered\<close>: \<^verbatim>\<open>C11_Comments\<close> (defined just above the lexer/parser
+    definition, \<^verbatim>\<open>SML_import\<close>ed into the lex/yacc sandbox the same way
+    \<^verbatim>\<open>YaccLib.thy\<close> already does for \<^verbatim>\<open>Position\<close>/\<open>Markup\<close>) accumulates raw text and
+    antiquotation fragments as the lexer scans them and attaches each batch to
+    whichever real token follows, so the grammar can fold them into that token's
+    \<^verbatim>\<open>nodeInfo\<close> once it decides which AST node owns them - see the fuller
+    rationale on \<^verbatim>\<open>C11_Comments\<close> itself for why attachment happens at the token's
+    own lex time rather than at the point some later LALR(1) reduction gets
+    around to it. Recognizing a genuine nested cartouche this way surfaced a
+    latent, previously invisible bug in \<open>OPENCART\<close>/\<open>CLOSECART\<close> themselves.
+    Isabelle's cartouche-open and cartouche-close symbols are each spelled, in
+    the raw source text ml-lex's generated scanner actually reads character by
+    character, as a literal backslash followed by an angle-bracketed name -
+    seven and eight raw characters respectively, not one special codepoint. As a
+    plain ml-lex regular expression this needs \<^emph>\<open>three\<close> backslashes, not one: one
+    escaped pair to match that leading literal backslash, and a second escaped
+    pair for the angle bracket right after it, since a bare, unescaped angle
+    bracket is ml-lex's own syntax for a start-state prefix (as in the
+    \<open><INITIAL>\<close> seen throughout the rules below) rather than a literal character
+    - the letters of the symbol's name and its closing angle bracket need no
+    escaping of their own. With only one backslash, as the original definitions
+    had it, the pattern silently compiled to matching the six-character
+    angle-bracketed name alone, missing its leading backslash - invisible before
+    now because the antiquotation content it should have captured was simply
+    discarded either way.
   \<^enum> \<^bold>\<open>The lexer test suite.\<close> \<^verbatim>\<open>Isabelle_C\<close>'s own lexer/parser stress tests live in
     \<^verbatim>\<open>C11-FrontEnd/examples/C0.thy\<close> (obfuscated/adversarial C, comment nesting,
-    preprocessor directives, and a battery of real-world \<open>.c\<close> files borrowed from the
-    \<^verbatim>\<open>parser_menhir\<close> C11 conformance suite) and \<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close> (AST
-    access and the annotation-command examples referenced above). The test sections
-    in \<^verbatim>\<open>C11_Tests.thy\<close> adapt what is in scope for a bare recognizer without a symbol table
-    or macro expansion from both files - comment nesting, the \<open>@tag \<open>...\<close>\<close> examples,
-    and (where the underlying \<open>.c\<close> files are locally available) \<open>c11_file\<close> on a
-    handful of \<^verbatim>\<open>parser_menhir\<close> tests - while using \<open>c11_reject\<close> to document,
-    rather than silently skip, the constructs that fall outside this fragment's scope
-    (real \<open>#define\<close>/\<open>#if\<close>/\<open>#elif\<close>, backslash-newline splicing, \<open>_Pragma\<close>).
+    preprocessor directives, and a battery of real-world \<open>.c\<close> files borrowed
+    from the \<^verbatim>\<open>parser_menhir\<close> C11 conformance suite) and
+    \<^verbatim>\<open>C11-FrontEnd/examples/C1.thy\<close> (AST access and the annotation-command
+    examples referenced above). The test sections in \<^verbatim>\<open>C11_Tests.thy\<close> adapt what
+    is in scope for a bare recognizer without a symbol table or macro expansion
+    from both files - comment nesting, the \<open>@tag \<open>...\<close>\<close> examples, and (where the
+    underlying \<open>.c\<close> files are locally available) \<open>c11_file\<close> on a handful of
+    \<^verbatim>\<open>parser_menhir\<close> tests - while using \<open>c11_reject\<close> to document, rather than
+    silently skip, the constructs that fall outside this fragment's scope (real
+    \<open>#define\<close>/\<open>#if\<close>/\<open>#elif\<close>, backslash-newline splicing, \<open>_Pragma\<close>).
+
 \<close>
 
 subsection\<open>Defining the Isar-toplevel Commands\<close>
@@ -221,29 +235,29 @@ text\<open>
   \<open>start_rule\<close> can produce any of \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>/\<open>Units\<close>), each simply
   \<^emph>\<open>gating\<close> on the shape it wants rather than having its own grammar entry point:
   \<open>c11\<close>/\<open>c11_file\<close> are reserved for a whole translation unit (\<open>Units\<close>) and error
-  if the input parses as anything else, while \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close>
-  each similarly require \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>. Every successful parse is stored into
-  \<^verbatim>\<open>CEnv\<close>'s AST store (\<^verbatim>\<open>CEnv.Ast_Store\<close>, in its own \<^verbatim>\<open>C11_Env.thy\<close>, imported
-  here transitively via \<^verbatim>\<open>C11_AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close>
-  key - \<^verbatim>\<open>open CEnv\<close> below makes \<open>store_root\<close>/\<open>get_ast\<close>/\<open>\<dots>\<close> usable unqualified
-  throughout the rest of this theory. \<open>AnaEval.analyse_and_eval\<close> also runs on
-  every successful parse, \<open>c11\<close> included, but only \<open>c11\<close>/\<open>c11_file\<close>'s own
-  antiquotation actions are actually chained onto the stored theory
-  (\<open>full_eval_and_store\<close>, called directly by \<open>run_c11\<close>/\<open>run_c11_file\<close>, not by
-  \<open>run_c11_kind\<close>): \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> (\<open>run_c11_kind\<close>'s
-  own remaining callers) are syntax-checks on a single fragment, not a
-  compilation unit, so \<open>analyse_and_eval\<close> is run there purely for its
-  \<^emph>\<open>side effect\<close> - the declaration/use hyperlinking reported via
-  \<^ML>\<open>Position.report\<close> during the walk - and its returned theory and
-  antiquotation actions are deliberately discarded rather than persisted.
-  Each accepting command has a \<open>_reject\<close>
-  counterpart (\<open>c11_reject\<close> - pre-existing, kept general-purpose across
-  all four shapes - and the three new \<open>c11_ident_reject\<close>/\<open>c11_expr_reject\<close>/
+  if the input parses as anything else, while
+  \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> each similarly require
+  \<open>Id\<close>/\<open>Expr\<close>/\<open>Stmt\<close>. Every successful parse is stored into \<^verbatim>\<open>CEnv\<close>'s AST store
+  (\<^verbatim>\<open>CEnv.Ast_Store\<close>, in its own \<^verbatim>\<open>C11_Env.thy\<close>, imported here transitively via
+  \<^verbatim>\<open>C11_AnaEval.thy\<close>) under a fresh, per-theory \<open>store_root\<close> key - \<^verbatim>\<open>open CEnv\<close>
+  below makes \<open>store_root\<close>/\<open>get_ast\<close>/\<open>\<dots>\<close> usable unqualified throughout the rest
+  of this theory. \<open>AnaEval.analyse_and_eval\<close> also runs on every successful
+  parse, \<open>c11\<close> included, but only \<open>c11\<close>/\<open>c11_file\<close>'s own antiquotation actions
+  are actually chained onto the stored theory (\<open>full_eval_and_store\<close>, called
+  directly by \<open>run_c11\<close>/\<open>run_c11_file\<close>, not by \<open>run_c11_kind\<close>):
+  \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> (\<open>run_c11_kind\<close>'s own remaining
+  callers) are syntax-checks on a single fragment, not a compilation unit, so
+  \<open>analyse_and_eval\<close> is run there purely for its \<^emph>\<open>side effect\<close> - the
+  declaration/use hyperlinking reported via \<^ML>\<open>Position.report\<close> during the walk -
+  and its returned theory and antiquotation actions are deliberately discarded
+  rather than persisted. Each accepting command has a \<open>_reject\<close> counterpart
+  (\<open>c11_reject\<close> - pre-existing, kept general-purpose across all four shapes -
+  and the three new \<open>c11_ident_reject\<close>/\<open>c11_expr_reject\<close>/
   \<open>c11_statement_reject\<close>) that documents a fragment as correctly \<^emph>\<open>not\<close> that
   shape: either a genuine parse failure, or a successful parse of the \<^emph>\<open>wrong\<close>
-  shape - both count as "rejected" for that command's purposes, since the command's
-  contract is "this fragment is a valid \<open>X\<close>", not merely "this fragment parses
-  somehow". Reject variants never touch the AST store.
+  shape - both count as "rejected" for that command's purposes, since the
+  command's contract is "this fragment is a valid \<open>X\<close>", not merely "this
+  fragment parses somehow". Reject variants never touch the AST store.
 \<close>
 ML\<open>
 local open CEnv in
@@ -276,10 +290,10 @@ fun require_kind check kind_name cmd_name root =
   else error (cmd_name ^ " is reserved for a " ^ kind_name ^
               "; this input parses instead as a " ^ classify root ^ ".")
 
-(* Shared by every accepting command: parse, gate on the expected shape,
-   store under a fresh CEnv.Ast_Store key, and report both. (The comments a parse
-   collects live in that parse's own state object, see C11_Parser.thy, so nothing
-   has to be cleared between parses.)
+(* Shared by every accepting command: parse, gate on the expected shape, store
+   under a fresh CEnv.Ast_Store key, and report both. (The comments a parse
+   collects live in that parse's own state object, see C11_Parser.thy, so
+   nothing has to be cleared between parses.)
 
    "full_eval" distinguishes "c11" (a whole translation unit, i.e. genuinely a
    compilation unit) from "c11_ident"/"c11_expr"/"c11_statement" (a syntax
@@ -336,8 +350,10 @@ fun require_kind check kind_name cmd_name root =
 fun full_eval_and_store root text thy =
     let
       val (thy', antiq_evals) = AnaEval.analyse_and_eval root thy
-      val sorted_evals = sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
-      val context_for_store = fold (fn (_, f) => f) sorted_evals (Context.Theory thy')
+      val sorted_evals =
+        sort (fn ((l1, _), (l2, _)) => Int.compare (l1, l2)) antiq_evals
+      val context_for_store =
+        fold (fn (_, f) => f) sorted_evals (Context.Theory thy')
       val thy_for_store = Context.theory_of context_for_store
       val (key, thy'') = store_root root text thy_for_store
       val _ = writeln (string_of_root root ^ "  [stored as " ^ key ^ "]")
@@ -383,25 +399,33 @@ fun run_c11 source thy =
 
 val _ = Outer_Syntax.command @{command_keyword "c11"}
         "Syntax check a C11 translation unit and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
+        (Parse.input
+         Parse.cartouche >> (fn source => Toplevel.theory (run_c11 source)))
 
 fun run_c11_ident source = run_c11_kind is_id "identifier" "c11_ident" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_ident"}
         "Syntax check a bare C11 identifier and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_ident source)))
 
 fun run_c11_expr source = run_c11_kind is_expr "expression" "c11_expr" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_expr"}
         "Syntax check a C11 expression and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_expr source)))
 
-fun run_c11_statement source = run_c11_kind is_stmt "statement" "c11_statement" source
+fun run_c11_statement source =
+  run_c11_kind is_stmt "statement" "c11_statement" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_statement"}
         "Syntax check a C11 statement and store its AST"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_statement source)))
 
 (* Isabelle_C's counterpart is "C_file \<open>path\<close>". Resources.parse_file/
    Token.file_source are the same Isabelle/Pure building blocks the built-in
@@ -451,13 +475,15 @@ fun run_c11_file get_file thy =
       case res of
         NONE => error "c11_file: no result"
       | SOME root =>
-          let val root = require_kind is_units "translation unit" "c11_file" root
+          let val root =
+            require_kind is_units "translation unit" "c11_file" root
           in full_eval_and_store root (Input.text_of source) thy end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_file"}
         "Read and syntax-check an external C11 source file, and store its AST"
-        (Resources.parse_file >> (fn get_file => Toplevel.theory (run_c11_file get_file)))
+        (Resources.parse_file >> (fn get_file =>
+                                  Toplevel.theory (run_c11_file get_file)))
 
 (* "c11_predef [header] \<open>decl_list\<close>" gives a real \<^emph>\<open>basic\<close> functionality
    (the user's own word - see the design discussion this responds to): a way
@@ -500,15 +526,19 @@ val _ = Outer_Syntax.command @{command_keyword "c11_file"}
    against redeclaring a typedef name). *)
 fun reject_predef_implementations header (C_Ast.Units us) =
       List.app (fn C_Ast.CTranslUnit (eds, _) =>
-                    List.app (fn C_Ast.CFDefExt (C_Ast.CFunDef (_, _, _, _, ni)) =>
+                    List.app (fn C_Ast.CFDefExt
+                              (C_Ast.CFunDef (_, _, _, _, ni)) =>
                                   error ("c11_predef " ^ quote header ^
-                                         ": function definitions are not allowed here, only " ^
+                                         (": function definitions are not " ^
+                                          "allowed here, only ") ^
                                          "prototypes (no \"{ ... }\" body)" ^
-                                         Position.here (C_Ast.pos_of_NodeInfo ni))
+                                         Position.here
+                                           (C_Ast.pos_of_NodeInfo ni))
                                 | _ => ())
                       eds)
         us
-  | reject_predef_implementations _ _ = () (* unreachable: "root" is already known to be "Units" *)
+  | reject_predef_implementations _ _ =
+      () (* unreachable: "root" is already known to be "Units" *)
 
 fun run_c11_predef (header, header_pos) source thy =
     let
@@ -525,10 +555,14 @@ fun run_c11_predef (header, header_pos) source thy =
         NONE => error ("c11_predef " ^ quote header ^ ": no result")
       | SOME root0 =>
           let
-            val root = require_kind is_units "translation unit" ("c11_predef " ^ quote header) root0
+            val root =
+              require_kind is_units "translation unit"
+                ("c11_predef " ^ quote header) root0
             val _ = reject_predef_implementations header root
             val us = case root of C_Ast.Units us => us
-                       | _ => error "c11_predef: unreachable, require_kind already checked is_units"
+                       | _ => error
+                           ("c11_predef: unreachable, require_kind already " ^
+                            "checked is_units")
             (* The reusable effect a later "#include <header>" applies (see the
                note above): re-walks "us" fresh against whatever "cenv" is
                passed in, exactly the way "analyse_and_eval"'s own "Units"
@@ -537,7 +571,8 @@ fun run_c11_predef (header, header_pos) source thy =
                antiquotations; "decl_list" is declarations only). *)
             fun effect cenv0 =
               #1 (fold (fn tu => fn (cenv, acc) =>
-                          let val (cenv', acts) = AnaEval.walk_translation_unit cenv [root] tu
+                          let val (cenv', acts) =
+                            AnaEval.walk_translation_unit cenv [root] tu
                           in (cenv', acc @ acts) end)
                     us (cenv0, []))
             (* Run once now, purely so this block's own declarations get the
@@ -548,42 +583,44 @@ fun run_c11_predef (header, header_pos) source thy =
             val (key, thy') =
               store_root root (Input.text_of source)
                 (CEnv.store_predefined_env (header, header_pos, effect) thy)
-            val _ = writeln (string_of_root root ^ "  [predefined as " ^ quote header ^
+            val _ = writeln
+              (string_of_root root ^ "  [predefined as " ^ quote header ^
                               ", stored as " ^ key ^ "]")
           in thy' end
     end
 
 val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
-        "Declare a fragment of predefined C11 global variables/macros/function prototypes"
-        (Parse.$$$ "[" |-- Parse.position Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
-          >> (fn (header, source) => Toplevel.theory (run_c11_predef header source)))
+        ("Declare a fragment of predefined C11 global " ^
+         "variables/macros/function prototypes")
+        (Parse.$$$ "[" |-- Parse.position
+         Parse.name --| Parse.$$$ "]" -- Parse.input Parse.cartouche
+          >> (fn (header, source) =>
+              Toplevel.theory (run_c11_predef header source)))
 
 (* Every "c11"-family command threads "cenv" (C11_Env.thy) through the theory
-   exactly like any other persistent, per-theory Isabelle state - the same
-   idiom a simp-set or a Named_Theorems collection uses - which is what
-   lets "c11"/"c11_file"/... be freely interleaved with arbitrary Isar
-   content (definitions, proofs, plain text) and still resolve a name used
-   in one fragment back to its declaration in an earlier one, however much
-   unrelated material sits between them. That accumulation is the point,
-   not a bug - but it also means "cenv" only ever grows across a theory,
-   with no built-in notion of "start this section fresh". "set_cenv_default"/
-   "reset_cenv" give a theory explicit control over that: "set_cenv_default"
-   nominates whatever "cenv" holds right now as the snapshot a later
-   "reset_cenv" restores - called once, early (e.g. right after C11_AnaEval.thy's
-   own antiquotation handlers are registered, so \<open>@setup\<close>/\<open>@requires\<close>/
-   \<open>\<dots>\<close>-style tags still resolve after a reset), it marks "this is what a
-   fresh start looks like here"; called again later (e.g. once a theory has
-   also predefined the headers it wants known by default, such as
-   \<open>stdio.h\<close>), it moves that baseline forward. "reset_cenv" alone, with no
-   prior "set_cenv_default" anywhere in scope, resets to "CEnv.empty_cenv" -
-   a plain, if less useful, fallback rather than an error, so it is always
-   safe to call. Neither command touches "Ast_Store" (every AST parsed so
-   far stays retrievable via "CEnv.get_ast" - only the *symbolic
+   exactly like any other persistent, per-theory Isabelle state - the same idiom
+   a simp-set or a Named_Theorems collection uses - which is what lets
+   "c11"/"c11_file"/... be freely interleaved with arbitrary Isar content
+   (definitions, proofs, plain text) and still resolve a name used in one
+   fragment back to its declaration in an earlier one, however much unrelated
+   material sits between them. That accumulation is the point, not a bug - but
+   it also means "cenv" only ever grows across a theory, with no built-in notion
+   of "start this section fresh". "set_cenv_default"/ "reset_cenv" give a theory
+   explicit control over that: "set_cenv_default" nominates whatever "cenv"
+   holds right now as the snapshot a later "reset_cenv" restores - called once,
+   early (e.g. right after C11_AnaEval.thy's own antiquotation handlers are
+   registered, so \<open>@setup\<close>/\<open>@requires\<close>/ \<open>\<dots>\<close>-style tags still resolve after a
+   reset), it marks "this is what a fresh start looks like here"; called again
+   later (e.g. once a theory has also predefined the headers it wants known by
+   default, such as \<open>stdio.h\<close>), it moves that baseline forward. "reset_cenv"
+   alone, with no prior "set_cenv_default" anywhere in scope, resets to
+   "CEnv.empty_cenv" - a plain, if less useful, fallback rather than an error,
+   so it is always safe to call. Neither command touches "Ast_Store" (every AST
+   parsed so far stays retrievable via "CEnv.get_ast" - only the *symbolic
    environment* used for hyperlinking/member-/type-chasing is reset or
-   re-baselined), and neither is itself a "c11"-family parsing command -
-   both take no C source at all, only mutating "cenv" (and so, like
-   "c11_predef", are "thy_decl", not "diag" - see the note on that
-   distinction above).
+   re-baselined), and neither is itself a "c11"-family parsing command - both
+   take no C source at all, only mutating "cenv" (and so, like "c11_predef", are
+   "thy_decl", not "diag" - see the note on that distinction above).
 
    Deliberately does *not* touch "C11_Typedefs.names" (C11_Parser.thy) - the
    lexer's own, separate "a name has, at some point, been typedef'd" table,
@@ -601,31 +638,39 @@ val _ = Outer_Syntax.command @{command_keyword "c11_predef"}
    what "reset_cenv" is about. *)
 fun report_cenv_size label thy =
     let val CEnv.mk {idents, types, ...} = CEnv.get (Context.Theory thy)
-    in writeln (label ^ ": " ^ Int.toString (Symtab.fold (K (fn n => n + 1)) idents 0) ^
-                " ident(s), " ^ Int.toString (Symtab.fold (K (fn n => n + 1)) types 0) ^ " type(s)") end
+    in writeln
+      (label ^ ": " ^ Int.toString (Symtab.fold (K (fn n => n + 1)) idents 0) ^
+                " ident(s), "
+                  ^ Int.toString (Symtab.fold (K (fn n => n + 1)) types 0)
+                    ^ " type(s)") end
 
 val _ = Outer_Syntax.command @{command_keyword "set_cenv_default"}
         "Nominate the current cenv as the snapshot a later reset_cenv restores"
         (Scan.succeed (Toplevel.theory (fn thy =>
-          let val thy' = CEnv.set_cenv_default thy in report_cenv_size "set_cenv_default" thy'; thy' end)))
+          let val thy' = CEnv.set_cenv_default thy
+            in report_cenv_size "set_cenv_default" thy'; thy' end)))
 
 val _ = Outer_Syntax.command @{command_keyword "reset_cenv"}
-        "Reset cenv to the snapshot set_cenv_default last nominated (or empty_cenv, if none yet)"
+        ("Reset cenv to the snapshot set_cenv_default last nominated (or " ^
+         "empty_cenv, if none yet)")
         (Scan.succeed (Toplevel.theory (fn thy =>
-          let val thy' = CEnv.reset_cenv thy in report_cenv_size "reset_cenv" thy'; thy' end)))
+          let val thy' = CEnv.reset_cenv thy
+            in report_cenv_size "reset_cenv" thy'; thy' end)))
 
-(* "setup_backend \<open>f\<close>" installs the semantic backend that "full_eval_and_store" runs
-   at the end of every "c11"/"c11_file" (see "CEnv.get_backend", C11_Env.thy):
-   "f" is an ML expression of type "Position.T C_Ast.root -> theory -> theory",
-   evaluated exactly like the argument of Isabelle's own "setup" command
-   (Isar_Cmd.setup, Pure/Isar/isar_cmd.ML) - and, like that command, taken as
-   embedded ML source. The default, in force until the first "setup_backend",
-   is "K I"; "setup_backend \<open>K I\<close>" restores it. The installed function lives in
-   the theory's context and is inherited by later theories, so a semantic
-   backend is installed once, at the top of the theory that wants it. *)
+(* "setup_backend \<open>f\<close>" installs the semantic backend that "full_eval_and_store"
+   runs at the end of every "c11"/"c11_file" (see "CEnv.get_backend",
+   C11_Env.thy): "f" is an ML expression of type "Position.T C_Ast.root ->
+   theory -> theory", evaluated exactly like the argument of Isabelle's own
+   "setup" command (Isar_Cmd.setup, Pure/Isar/isar_cmd.ML) - and, like that
+   command, taken as embedded ML source. The default, in force until the first
+   "setup_backend", is "K I"; "setup_backend \<open>K I\<close>" restores it. The installed
+   function lives in the theory's context and is inherited by later theories, so
+   a semantic backend is installed once, at the top of the theory that wants it.
+   *)
 fun setup_backend source =
   ML_Context.expression (Input.pos_of source)
-    (ML_Lex.read "Theory.setup (CEnv.set_backend (" @ ML_Lex.read_source source @ ML_Lex.read "))")
+    (ML_Lex.read "Theory.setup (CEnv.set_backend (" @ ML_Lex.read_source source
+     @ ML_Lex.read "))")
   |> Context.theory_map
 
 val _ = Outer_Syntax.command @{command_keyword "setup_backend"}
@@ -681,27 +726,36 @@ val _ = Outer_Syntax.command @{command_keyword "setup_backend"}
    file, asks for their own text back verbatim instead. *)
 fun run_c11_export suffix (verbatim, path, keys) thy =
     let
-      val out_path = Path.append (Resources.master_directory thy) (Path.explode (path ^ suffix))
+      val out_path =
+        Path.append (Resources.master_directory thy)
+          (Path.explode (path ^ suffix))
       fun text_of key =
         if verbatim
         then
           (case CEnv.get_source key thy of
              SOME text => text
            | NONE => error ("no stored c11 section named " ^ quote key ^
-                             " (expected one of the \"[stored as ...]\" keys c11/c11_file/\<dots> report)"))
+                             (" (expected one of the \"[stored as ...]\" " ^
+                              "keys c11/c11_file/\<dots> report)")))
         else
           (case CEnv.get_ast key thy of
              SOME root => C_Ast.pp_root root
            | NONE => error ("no stored c11 section named " ^ quote key ^
-                             " (expected one of the \"[stored as ...]\" keys c11/c11_file/\<dots> report)"))
-      val _ = File.write out_path (space_implode "\n\n" (map text_of keys) ^ "\n")
-      val _ = writeln ("Exported " ^ Int.toString (length keys) ^ " section(s) to " ^
+                             (" (expected one of the \"[stored as ...]\" " ^
+                              "keys c11/c11_file/\<dots> report)")))
+      val _ = File.write out_path
+        (space_implode "\n\n" (map text_of keys) ^ "\n")
+      val _ = writeln
+        ("Exported " ^ Int.toString (length keys) ^ " section(s) to " ^
                         Path.print out_path)
     in thy end
 
 val export_args =
-  Scan.optional (Parse.$$$ "[" |-- Parse.$$$ "verbatim" --| Parse.$$$ "]" >> K true) false --
-    Parse.path -- (Parse.$$$ "exports" |-- Parse.!!! (Scan.repeat1 Parse.string))
+  Scan.optional
+    (Parse.$$$ "[" |-- Parse.$$$ "verbatim" --| Parse.$$$ "]" >> K true)
+      false --
+    Parse.path -- (Parse.$$$ "exports" |-- Parse.!!! (Scan.repeat1
+        Parse.string))
   >> (fn ((verbatim, path), keys) => (verbatim, path, keys))
 
 val _ = Outer_Syntax.command @{command_keyword "c11_export_h"}
@@ -712,11 +766,12 @@ val _ = Outer_Syntax.command @{command_keyword "c11_export_c"}
         "Export the given stored c11 section(s) as C source text into a .c file"
         (export_args >> (fn args => Toplevel.theory (run_c11_export ".c" args)))
 
-(* The reject commands parse with "C11_Parse.parse_quiet" (C11_Parser.thy): the library's
-   error callback "print_error" reports PIDE error markup before raising, and the exception
-   it raises cannot reliably be caught by identity across the SML sandbox boundary, so a
-   private, silent error callback raises a *locally declared* exception ("C11_Parse.Rejected")
-   that is caught by construction, and no spurious error markup is left on rejected
+(* The reject commands parse with "C11_Parse.parse_quiet" (C11_Parser.thy): the
+   library's error callback "print_error" reports PIDE error markup before
+   raising, and the exception it raises cannot reliably be caught by identity
+   across the SML sandbox boundary, so a private, silent error callback raises a
+   *locally declared* exception ("C11_Parse.Rejected") that is caught by
+   construction, and no spurious error markup is left on rejected
    (expected-to-fail) input. *)
 fun parse_source_quiet ctxt source = C11_Parse.parse_quiet ctxt source
 
@@ -727,8 +782,9 @@ fun parse_source_quiet ctxt source = C11_Parse.parse_quiet ctxt source
 fun run_c11_kind_reject check kind_name source thy =
     let
       val ctxt = Proof_Context.init_global thy
-      (* A "_reject" fragment is never a genuine declaration: "parse_quiet" never merges
-         the typedef names of its parse into the session's set (see "C11_Parse"). *)
+      (* A "_reject" fragment is never a genuine declaration: "parse_quiet"
+         never merges the typedef names of its parse into the session's set (see
+         "C11_Parse"). *)
       val rejected =
         (case parse_source_quiet ctxt source of
            SOME root => not (check root)
@@ -736,34 +792,47 @@ fun run_c11_kind_reject check kind_name source thy =
           handle C11_Parse.Rejected _ => true
       val _ =
         if rejected
-        then writeln ("OK: malformed input was correctly rejected as a " ^ kind_name ^ ".")
-        else error   ("Malformed-input test FAILED: the parser unexpectedly accepted this as a " ^
+        then writeln
+          ("OK: malformed input was correctly rejected as a " ^ kind_name ^ ".")
+        else error   (("Malformed-input test FAILED: the parser unexpectedly " ^
+                       "accepted this as a ") ^
                        kind_name ^ ".")
     in thy end
 
-fun run_c11_reject source = run_c11_kind_reject is_units "translation unit" source
+fun run_c11_reject source =
+  run_c11_kind_reject is_units "translation unit" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_reject"}
-        "Check that a C11 fragment is correctly rejected (error-recovery / malformed-input tests)"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_reject source)))
+        ("Check that a C11 fragment is correctly rejected (error-recovery / " ^
+         "malformed-input tests)")
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_reject source)))
 
 fun run_c11_ident_reject source = run_c11_kind_reject is_id "identifier" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_ident_reject"}
         "Check that a fragment is correctly rejected as a C11 identifier"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_ident_reject source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_ident_reject source)))
 
 fun run_c11_expr_reject source = run_c11_kind_reject is_expr "expression" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_expr_reject"}
         "Check that a fragment is correctly rejected as a C11 expression"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_expr_reject source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_expr_reject source)))
 
-fun run_c11_statement_reject source = run_c11_kind_reject is_stmt "statement" source
+fun run_c11_statement_reject source =
+  run_c11_kind_reject is_stmt "statement" source
 
 val _ = Outer_Syntax.command @{command_keyword "c11_statement_reject"}
         "Check that a fragment is correctly rejected as a C11 statement"
-        (Parse.input Parse.cartouche >> (fn source => Toplevel.theory (run_c11_statement_reject source)))
+        (Parse.input
+         Parse.cartouche >> (fn source =>
+                             Toplevel.theory (run_c11_statement_reject source)))
 
 end (* local open *)
 \<close>

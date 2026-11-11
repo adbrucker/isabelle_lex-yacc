@@ -1,4 +1,4 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay, 2026
  *
  * Author : Burkhart Wolff
@@ -16,17 +16,18 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 (*<*)
 theory C11_Manual
@@ -36,16 +37,17 @@ begin
 section\<open>What is Isabelle/C\<close>
 
 text\<open>
-  Isabelle/C is a front-end that lets C11 source text live inside an Isabelle theory
-  as a first-class citizen: parsed by a real grammar, checked incrementally under
-  Isabelle/PIDE (so a syntax error, an undeclared identifier, or a malformed
-  annotation is reported exactly like any other Isabelle error, with the usual
-  jEdit markup, hyperlinking, and hovering), and open to attaching arbitrary
-  Isabelle-level content - proof obligations, HOL terms, arbitrary Isar commands -
-  to specific points in the C source via a comment-based antiquotation mechanism.
-  It is not a C compiler, nor a verification tool in its own right: it is the
-  \<^emph>\<open>front-end layer\<close> of a verification tool, a documentation generator, or a static
-  analysis that would be built on top of it.
+  Isabelle/C is a front-end that lets C11 source text live inside an Isabelle
+  theory as a first-class citizen: parsed by a real grammar, checked
+  incrementally under Isabelle/PIDE (so a syntax error, an undeclared
+  identifier, or a malformed annotation is reported exactly like any other
+  Isabelle error, with the usual jEdit markup, hyperlinking, and hovering), and
+  open to attaching arbitrary Isabelle-level content - proof obligations, HOL
+  terms, arbitrary Isar commands - to specific points in the C source via a
+  comment-based antiquotation mechanism. It is not a C compiler, nor a
+  verification tool in its own right: it is the \<^emph>\<open>front-end layer\<close> of a
+  verification tool, a documentation generator, or a static analysis that would
+  be built on top of it.
 \<close>
 
 subsection\<open>Context\<close>
@@ -62,30 +64,29 @@ text\<open>
 
   This project - \<^bold>\<open>Isabelle/C, Version 2.0\<close> - is a from-scratch redesign of that
   same idea of a generic fontend/IDE for C, which can be hooked up with semantic
-  backends, i.e specific analyser or verification environments implemented in Isabelle/HOL.
-  Isabelle/C Version 2 is built on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's own
-  generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/HOL ('Main')
-  rather than the hand-crafted mix of generated lexer and parser sources of Version 1.    
-  It is not a port of the AFP entry's code, and does not depend on it; 
-  it exists to answer a narrower question: how much of the  \<^emph>\<open>essence\<close> of the 
-  Isabelle/C approach - inline and file-based parsing commands, antiquotation-carrying
-  comments, an environment tracking declarations across a translation unit,
-  programmable handlers - can be reproduced on top of a generic parser-generator
-  toolkit, while \<^emph>\<open>simplifying\<close> the original design that experience
-  showed to be disproportionately complex. Since the lexer-part of version 1.0
-  was effectively based on a version-split from Isabelle2019, the maintenance of
-  Isabelle/C version 1.0 turned out to be problematic at various occasions in the
-  Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein grosses Dankeschoen an 
-  Makarius Wenzel, der wiederholt ``ìssues'' des AFP Eintrags loeste und
-  diesen Prototypen damit bis jetzt am Leben hielt.\<close>
+  backends, i.e specific analyser or verification environments implemented in
+  Isabelle/HOL. Isabelle/C Version 2 is built on \<^verbatim>\<open>ml_lex_yacc\<close>, Isabelle/AFP's
+  own generic, off-the-shelf ML-Lex/ML-Yacc integration for Isabelle/HOL
+  ('Main') rather than the hand-crafted mix of generated lexer and parser
+  sources of Version 1. It is not a port of the AFP entry's code, and does not
+  depend on it; it exists to answer a narrower question: how much of the
+  \<^emph>\<open>essence\<close> of the Isabelle/C approach - inline and file-based parsing commands,
+  antiquotation-carrying comments, an environment tracking declarations across a
+  translation unit, programmable handlers - can be reproduced on top of a
+  generic parser-generator toolkit, while \<^emph>\<open>simplifying\<close> the original design that
+  experience showed to be disproportionately complex. Since the lexer-part of
+  version 1.0 was effectively based on a version-split from Isabelle2019, the
+  maintenance of Isabelle/C version 1.0 turned out to be problematic at various
+  occasions in the Isabelle AFP development \<^footnote>\<open>An dieser Stelle ein grosses
+  Dankeschoen an Makarius Wenzel, der wiederholt ``ìssues'' des AFP Eintrags
+  loeste und diesen Prototypen damit bis jetzt am Leben hielt.\<close>
  
-  The antiquotation-navigation language
-  (\<^verbatim>\<open>select_ast\<close>, \<open>\<section>2.4\<close>) is the clearest example: Isabelle/C 1.0's own
-  navigation concept is, by design, considerably more general (and considerably
-  more complex) than what most annotations actually need; this project restarts
-  that design from a small, explicit set of primitives (\<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close>) chosen to
-  cover the common cases plainly, at the cost of not (yet) covering everything
-  the original does.
+  The antiquotation-navigation language (\<^verbatim>\<open>select_ast\<close>, \<open>\<section>2.4\<close>) is the clearest
+  example: Isabelle/C 1.0's own navigation concept is, by design, considerably
+  more general (and considerably more complex) than what most annotations
+  actually need; this project restarts that design from a small, explicit set of
+  primitives (\<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close>) chosen to cover the common cases plainly, at the
+  cost of not (yet) covering everything the original does.
 \<close>
 
 
@@ -106,16 +107,16 @@ subsection\<open>Parsing\<close>
 
 text\<open>
   The grammar (\<^verbatim>\<open>C11_Parser.thy\<close>, generated via this repository's own
-  \<^verbatim>\<open>ml_lex_yacc\<close> command from an ml-lex lexer specification and an ml-yacc LALR(1)
-  grammar) covers ISO C11's expression, statement, and declaration syntax -
-  see the annex (\<open>\<section>6\<close>) for the lexical structure and a representative subset
-  of the grammar as railroad diagrams. Every AST node's own annotation field
-  (\<open>'a nodeInfo\<close>, \<^verbatim>\<open>c11_ast.ML\<close>) carries a genuine \<^verbatim>\<open>Position.T\<close> together with
-  any comments/antiquotations attached to that node, so PIDE markup - hovering,
-  hyperlinking, error underlining - is available at every level of the tree, not
-  only at the top. Four entry points parse a fragment of a given shape and store
-  its AST (\<open>\<section>3\<close>); the \<open>_reject\<close> counterpart of each documents, rather than
-  silently skips, an input this fragment is known not to accept.
+  \<^verbatim>\<open>ml_lex_yacc\<close> command from an ml-lex lexer specification and an ml-yacc
+  LALR(1) grammar) covers ISO C11's expression, statement, and declaration
+  syntax - see the annex (\<open>\<section>6\<close>) for the lexical structure and a representative
+  subset of the grammar as railroad diagrams. Every AST node's own annotation
+  field (\<open>'a nodeInfo\<close>, \<^verbatim>\<open>c11_ast.ML\<close>) carries a genuine \<^verbatim>\<open>Position.T\<close> together
+  with any comments/antiquotations attached to that node, so PIDE markup -
+  hovering, hyperlinking, error underlining - is available at every level of the
+  tree, not only at the top. Four entry points parse a fragment of a given shape
+  and store its AST (\<open>\<section>3\<close>); the \<open>_reject\<close> counterpart of each documents, rather
+  than silently skips, an input this fragment is known not to accept.
 
   This is deliberately a \<^emph>\<open>simplified\<close> fragment of full C11, not a conforming
   implementation: translation phases 1 and 2 (trigraphs, backslash-newline line
@@ -127,15 +128,17 @@ text\<open>
 subsection\<open>The C-Environment, and Declaration/Use Navigation\<close>
 
 text\<open>
-  \<^verbatim>\<open>C11_Env.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table stored as ordinary
-  \<^verbatim>\<open>Generic_Data\<close>, so it persists across commands within one theory and merges 
-  correctly under Isabelle's parallel, incremental checking. The \<open>cenv\<close> keeps track of:
+  \<^verbatim>\<open>C11_Env.thy\<close> defines \<open>cenv\<close>, a small record - a symbol table stored as
+  ordinary \<^verbatim>\<open>Generic_Data\<close>, so it persists across commands within one theory and
+  merges correctly under Isabelle's parallel, incremental checking. The \<open>cenv\<close>
+  keeps track of:
 
-   \<^enum> \<open>idents\<close>, currently variables/functions/parameters/preprocessor constants/macros/enum  
-     constants; 
+   \<^enum> \<open>idents\<close>, currently variables/functions/parameters/preprocessor
+     constants/macros/enum constants;
    \<^enum> \<open>types\<close>, the separate struct/union/enum \<^emph>\<open>tag\<close> namespace,
-     \<open>\<section>2.6\<close> is not the only reader of it - \<open>\<section>4\<close>'s member-linking item also
-  depends on it directly;
+     \<open>\<section>2.6\<close> is not the only reader of it - \<open>\<section>4\<close>'s member-linking
+     item also depends on it directly;
+
    \<^enum> a registry of antiquotation handlers, \<open>c_antiq\<close>, \<open>\<section>2.3\<close>; \<open>predefined_envs\<close>, 
      \<open>\<section>2.6\<close>'s reusable per-header effects; and 
    \<^enum> a per-theory AST unit counter) used for generic names of c-sections 
@@ -184,7 +187,9 @@ text\<open>
   attached to whichever AST node it resolves against (\<open>\<section>2.4\<close>). \<open>tag\<close> selects a
   \<^emph>\<open>handler\<close>: an ordinary ML function of type
 
-  \<^verbatim>\<open>type type_antiq_fun = cenv * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic\<close>
+  \<^verbatim>\<open>type type_antiq_fun =
+    cenv * pos C_Ast.root * int -> (string * pos) ->
+    Context.generic -> Context.generic\<close>
 
   registered once, ahead of time, via \<open>CEnv.store_antiq (tag, handler)\<close>. When
   \<open>analyse_and_eval\<close> reaches a node carrying an \<open>@tag ...\<close> antiquotation, it
@@ -374,6 +379,7 @@ text\<open>
     error, reported at the antiquotation's own position. A successfully
     proved \<open>lemma\<close> - e.g.\ \<open>//@ lemma \<open>bound: "N * N < 1000" by simp\<close>\<close> -
     becomes a genuine, later-usable fact \<open>bound\<close>.
+
 \<close>
 
 subsection\<open>Predefined Header Declarations\<close>
@@ -425,6 +431,7 @@ text\<open>
 section\<open>The C11 Main Commands\<close>
 
 text\<open>
+
   \<^descr> \<open>c11 \<open>...\<close>\<close> parses its argument as a whole translation unit, runs
     \<open>analyse_and_eval\<close> under \<open>full_eval = true\<close> semantics (\<open>\<section>2.4\<close>), and
     stores the resulting AST under a fresh key.
@@ -464,16 +471,18 @@ text\<open>
     per-\<open>typedef\<close>-name lexer table (\<open>\<section>4\<close>'s \<open>typedef\<close> item) - only the
     symbolic environment used for hyperlinking and member-/type-chasing is
     reset.
-  \<^descr> \<open>setup_backend \<open>f\<close>\<close> installs the \<^emph>\<open>semantic backend\<close>: \<open>f\<close> is an ML expression of type
-    \<open>Position.T C_Ast.root -> theory -> theory\<close>, evaluated like the argument of Isabelle's own
-    \<open>setup\<close> command. At the very end of every \<open>c11\<close>/\<open>c11_file\<close> - after the antiquotation
-    actions have run and the AST is stored - the installed function is applied to the parsed root
-    and the theory the command has produced, and its result is the theory the command returns;
-    the fragment commands (\<open>c11_expr\<close>, \<open>\<dots>\<close>) never trigger it. The default is \<open>K I\<close>, which
-    \<open>setup_backend \<open>K I\<close>\<close> restores. The function is kept in the theory's context (separately
-    from \<open>cenv\<close>, so \<open>reset_cenv\<close> does not uninstall it) and is inherited by later theories: a
-    verification tool built on this front-end installs itself once, at the top of the theory
-    that wants it, and the front-end needs to know nothing about it.
+  \<^descr> \<open>setup_backend \<open>f\<close>\<close> installs the \<^emph>\<open>semantic backend\<close>: \<open>f\<close> is an ML expression
+    of type \<open>Position.T C_Ast.root -> theory -> theory\<close>, evaluated like the
+    argument of Isabelle's own \<open>setup\<close> command. At the very end of every
+    \<open>c11\<close>/\<open>c11_file\<close> - after the antiquotation actions have run and the AST is
+    stored - the installed function is applied to the parsed root and the theory
+    the command has produced, and its result is the theory the command returns;
+    the fragment commands (\<open>c11_expr\<close>, \<open>\<dots>\<close>) never trigger it. The default is \<open>K
+    I\<close>, which \<open>setup_backend \<open>K I\<close>\<close> restores. The function is kept in the
+    theory's context (separately from \<open>cenv\<close>, so \<open>reset_cenv\<close> does not uninstall
+    it) and is inherited by later theories: a verification tool built on this
+    front-end installs itself once, at the top of the theory that wants it, and
+    the front-end needs to know nothing about it.
   \<^descr> \<open>c11_export_h \<open>path\<close> exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> and \<open>c11_export_c \<open>path\<close>
     exports \<open>key\<^sub>1\<close> \<open>\<dots>\<close> \<open>key\<^sub>n\<close>\<close> render one or more previously stored sections
     - given by the same store keys every accepting command above reports
@@ -493,6 +502,7 @@ text\<open>
     attempt at preserving the author's own layout or comments - so a user
     who wants their own indentation, or their own comments, to survive into
     the exported file asks for it back verbatim rather than re-rendered.
+
 \<close>
 
 text\<open>A whole translation unit, with declaration/use hyperlinking and a
@@ -748,42 +758,41 @@ text\<open>
     here too), so it cannot later be redeclared as an unrelated, fresh
     typedef - matching, not violating, real C's own restriction against
     redeclaring a typedef name.
-  \<^item> \<^bold>\<open>The \<open>text\<close> antiquotation never reaches the generated document.\<close>
-    \<open>\<section>2.5\<close>'s \<open>text\<close> handler runs a \<open>//@ text \<open>...\<close>\<close> comment's body through
-    the real \<^ML>\<open>Document_Output.output_document\<close> a top-level \<open>text\<open>...\<close>\<close>
-    command itself uses, so an inner antiquotation inside it (\<open>@{term \<open>...\<close>}\<close>,
-    \<open>@{thm \<open>...\<close>}\<close>) genuinely gets checked, hyperlinked, and hovers - but the
-    resulting \<open>Latex.text\<close> only ever reaches a probe ref
-    (\<^ML>\<open>TEXT_PROBE\<close>), never the generated PDF itself, unlike a real,
-    top-level \<open>text\<open>...\<close>\<close> command written directly in the theory. Making it
-    work was tried, deliberately, given \<open>c11\<close>/\<open>c11_file\<close> already fold an
-    antiquotation's effect through \<open>Context.generic\<close> internally (\<open>\<section>2.2\<close>) -
-    the attempt lifted this all the way out to a real
-    \<open>Toplevel.presentation\<close>, attached via \<open>Toplevel.theory'\<close> instead of the
-    simpler \<open>Toplevel.theory\<close> this fragment otherwise uses throughout - and
-    hit a genuine, confirmed wall, not a missing wiring step:
-    \<^verbatim>\<open>Pure/Thy/document_output.ML\<close>'s own
-    \<open>segment_content\<close> only ever consults a command's own presentation
-    (\<^ML>\<open>Toplevel.output_of\<close>) for commands whose keyword \<^emph>\<open>kind\<close> is
-    \<open>document_heading\<close>/\<open>document_body\<close>/\<open>document_raw\<close>
-    (\<^verbatim>\<open>Keyword.is_document\<close>, \<^verbatim>\<open>Pure/Isar/keyword.ML\<close> - renamed under
-    Isabelle2026, confirmed by inspection to still gate the very same
-    fixed set of kinds there, just via a different API surface) - a fixed, closed
-    set no \<open>thy_decl\<close> command can ever belong to, and \<open>c11\<close>/\<open>c11_file\<close> must
-    stay \<open>thy_decl\<close> to mutate \<open>cenv\<close> at all. One should not expect wonders
-    here: even the original Isabelle/C's own "text" inner-antiquotation never
-    solved this either - inspection shows it is byte-identical to its own
-    "ML" one (runs the body as ML source, nothing document-specific at all),
-    which this project takes as independent confirmation the wall is real,
-    not a gap specific to this fragment's own architecture.
+  \<^item> \<^bold>\<open>The \<open>text\<close> antiquotation never reaches the generated document.\<close> \<open>\<section>2.5\<close>'s
+    \<open>text\<close> handler runs a \<open>//@ text \<open>...\<close>\<close> comment's body through the real
+    \<^ML>\<open>Document_Output.output_document\<close> a top-level \<open>text\<open>...\<close>\<close> command itself
+    uses, so an inner antiquotation inside it (\<open>@{term \<open>...\<close>}\<close>, \<open>@{thm \<open>...\<close>}\<close>)
+    genuinely gets checked, hyperlinked, and hovers - but the resulting
+    \<open>Latex.text\<close> only ever reaches a probe ref (\<^ML>\<open>TEXT_PROBE\<close>), never the
+    generated PDF itself, unlike a real, top-level \<open>text\<open>...\<close>\<close> command written
+    directly in the theory. Making it work was tried, deliberately, given
+    \<open>c11\<close>/\<open>c11_file\<close> already fold an antiquotation's effect through
+    \<open>Context.generic\<close> internally (\<open>\<section>2.2\<close>) - the attempt lifted this all the way
+    out to a real \<open>Toplevel.presentation\<close>, attached via \<open>Toplevel.theory'\<close>
+    instead of the simpler \<open>Toplevel.theory\<close> this fragment otherwise uses
+    throughout - and hit a genuine, confirmed wall, not a missing wiring step:
+    \<^verbatim>\<open>Pure/Thy/document_output.ML\<close>'s own \<open>segment_content\<close> only ever consults a
+    command's own presentation (\<^ML>\<open>Toplevel.output_of\<close>) for commands whose keyword
+    \<^emph>\<open>kind\<close> is \<open>document_heading\<close>/\<open>document_body\<close>/\<open>document_raw\<close>
+    (\<^verbatim>\<open>Keyword.is_document\<close>, \<^verbatim>\<open>Pure/Isar/keyword.ML\<close> - renamed under Isabelle2026,
+    confirmed by inspection to still gate the very same fixed set of kinds
+    there, just via a different API surface) - a fixed, closed set no \<open>thy_decl\<close>
+    command can ever belong to, and \<open>c11\<close>/\<open>c11_file\<close> must stay \<open>thy_decl\<close> to
+    mutate \<open>cenv\<close> at all. One should not expect wonders here: even the original
+    Isabelle/C's own "text" inner-antiquotation never solved this either -
+    inspection shows it is byte-identical to its own "ML" one (runs the body as
+    ML source, nothing document-specific at all), which this project takes as
+    independent confirmation the wall is real, not a gap specific to this
+    fragment's own architecture.
   \<^item> \<^bold>\<open>The typedef names are the one thing shared between parses.\<close> The parser is
-    re-entrant: the lexer's and the grammar's state (comments, antiquotation scanner, the
-    typedef names seen so far) is one object created per parse (\<^verbatim>\<open>C11_State\<close>), so any
-    number of parses can run at once. The session-wide set of typedef names
-    (\<^verbatim>\<open>C11_Typedefs\<close>) is deliberately shared - a name stays a type name for the rest of
-    the session - but a parse only merges its names into it when it is accepted. Two
-    commands that run at the same time and depend on each other's typedefs are, of course,
-    still ordered by Isabelle's theory-state dependency, not by this.
+    re-entrant: the lexer's and the grammar's state (comments, antiquotation
+    scanner, the typedef names seen so far) is one object created per parse
+    (\<^verbatim>\<open>C11_State\<close>), so any number of parses can run at once. The session-wide set
+    of typedef names (\<^verbatim>\<open>C11_Typedefs\<close>) is deliberately shared - a name stays a
+    type name for the rest of the session - but a parse only merges its names
+    into it when it is accepted. Two commands that run at the same time and
+    depend on each other's typedefs are, of course, still ordered by Isabelle's
+    theory-state dependency, not by this.
   \<^item> \<^bold>\<open>Navigation is not total.\<close> \<open>select_ast\<close>'s \<open>r\<close>/\<open>d\<close> phase (\<open>\<section>2.4\<close>) is
     defined for every \<open>cStatement\<close>/\<open>cExpression\<close> constructor, but an \<open>Id\<close> or
     \<open>Units\<close> root is never \<open>r\<close>/\<open>d\<close>-navigable at all (an identifier is always a
@@ -791,6 +800,7 @@ text\<open>
     per-element indexing defined for it), and there is no wrapping - an
     out-of-range cursor is always a hard error rather than a saturating or
     silently-clamped one.
+
 \<close>
 
 section\<open>Conclusion\<close>
@@ -889,7 +899,9 @@ text\<open>
     ;
     function__definition : type declarator compound__statement
     ;
-    declaration : type (declarator ('=' initializer)? (',' declarator ('=' initializer)?)*)? ';'
+    declaration : type
+                  (declarator ('=' initializer)?
+                      (',' declarator ('=' initializer)?)*)? ';'
     ;
     compound__statement : '{' block__item * '}'
     ;
@@ -911,13 +923,16 @@ text\<open>
     ;
     expression : assignment__expression (',' assignment__expression)*
     ;
-    assignment__expression : conditional__expression (assign__op assignment__expression)?
+    assignment__expression : conditional__expression
+                             (assign__op assignment__expression)?
     ;
-    conditional__expression : binary__expression ('?' expression ':' conditional__expression)?
+    conditional__expression : binary__expression
+                              ('?' expression ':' conditional__expression)?
     ;
     binary__expression : unary__expression (binary__op binary__expression)*
     ;
-    unary__expression : ('&' | '*' | '+' | '-' | '~' | '!' | '++' | '--') unary__expression
+    unary__expression : ('&' | '*' | '+' | '-' | '~' | '!' | '++' | '--')
+                        unary__expression
                        | '(' type ')' unary__expression
                        | 'sizeof' ('(' type ')' | unary__expression)
                        | postfix__expression
@@ -927,7 +942,8 @@ text\<open>
         | '(' (assignment__expression (',' assignment__expression)*)? ')'
         | '.' identifier | '->' identifier | '++' | '--' ) *
     ;
-    primary__expression : identifier | constant | string__literal | '(' expression ')'
+    primary__expression : identifier | constant | string__literal
+                        | '(' expression ')'
   \<close>
 
   Antiquotation-carrying comments (\<open>\<section>6.1\<close>) may occur, lexically, in front of

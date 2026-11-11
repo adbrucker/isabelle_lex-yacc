@@ -1,4 +1,4 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay
  *
  * Author : Burkhart Wolff
@@ -16,29 +16,31 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 theory C11_Tests
   imports "C11"
 begin
 
 text\<open>
-  The test suite for the C11 grammar/parser/\<open>analyse_and_eval\<close> machinery defined in
-  \<^verbatim>\<open>C11.thy\<close> - split out into its own theory so that \<^verbatim>\<open>C11.thy\<close> itself stays a light
-  import for other theories that only want the \<open>c11\<close>/\<open>c11_ident\<close>/\<open>c11_expr\<close>/
-  \<open>c11_statement\<close>/\<open>c11_file\<close> commands, without pulling in this whole test suite.
-  \<^verbatim>\<open>C11.thy\<close> is the project root to import going forward; this theory is built only
-  as part of a full/global session build.
+  The test suite for the C11 grammar/parser/\<open>analyse_and_eval\<close> machinery defined
+  in \<^verbatim>\<open>C11.thy\<close> - split out into its own theory so that \<^verbatim>\<open>C11.thy\<close> itself stays a
+  light import for other theories that only want the
+  \<open>c11\<close>/\<open>c11_ident\<close>/\<open>c11_expr\<close>/ \<open>c11_statement\<close>/\<open>c11_file\<close> commands, without
+  pulling in this whole test suite. \<^verbatim>\<open>C11.thy\<close> is the project root to import
+  going forward; this theory is built only as part of a full/global session
+  build.
 \<close>
 
 section\<open>Testing the generated C11 Parser with Syntax Highlighting\<close>
@@ -226,12 +228,14 @@ val _ =
   case Symtab.lookup idents "ANSWER" of
     SOME (CEnv.Cpp_const _) => writeln "PASS: ANSWER registered as Cpp_const"
   | other => error ("FAIL: ANSWER not registered as Cpp_const: " ^
-                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+                     (case other of NONE => "not found" | SOME _ =>
+                      "found as a different kind"))
 val _ =
   case Symtab.lookup idents "DOUBLE" of
     SOME (CEnv.Cpp_macro _) => writeln "PASS: DOUBLE registered as Cpp_macro"
   | other => error ("FAIL: DOUBLE not registered as Cpp_macro: " ^
-                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+                     (case other of NONE => "not found" | SOME _ =>
+                      "found as a different kind"))
 \<close>
 
 subsection\<open>Struct/Union/Enum Tags, and Struct/Union Member Linking\<close>
@@ -264,11 +268,15 @@ val CEnv.mk {types, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
   case Symtab.lookup types "point" of
     SOME (CEnv.Struct_tag (_, decls)) =>
-      if length decls = 2 then writeln "PASS: point registered as Struct_tag with 2 member declarations"
-      else error ("FAIL: point's Struct_tag has " ^ Int.toString (length decls) ^
+      if length decls = 2
+        then writeln
+          "PASS: point registered as Struct_tag with 2 member declarations"
+      else error
+        ("FAIL: point's Struct_tag has " ^ Int.toString (length decls) ^
                    " member declarations, expected 2")
   | other => error ("FAIL: point not registered as Struct_tag: " ^
-                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+                     (case other of NONE => "not found" | SOME _ =>
+                      "found as a different kind"))
 \<close>
 
 text\<open>A union shares the very same tag namespace and the very same member
@@ -288,7 +296,8 @@ val _ =
   case Symtab.lookup types "num" of
     SOME (CEnv.Union_tag _) => writeln "PASS: num registered as Union_tag"
   | other => error ("FAIL: num not registered as Union_tag: " ^
-                     (case other of NONE => "not found" | SOME _ => "found as a different kind"))
+                     (case other of NONE => "not found" | SOME _ =>
+                      "found as a different kind"))
 \<close>
 
 text\<open>An enum's constants land in the ordinary \<open>idents\<close> namespace, tagged
@@ -320,10 +329,12 @@ val _ =
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents name of
-                SOME (CEnv.Enum _) => writeln ("PASS: " ^ name ^ " registered as Enum")
+                SOME (CEnv.Enum _) =>
+                  writeln ("PASS: " ^ name ^ " registered as Enum")
               | other => error ("FAIL: " ^ name ^ " not registered as Enum: " ^
                                  (case other of NONE => "not found" 
-                                              | SOME _ => "found as a different kind")))
+                                              | SOME _ =>
+                                                "found as a different kind")))
     ["RED", "GREEN", "BLUE", "FOO", "BAR"]
 \<close>
 
@@ -386,21 +397,28 @@ fun specs_of name =
   case Symtab.lookup idents name of
     SOME (CEnv.Global (C_Ast.CDecl (specs, _, _))) => specs
   | SOME (CEnv.Local (C_Ast.CDecl (specs, _, _))) => specs
-  | _ => error ("FAIL: " ^ name ^ " not registered as a variable with declaration specifiers")
+  | _ => error
+      ("FAIL: " ^ name
+       ^ " not registered as a variable with declaration specifiers")
 fun check_members (var, expected_len, descr) =
   case AnaEval.member_decls_of_specs cenv (specs_of var) of
-    NONE => error ("FAIL: " ^ descr ^ " (" ^ var ^ ") did not chase to any member list")
+    NONE => error
+      ("FAIL: " ^ descr ^ " (" ^ var ^ ") did not chase to any member list")
   | SOME decls =>
       if length decls = expected_len then
-        writeln ("PASS: " ^ descr ^ " (" ^ var ^ ") chased to " ^ Int.toString expected_len ^
+        writeln ("PASS: " ^ descr ^ " (" ^ var ^ ") chased to "
+                 ^ Int.toString expected_len ^
                  " member declaration(s)")
       else
-        error ("FAIL: " ^ descr ^ " (" ^ var ^ ") chased to " ^ Int.toString (length decls) ^
+        error ("FAIL: " ^ descr ^ " (" ^ var ^ ") chased to "
+               ^ Int.toString (length decls) ^
                " member declaration(s), expected " ^ Int.toString expected_len)
 val _ = check_members ("p", 2, "named-tag typedef (point_t -> struct point_s)")
 val _ = check_members ("t", 3, "anonymous-struct typedef (triple_t)")
-val _ = check_members ("q", 2, "typedef of a typedef (point_t2 -> point_t -> struct point_s)")
-val _ = check_members ("w", 1, "a direct (non-typedef) anonymous struct variable")
+val _ = check_members
+  ("q", 2, "typedef of a typedef (point_t2 -> point_t -> struct point_s)")
+val _ = check_members
+  ("w", 1, "a direct (non-typedef) anonymous struct variable")
 \<close>
 
 subsection\<open>Member Linking Through Non-Bare-Variable Base Expressions\<close>
@@ -432,34 +450,46 @@ fun check_base_specs (descr, e) =
     NONE => error ("FAIL: " ^ descr ^ " - base_specs_of_expr returned NONE")
   | SOME specs =>
       (case AnaEval.member_decls_of_specs cenv specs of
-         NONE => error ("FAIL: " ^ descr ^ " - member_decls_of_specs did not chase to a member list")
+         NONE => error
+           ("FAIL: " ^ descr
+            ^ " - member_decls_of_specs did not chase to a member list")
        | SOME decls =>
            if length decls = 2 then
-             writeln ("PASS: " ^ descr ^ " chased to the expected 2 member declarations")
+             writeln ("PASS: " ^ descr
+                      ^ " chased to the expected 2 member declarations")
            else
-             error ("FAIL: " ^ descr ^ " chased to " ^ Int.toString (length decls) ^
+             error ("FAIL: " ^ descr ^ " chased to "
+                    ^ Int.toString (length decls) ^
                     " member declaration(s), expected 2"))
 
 val _ = check_base_specs ("f().field - CCall, the callee's own return type",
            C_Ast.CCall (mkvar "make_point2", [], dummy_ni))
-val _ = check_base_specs ("arr[0].field - CIndex, the element type (index expr itself unused)",
-           C_Ast.CIndex (mkvar "arr_of_points", mkvar "arr_of_points", dummy_ni))
-val _ = check_base_specs ("dereferenced-pointer.field - CUnary CIndOp, the pointee type",
+val _ = check_base_specs
+  ("arr[0].field - CIndex, the element type (index expr itself unused)",
+           C_Ast.CIndex
+             (mkvar "arr_of_points", mkvar "arr_of_points", dummy_ni))
+val _ = check_base_specs
+  ("dereferenced-pointer.field - CUnary CIndOp, the pointee type",
            C_Ast.CUnary (C_Ast.CIndOp, mkvar "pp_of_point", dummy_ni))
 val _ = check_base_specs ("addressed-variable->field - CUnary CAdrOp",
            C_Ast.CUnary (C_Ast.CAdrOp, mkvar "plain_point_var", dummy_ni))
-val _ = check_base_specs ("cast-target->field - CCast, the cast's own type, not the operand's",
+val _ = check_base_specs
+  ("cast-target->field - CCast, the cast's own type, not the operand's",
            C_Ast.CCast
              (C_Ast.CDecl
                 ([C_Ast.CTypeSpec
                     (C_Ast.CSUType
                        (C_Ast.CStruct (C_Ast.CStructTag,
-                          SOME (C_Ast.Ident ("point_s", 0, dummy_ni)), NONE, [], dummy_ni),
+                          SOME (C_Ast.Ident ("point_s", 0, dummy_ni)), NONE,
+                            [], dummy_ni),
                         dummy_ni))],
                  [], dummy_ni),
               mkvar "plain_point_var", dummy_ni))
-val _ = check_base_specs ("a.b.c - chained CMember, \"inner\"'s own declared type",
-           C_Ast.CMember (mkvar "a_container", C_Ast.Ident ("inner", 0, dummy_ni), false, dummy_ni))
+val _ = check_base_specs
+  ("a.b.c - chained CMember, \"inner\"'s own declared type",
+           C_Ast.CMember
+             (mkvar "a_container", C_Ast.Ident ("inner", 0, dummy_ni), false,
+              dummy_ni))
 \<close>
 
 subsection\<open>\<open>c11_predef\<close>: a Basic Predefined-Header Mechanism\<close>
@@ -495,19 +525,26 @@ text\<open>Hard, batch-checkable confirmation that \<open>c11_predef\<close> def
   test failure. \<open>stdlib.h\<close>/\<open>errno.h\<close>/\<open>assert.h\<close>, never yet \<open>#include\<close>d
   anywhere in this theory, are still genuinely deferred.\<close>
 ML\<open>
-val CEnv.mk {idents = idents_before_include, ...} = CEnv.get (Context.Theory @{theory})
+val CEnv.mk {idents = idents_before_include, ...} =
+  CEnv.get (Context.Theory @{theory})
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents_before_include name of
                 SOME _ => ()
-              | NONE => error ("FAIL: " ^ name ^ " should already be registered, having been " ^
-                                "included via \"A more Comprehensive Program Text\" above"))
+              | NONE =>
+                error ("FAIL: " ^ name
+                       ^ " should already be registered, having been " ^
+                                ("included via \"A more Comprehensive " ^
+                                 "Program Text\" above")))
     ["printf", "putchar", "getchar", "puts"]
 val _ =
   List.app (fn name =>
               case Symtab.lookup idents_before_include name of
                 NONE => ()
-              | SOME _ => error ("FAIL: " ^ name ^ " already registered before any #include of its header"))
+              | SOME _ =>
+                error ("FAIL: " ^ name
+                       ^ (" already registered before any #include of its " ^
+                          "header")))
     ["malloc", "calloc", "realloc", "free", "exit", "abort", "atoi", "atof",
      "errno", "EDOM", "ERANGE", "assert"]
 \<close>
@@ -539,7 +576,8 @@ val _ =
     NONE => error "FAIL: stdio.h not registered in predefined_envs at all"
   | SOME (pos, _) =>
       if pos = Position.none
-      then error "FAIL: stdio.h's stored position is the empty Position.none sentinel"
+      then error
+        "FAIL: stdio.h's stored position is the empty Position.none sentinel"
       else ()
 \<close>
 
@@ -557,21 +595,30 @@ text\<open>The precise \<^emph>\<open>range\<close> highlighted for the header n
 c11\<open>#include <stdio.h>\<close>
 ML\<open>
 val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
-val key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val key = Context.theory_name {long = false} @{theory} ^ "#"
+  ^ Int.toString (units - 1)
 val header_ni =
   case CEnv.get_ast key @{theory} of
-    SOME (C_Ast.Units [C_Ast.CTranslUnit (C_Ast.CPPExt (C_Ast.CPPInclude (_, "stdio.h", _, header_ni)) :: _, _)]) =>
+    SOME (C_Ast.Units
+          [C_Ast.CTranslUnit
+           (C_Ast.CPPExt (C_Ast.CPPInclude (_, "stdio.h", _, header_ni))
+            :: _, _)]) =>
       header_ni
-  | _ => error ("FAIL: stored AST under " ^ key ^ " was not the expected single-CPPInclude unit")
+  | _ => error
+      ("FAIL: stored AST under " ^ key
+       ^ " was not the expected single-CPPInclude unit")
 val raw_pos = C_Ast.pos_of_NodeInfo header_ni
 val adjusted_pos = Position.symbol_explode "<" raw_pos
 val _ =
   case (Position.offset_of raw_pos, Position.offset_of adjusted_pos) of
     (SOME o1, SOME o2) =>
       if o2 = o1 + 1 then ()
-      else error ("FAIL: adjusted header-name position offset is " ^ Int.toString o2 ^
-                   ", expected exactly one past the raw token's own offset (" ^ Int.toString o1 ^ ")")
-  | _ => error "FAIL: raw or adjusted header-name position carries no offset at all"
+      else error
+        ("FAIL: adjusted header-name position offset is " ^ Int.toString o2 ^
+                   ", expected exactly one past the raw token's own offset ("
+                     ^ Int.toString o1 ^ ")")
+  | _ => error
+      "FAIL: raw or adjusted header-name position carries no offset at all"
 \<close>
 
 text\<open>Only once each header is actually \<open>#include\<close>d - here, in a single
@@ -604,8 +651,10 @@ val _ =
   List.app (fn name =>
               case Symtab.lookup idents name of
                 SOME _ => ()
-              | NONE => error ("FAIL: " ^ name ^ " not registered after #include"))
-    ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc", "free",
+              | NONE =>
+                error ("FAIL: " ^ name ^ " not registered after #include"))
+    ["printf", "putchar", "getchar", "puts", "malloc", "calloc", "realloc",
+     "free",
      "exit", "abort", "atoi", "atof", "errno", "EDOM", "ERANGE", "assert"]
 \<close>
 
@@ -687,7 +736,8 @@ val _ =
   List.app (fn name =>
               case Symtab.lookup idents name of
                 SOME _ => ()
-              | NONE => error ("FAIL: " ^ name ^ " not registered after #include"))
+              | NONE =>
+                error ("FAIL: " ^ name ^ " not registered after #include"))
     ["setjmp", "longjmp", "vprintf"]
 \<close>
 
@@ -707,7 +757,8 @@ c11\<open>
 int regression_probe_name = 7;
 \<close>
 
-subsection\<open>\<open>set_cenv_default\<close>/\<open>reset_cenv\<close>: Explicit Control over \<open>cenv\<close>'s Scope\<close>
+subsection\<open>\<open>set_cenv_default\<close>/\<open>reset_cenv\<close>: Explicit Control over \<open>cenv\<close>'s
+  Scope\<close>
 text\<open>
   Every \<open>c11\<close>-family command threads \<open>cenv\<close> through the theory like any
   other persistent, per-theory Isabelle state, which is what lets \<open>c11\<close>
@@ -732,19 +783,24 @@ c11\<open>int cenv_reset_probe_a;\<close>
 ML\<open>
 val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
-  if Symtab.defined idents "cenv_reset_probe_a" andalso Symtab.defined idents "fact" then ()
-  else error "FAIL: both the just-declared probe and an earlier declaration should be visible"
+  if Symtab.defined idents "cenv_reset_probe_a"
+    andalso Symtab.defined idents "fact" then ()
+  else error
+    ("FAIL: both the just-declared probe and an earlier declaration should " ^
+     "be visible")
 \<close>
 reset_cenv
 ML\<open>
 val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
   if Symtab.defined idents "cenv_reset_probe_a" then
-    error "FAIL: cenv_reset_probe_a (declared after set_cenv_default) should not survive reset_cenv"
+    error ("FAIL: cenv_reset_probe_a (declared after set_cenv_default) " ^
+           "should not survive reset_cenv")
   else ()
 val _ =
   if Symtab.defined idents "fact" then ()
-  else error "FAIL: fact (declared before set_cenv_default) should survive reset_cenv"
+  else error
+    "FAIL: fact (declared before set_cenv_default) should survive reset_cenv"
 \<close>
 text\<open>Accumulation resumes normally from the restored baseline - a fresh
   declaration after \<open>reset_cenv\<close> is visible, the discarded one stays gone.\<close>
@@ -752,10 +808,13 @@ c11\<open>int cenv_reset_probe_b;\<close>
 ML\<open>
 val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
 val _ =
-  if Symtab.defined idents "cenv_reset_probe_b" andalso Symtab.defined idents "fact"
+  if Symtab.defined idents "cenv_reset_probe_b"
+    andalso Symtab.defined idents "fact"
      andalso not (Symtab.defined idents "cenv_reset_probe_a")
   then ()
-  else error "FAIL: accumulation after reset_cenv did not resume from the restored baseline"
+  else error
+    ("FAIL: accumulation after reset_cenv did not resume from the restored " ^
+     "baseline")
 \<close>
 
 subsection\<open>\<open>c11_file\<close> on real-world C11 sources (\<^verbatim>\<open>parser_menhir\<close>)\<close>
@@ -787,10 +846,13 @@ text\<open>Regression test for \<open>run_c11_file\<close>'s own fix, above: \<o
   genuinely ran against file-sourced input, not just inline \<open>c11\<close> ones.\<close>
 ML\<open>
 val CEnv.mk {idents, ...} = CEnv.get (Context.Theory @{theory})
-val globals = Symtab.dest idents |> List.filter (fn (_, CEnv.Global _) => true | _ => false)
+val globals =
+  Symtab.dest idents |> List.filter (fn (_, CEnv.Global _) => true | _ => false)
 val _ =
   if null globals
-  then error "FAIL: c11_file did not register any Global identifiers - analyse_and_eval did not run"
+  then error
+    ("FAIL: c11_file did not register any Global identifiers - " ^
+     "analyse_and_eval did not run")
   else writeln ("PASS: c11_file registered " ^ Int.toString (length globals) ^
                 " global identifier(s), e.g. \"" ^ #1 (hd globals) ^ "\"")
 \<close>
@@ -834,7 +896,8 @@ declare [[ML_print_depth=100]]
 ML\<open>CEnv.get_ast "C11_Tests#5" @{theory}\<close>
 
 
-subsection\<open>Tests on Assignment operators, Increment/decrement, Comma and ternary Operators\<close>
+subsection\<open>Tests on Assignment operators, Increment/decrement,
+  Comma and ternary Operators\<close>
 c11\<open>
 int test_assign(void) {
   int a = 1, b = 2, r;
@@ -851,7 +914,8 @@ int test_assign(void) {
 }
 \<close>
 
-subsection\<open>Pointers, arrays, structs, casts, sizeof/alignof, and generic selection\<close>
+subsection\<open>Pointers, arrays, structs, casts, sizeof/alignof,
+  and generic selection\<close>
 c11\<open>
 struct point { int x; int y; };
 
@@ -873,7 +937,8 @@ int test_misc(int n, ...) {
 
 text\<open>
   The following blocks exercise statement-level constructs (\<open>statement\<close> and its
-  alternatives): iteration, selection/switch, and jump statements including \<open>goto\<close>.
+  alternatives): iteration, selection/switch, and jump statements including
+  \<open>goto\<close>.
 \<close>
 
 subsection\<open>Iteration statements: while, do-while, and all four for-loop forms\<close>
@@ -998,7 +1063,8 @@ main(void) { return 0; }
 
 
 subsection\<open>The Preprocessor Fragment\<close>
-text\<open>The preprocessor fragment: a missing header name, and an unterminated \<open>#ifdef\<close>.\<close>
+text\<open>The preprocessor fragment: a missing header name, and an unterminated
+  \<open>#ifdef\<close>.\<close>
 c11_reject\<open>
 #include
 int x;
@@ -1052,17 +1118,17 @@ int a = 0;
 \<close>
 
 text\<open>
-  A Frama-C/ACSL-style annotation comment (\<^verbatim>\<open>Isabelle_C\<close>'s other supported style):
-  each line is introduced by ACSL's own \<open>@\<close> continuation marker, followed by
-  a bare keyword and a plain double-quoted string. Syntactically this is
-  exactly the \<open>@tag "..."\<close> shape from above, so - now that a quoted string is
-  a recognized alternative to a cartouche body - \<open>requires\<close>/\<open>ensures\<close> are
-  picked up as genuine (level-\<open>0\<close>) antiquotation nodes here, tag and body
+  A Frama-C/ACSL-style annotation comment (\<^verbatim>\<open>Isabelle_C\<close>'s other supported
+  style): each line is introduced by ACSL's own \<open>@\<close> continuation marker,
+  followed by a bare keyword and a plain double-quoted string. Syntactically
+  this is exactly the \<open>@tag "..."\<close> shape from above, so - now that a quoted
+  string is a recognized alternative to a cartouche body - \<open>requires\<close>/\<open>ensures\<close>
+  are picked up as genuine (level-\<open>0\<close>) antiquotation nodes here, tag and body
   text alike; nothing about \<open>requires\<close>/\<open>ensures\<close> is otherwise special to the
-  lexer - it has no notion of an ACSL command language, and each dispatches
-  to the same dummy handler as \<open>@setup\<close> above (registered for exactly this
-  reason) - it just happens that ACSL's own annotation syntax already fits
-  the general tag+string shape this fragment recognizes.
+  lexer - it has no notion of an ACSL command language, and each dispatches to
+  the same dummy handler as \<open>@setup\<close> above (registered for exactly this reason)
+  - it just happens that ACSL's own annotation syntax already fits the general
+  tag+string shape this fragment recognizes.
 \<close>
 c11\<open>
 /*@ requires "n >= 0"
@@ -1188,7 +1254,8 @@ int test_ctx_param(/*@ probe_ast */ int p) {
 \<close>
 ML\<open>case !AST of
      C_Ast.Units [C_Ast.CTranslUnit _] => ()
-   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
 
 c11\<open>
 int test_ctx_finest(int a, int b, int c) {
@@ -1200,7 +1267,8 @@ ML\<open>case !AST of
      C_Ast.Expr (C_Ast.CBinary (_,
                    C_Ast.CVar (C_Ast.Ident ("b", _, _), _),
                    C_Ast.CVar (C_Ast.Ident ("c", _, _), _), _)) => ()
-   | other => error ("Expected Expr (CBinary (_, b, c, _)), got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("Expected Expr (CBinary (_, b, c, _)), got " ^ C_Ast.pp_root other)\<close>
 
 text\<open>Top-level sharing: a comment on one global declaration among several now
   resolves to the whole original translation unit, not just the one
@@ -1214,8 +1282,11 @@ int test_ctx_g3;
 ML\<open>case !AST of
      C_Ast.Units [C_Ast.CTranslUnit (eds, _)] =>
        if length eds = 3 then ()
-       else error ("Shared root holds " ^ Int.toString (length eds) ^ " declarations, expected 3")
-   | other => error ("Expected Units [CTranslUnit (_, _)], got " ^ C_Ast.pp_root other)\<close>
+       else error
+         ("Shared root holds " ^ Int.toString (length eds)
+          ^ " declarations, expected 3")
+   | other =>
+     error ("Expected Units [CTranslUnit (_, _)], got " ^ C_Ast.pp_root other)\<close>
 
 text\<open>The \<open>term\<close> antiquotation: parses its cartouche body as a genuine HOL
   term against the theory's current context via \<^ML>\<open>Syntax.read_term\<close> - an
@@ -1276,20 +1347,20 @@ text\<open>The \<open>definition\<close> antiquotation: its cartouche body is pa
   uses (\<open>Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name ":" -- Parse.prop)
   -- Parse_Spec.if_assumes -- Parse.for_fixes\<close>, \<^verbatim>\<open>Pure/Pure.thy\<close>), and the
   result run through \<^ML>\<open>Specification.definition_cmd\<close>, the same underlying
-  action - so \<open>test_definition_anchor_const\<close> below is a genuine theory
+  action - so \<open>anchor_const\<close> below is a genuine theory
   constant with a genuine definitional theorem
-  \<open>test_definition_anchor_const_def\<close>, not merely recorded data. The
+  \<open>anchor_const_def\<close>, not merely recorded data. The
   \<^emph>\<open>definitive\<close> check is the lemma right after the \<open>c11\<close> block: it only
   type-checks and only proves if the constant and its definitional
   equation both really exist at the real theory level, exactly as if
   \<open>definition\<close> had been written directly outside any C comment.\<close>
 c11\<open>
-//@ definition \<open>test_definition_anchor_const :: nat where "test_definition_anchor_const = 41 + 1"\<close>
+//@ definition \<open>anchor_const :: nat where "anchor_const = 41 + 1"\<close>
 int test_definition_anchor;
 \<close>
 
-lemma test_definition_anchor_const_check: "test_definition_anchor_const = 42"
-  by (simp add: test_definition_anchor_const_def)
+lemma anchor_const_check: "anchor_const = 42"
+  by (simp add: anchor_const_def)
 
 text\<open>The \<open>lemma\<close> antiquotation: Isabelle/C's "proof-carrying code" - a
   genuine property about a C-level constant, proved right where the C code
@@ -1298,20 +1369,20 @@ text\<open>The \<open>lemma\<close> antiquotation: Isabelle/C's "proof-carrying 
   the whole point: a wrong or missing method genuinely fails the \<open>c11\<close>
   block, exactly like a real, misproved top-level \<open>lemma\<close> would. The
   \<^emph>\<open>definitive\<close> check is the bare \<open>thm\<close> command right after the second
-  \<open>c11\<close> block: it only succeeds if \<open>test_lemma_anchor_fact\<close> genuinely
+  \<open>c11\<close> block: it only succeeds if \<open>anchor_fact\<close> genuinely
   exists as a real, later-retrievable fact, not merely stored text.\<close>
 c11\<open>
-//@ definition \<open>test_lemma_anchor_N :: nat where "test_lemma_anchor_N = 5"\<close>
-int test_lemma_anchor_N_decl;
+//@ definition \<open>anchor_N :: nat where "anchor_N = 5"\<close>
+int anchor_N_decl;
 \<close>
 
 c11\<open>
-//@ lemma \<open>test_lemma_anchor_fact: "test_lemma_anchor_N * test_lemma_anchor_N < 100" 
-    by (simp add: test_lemma_anchor_N_def)\<close>
+//@ lemma \<open>anchor_fact: "anchor_N * anchor_N < 100" 
+    by (simp add: anchor_N_def)\<close>
 int test_lemma_anchor;
 \<close>
 
-thm test_lemma_anchor_fact
+thm anchor_fact
 
 subsection\<open>Exporting Stored Sections\<close>
 text\<open>\<open>c11_export_h\<close>/\<open>c11_export_c\<close> (\<open>\<section>3\<close>) render a stored section's AST back
@@ -1329,14 +1400,18 @@ text\<open>\<open>c11_export_h\<close>/\<open>c11_export_c\<close> (\<open>\<sec
 c11\<open>int c11_export_test(int x) { return x + 1; }\<close>
 ML\<open>
 val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
-val export_test_key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val export_test_key = Context.theory_name {long = false} @{theory} ^ "#"
+  ^ Int.toString (units - 1)
 val exported_text =
   case CEnv.get_ast export_test_key @{theory} of
     SOME root => C_Ast.pp_root root
-  | NONE => error ("FAIL: nothing stored under " ^ export_test_key ^ " right after parsing it")
+  | NONE =>
+    error ("FAIL: nothing stored under " ^ export_test_key
+           ^ " right after parsing it")
 val _ =
   if String.isSubstring "c11_export_test" exported_text
-  then () else error ("FAIL: pp_root's own rendering lost the function name:\n" ^ exported_text)
+  then () else error
+    ("FAIL: pp_root's own rendering lost the function name:\n" ^ exported_text)
 \<close>
 
 text\<open>The \<open>[verbatim]\<close> export option instead hands back a section's own
@@ -1355,18 +1430,25 @@ int      c11_export_verbatim_test  ( int x )
 \<close>
 ML\<open>
 val CEnv.mk {units, ...} = CEnv.get (Context.Theory @{theory})
-val verbatim_test_key = Context.theory_name {long = false} @{theory} ^ "#" ^ Int.toString (units - 1)
+val verbatim_test_key = Context.theory_name {long = false} @{theory} ^ "#"
+  ^ Int.toString (units - 1)
 val original_text =
   case CEnv.get_source verbatim_test_key @{theory} of
     SOME text => text
-  | NONE => error ("FAIL: nothing stored under " ^ verbatim_test_key ^ " right after parsing it")
+  | NONE =>
+    error ("FAIL: nothing stored under " ^ verbatim_test_key
+           ^ " right after parsing it")
 val _ =
-  if String.isSubstring "int      c11_export_verbatim_test  ( int x )" original_text
-  then () else error ("FAIL: get_source lost the original, irregularly-spaced text:\n" ^ original_text)
+  if String.isSubstring "int      c11_export_verbatim_test  ( int x )"
+    original_text
+  then () else error
+    ("FAIL: get_source lost the original, irregularly-spaced text:\n"
+     ^ original_text)
 val pretty_text =
   case CEnv.get_ast verbatim_test_key @{theory} of
     SOME root => C_Ast.pp_root root
-  | NONE => error "unreachable: get_ast disagrees with get_source about what was stored"
+  | NONE =>
+    error "unreachable: get_ast disagrees with get_source about what was stored"
 val _ =
   if original_text = pretty_text
   then error "FAIL: verbatim and pretty-printed text unexpectedly coincide"
@@ -1398,7 +1480,9 @@ text\<open>
 
 ML\<open>
 val NAVI_COUNT = Unsynchronized.ref 0
-val counting_navi_antiq = let fun probe _ _ thy = (NAVI_COUNT := !NAVI_COUNT + 1; thy) in CEnv.store_antiq ("answer", CEnv.lift_theory_antiq probe) end
+val counting_navi_antiq = let fun probe _ _ thy =
+  (NAVI_COUNT := !NAVI_COUNT + 1; thy)
+    in CEnv.store_antiq ("answer", CEnv.lift_theory_antiq probe) end
 \<close>
 setup\<open>counting_navi_antiq\<close>
 
@@ -1411,14 +1495,16 @@ c11\<open>
 int navi_none;
 \<close>
 ML\<open>case !AST of C_Ast.Units [C_Ast.CTranslUnit _] => ()
-   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
 
 c11\<open>
 /*@ probe_ast[] */
 int navi_empty;
 \<close>
 ML\<open>case !AST of C_Ast.Units [C_Ast.CTranslUnit _] => ()
-   | other => error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("Expected Units [CTranslUnit _], got " ^ C_Ast.pp_root other)\<close>
 
 text\<open>The ambiguity check: a tag ending in a navi-alphabet letter, with no
   brackets, must still parse as that whole tag with an empty navi list.\<close>
@@ -1427,7 +1513,9 @@ c11\<open>
 int navi_tag_ends_in_r;
 \<close>
 ML\<open>if !NAVI_COUNT = 1 then ()
-   else error ("Expected the \"answer\" tag to fire exactly once, fired " ^ Int.toString (!NAVI_COUNT))\<close>
+   else error
+     ("Expected the \"answer\" tag to fire exactly once, fired "
+      ^ Int.toString (!NAVI_COUNT))\<close>
 
 text\<open>\<open>u\<close>/\<open>U\<close> ascent: the antiquotation sits on the innermost \<open>b * c\<close>, whose
   closest-context stack is three consecutive \<open>Expr\<close> frames (\<open>b * c\<close>, the
@@ -1446,7 +1534,8 @@ int test_navi_u(int a, int b, int c) {
 }
 \<close>
 ML\<open>case !AST of C_Ast.Expr (C_Ast.CCast _) => ()
-   | other => error ("[uu]: expected Expr (CCast _), got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("[uu]: expected Expr (CCast _), got " ^ C_Ast.pp_root other)\<close>
 
 c11\<open>
 int test_navi_uuu(int a, int b, int c) {
@@ -1457,7 +1546,9 @@ int test_navi_uuu(int a, int b, int c) {
 \<close>
 ML\<open>case !AST of
      C_Ast.Expr (C_Ast.CBinary (C_Ast.CAddOp, _, _, _)) => ()
-   | other => error ("[uuu]: expected Expr (CBinary (CAddOp, _, _, _)), got " ^ C_Ast.pp_root other)\<close>
+   | other =>
+     error ("[uuu]: expected Expr (CBinary (CAddOp, _, _, _)), got "
+            ^ C_Ast.pp_root other)\<close>
 
 c11\<open>
 int test_navi_bigU(int a, int b, int c) {
@@ -1467,7 +1558,9 @@ int test_navi_bigU(int a, int b, int c) {
 \<close>
 ML\<open>case !AST of
      C_Ast.Expr (C_Ast.CBinary (C_Ast.CAddOp, _, _, _)) => ()
-   | other => error ("[U]: expected Expr (CBinary (CAddOp, _, _, _)), same as [uuu], got " ^
+   | other =>
+     error (("[U]: expected Expr (CBinary (CAddOp, _, _, _)), same as [uuu], " ^
+             "got ") ^
                       C_Ast.pp_root other)\<close>
 
 c11\<open>
@@ -1477,7 +1570,8 @@ int test_navi_Uuu(int a, int b, int c) {
 }
 \<close>
 ML\<open>case !AST of C_Ast.Stmt (C_Ast.CCompound _) => ()
-   | other => error ("[Uuu]: expected Stmt (CCompound _) (the function body), got " ^
+   | other =>
+     error ("[Uuu]: expected Stmt (CCompound _) (the function body), got " ^
                       C_Ast.pp_root other)\<close>
 
 text\<open>\<open>r\<close>/\<open>d\<close> descent: the antiquotation sits directly on an \<open>if\<close> statement
@@ -1565,9 +1659,11 @@ text\<open>\<open>d\<close> on a leaf must \<open>error\<close>, not raise an un
 ML\<open>
 val _ =
   (run_c11 (Input.source true
-       "int leaf_error_test(int a) {\n  /*@ probe_ast[dd] */ a;\n  return 0;\n}\n"
+       ("int leaf_error_test(int a) {\n  /*@ probe_ast[dd] */ a;\n  return " ^
+        "0;\n}\n")
        (@{here}, @{here})) @{theory};
-   error "leaf-error test: expected a select_ast navigation error, but none occurred")
+   error ("leaf-error test: expected a select_ast navigation error, but none " ^
+          "occurred"))
   handle ERROR msg =>
     if String.isSubstring "navigation index" msg then ()
     else error ("leaf-error test: unexpected error message: " ^ msg)
@@ -1636,47 +1732,51 @@ nt a = 1;
 section\<open>A Pitfall: a Point Reported as a Range Looks Fine Until It Isn't\<close>
 
 text\<open>
-  This note documents a concrete case, found while hyperlinking declarations and uses of
-  identifiers in a language built on this framework, of the pitfall already flagged in
-  \secref{sec:positions}: ``A single point position is rarely what a caller wants to
-  highlight - a \<^emph>\<open>range\<close> is.'' It is included here as its own section, separate from the
-  main manual, so it can be pulled into \<^verbatim>\<open>Manual.thy\<close>'s ``Calculating Positions'' section
-  (or elsewhere) once its final placement is decided.
+  This note documents a concrete case, found while hyperlinking declarations and
+  uses of identifiers in a language built on this framework, of the pitfall
+  already flagged in \secref{sec:positions}: ``A single point position is rarely
+  what a caller wants to highlight - a \<^emph>\<open>range\<close> is.'' It is included here as its
+  own section, separate from the main manual, so it can be pulled into
+  \<^verbatim>\<open>Manual.thy\<close>'s ``Calculating Positions'' section (or elsewhere) once its final
+  placement is decided.
 
-  It is tempting, for a single token such as an identifier, to build its @{ML_type
-  \<open>Position.T\<close>} once at the token's start and then reuse that same point wherever the
-  framework asks for a range - as the value passed to @{ML \<open>Context_Position.report\<close>} or
-  wrapped in @{ML \<open>Position.entity_markup\<close>}, say. This compiles, and it even \<^emph>\<open>looks\<close>
-  correct under casual testing, because a bare point and a genuine one-symbol range render
-  identically: there is nothing for the IDE to show differently between ``this token is one
-  symbol wide and fully covered'' and ``only the first symbol of this token is covered''.
-  The mistake only becomes visible once a token \<^emph>\<open>longer\<close> than one symbol is reported the
-  same way - and then only its very first symbol ends up highlighted, hoverable, or
-  clickable, with the rest of the token showing no markup at all. Test cases built from
-  short, one-letter example names (\<open>x\<close>, \<open>i\<close>) will never expose this; the bug hides until
-  someone happens to click on the third letter of a longer name and finds nothing there.
+  It is tempting, for a single token such as an identifier, to build its
+  @{ML_type \<open>Position.T\<close>} once at the token's start and then reuse that same
+  point wherever the framework asks for a range - as the value passed to @{ML
+  \<open>Context_Position.report\<close>} or wrapped in @{ML \<open>Position.entity_markup\<close>}, say.
+  This compiles, and it even \<^emph>\<open>looks\<close> correct under casual testing, because a
+  bare point and a genuine one-symbol range render identically: there is nothing
+  for the IDE to show differently between ``this token is one symbol wide and
+  fully covered'' and ``only the first symbol of this token is covered''. The
+  mistake only becomes visible once a token \<^emph>\<open>longer\<close> than one symbol is reported
+  the same way - and then only its very first symbol ends up highlighted,
+  hoverable, or clickable, with the rest of the token showing no markup at all.
+  Test cases built from short, one-letter example names (\<open>x\<close>, \<open>i\<close>) will never
+  expose this; the bug hides until someone happens to click on the third letter
+  of a longer name and finds nothing there.
 
-  The fix is to never pass a bare point where a range is wanted: given the point @{term
-  \<open>pos\<close>} at which a name of known text @{term \<open>name\<close>} starts, @{ML
-  \<open>fn (name, pos) => Position.symbol_explode name pos\<close>} advances @{term \<open>pos\<close>} across
-  exactly that text to the name's own end position (correctly, in symbols -
-  \secref{sec:positions}), and
-  @{ML \<open>fn (name, pos) => Position.range_position (Position.range (pos, Position.symbol_explode name pos))\<close>}
-  folds start and end back into the one @{ML_type \<open>Position.T\<close>} the reporting functions
-  expect. Build that combined position once and report \<^emph>\<open>it\<close>, not the bare start point, at
-  every use of that name - declaration, self-reference, and every later occurrence alike.
+  The fix is to never pass a bare point where a range is wanted: given the point
+  @{term \<open>pos\<close>} at which a name of known text @{term \<open>name\<close>} starts, @{ML \<open>fn
+  (name, pos) => Position.symbol_explode name pos\<close>} advances @{term \<open>pos\<close>}
+  across exactly that text to the name's own end position (correctly, in symbols
+  - \secref{sec:positions}), and @{ML \<open>fn (name, pos) => Position.range_position
+  (Position.range (pos, Position.symbol_explode name pos))\<close>} folds start and end
+  back into the one @{ML_type \<open>Position.T\<close>} the reporting functions expect.
+  Build that combined position once and report \<^emph>\<open>it\<close>, not the bare start point,
+  at every use of that name - declaration, self-reference, and every later
+  occurrence alike.
 \<close>
 
 
 section\<open>The Semantic-Backend Hook\<close>
 
 text\<open>
-  \<open>setup_backend\<close> installs the function \<^verbatim>\<open>full_eval_and_store\<close> runs on the parsed root and the
-  freshly stored theory at the end of every \<open>c11\<close>/\<open>c11_file\<close>. By default that is
-  \<open>K I\<close>. Here a backend that records which kind of root it was handed, and which stored
-  a theory-level fact, is installed, exercised, and then removed again so that the theories
-  chained after this one see the default. The fragments \<open>c11_expr\<close> and friends must
-  \<^emph>\<open>not\<close> trigger it.
+  \<open>setup_backend\<close> installs the function \<^verbatim>\<open>full_eval_and_store\<close> runs on the parsed
+  root and the freshly stored theory at the end of every \<open>c11\<close>/\<open>c11_file\<close>. By
+  default that is \<open>K I\<close>. Here a backend that records which kind of root it was
+  handed, and which stored a theory-level fact, is installed, exercised, and
+  then removed again so that the theories chained after this one see the
+  default. The fragments \<open>c11_expr\<close> and friends must \<^emph>\<open>not\<close> trigger it.
 \<close>
 
 ML\<open>
@@ -1686,13 +1786,15 @@ val BACKEND_LOG = Unsynchronized.ref ([] : string list)
 setup_backend\<open>fn root => fn thy =>
   (BACKEND_LOG := (case root of
                      C_Ast.Units us => "Units " ^ Int.toString (length us)
-                   | C_Ast.Expr _ => "Expr" | C_Ast.Stmt _ => "Stmt" | C_Ast.Id _ => "Id")
+                   | C_Ast.Expr _ => "Expr" | C_Ast.Stmt _ =>
+                     "Stmt" | C_Ast.Id _ => "Id")
                   :: !BACKEND_LOG;
    thy)\<close>
 
 c11_expr\<open>1 + 2\<close>
 
-ML\<open>val _ = if null (!BACKEND_LOG) then () else error "backend ran for an expression fragment"\<close>
+ML\<open>val _ = if null (!BACKEND_LOG) then ()
+  else error "backend ran for an expression fragment"\<close>
 
 c11\<open>int backend_probe_f(int x) { return x; }\<close>
 
@@ -1701,8 +1803,9 @@ val _ = if !BACKEND_LOG = ["Units 1"] then ()
         else error ("backend log: " ^ String.concatWith ", " (!BACKEND_LOG))
 \<close>
 
-text\<open>The backend gets the theory the root was stored into, and its result is the theory the
-  command continues with: the next backend installs a definition from it.\<close>
+text\<open>The backend gets the theory the root was stored into, and its result is the
+  theory the command continues with: the next backend installs a definition from
+  it.\<close>
 
 setup_backend\<open>fn _ => fn thy =>
   let val ((_, _), lthy) =
@@ -1730,13 +1833,14 @@ val _ = if length (!BACKEND_LOG) = 1 then ()
 section\<open>Parallel Parses\<close>
 
 text\<open>
-  Every parse has its own state object (\<^verbatim>\<open>C11_State\<close>), so any number of parses may run at
-  once. Twelve different translation units, with block and line comments (some carrying
-  antiquotations) and a \<open>typedef\<close> of their own, are parsed by \<^ML>\<open>Par_List.map\<close>, ten rounds in a
-  row. Each result must equal a sequential parse's (up to the name of the typedef, which is
-  new in every round), and the typedef names of all accepted parses must end up in the
-  session's set. (With the process-wide state of the earlier version this failed with
-  spurious syntax errors, or comments attached to the wrong program.)
+  Every parse has its own state object (\<^verbatim>\<open>C11_State\<close>), so any number of parses
+  may run at once. Twelve different translation units, with block and line
+  comments (some carrying antiquotations) and a \<open>typedef\<close> of their own, are
+  parsed by \<^ML>\<open>Par_List.map\<close>, ten rounds in a row. Each result must equal a
+  sequential parse's (up to the name of the typedef, which is new in every
+  round), and the typedef names of all accepted parses must end up in the
+  session's set. (With the process-wide state of the earlier version this failed
+  with spurious syntax errors, or comments attached to the wrong program.)
 \<close>
 
 ML\<open>
@@ -1752,7 +1856,8 @@ local
             [ "  /* a block comment " ^ n ^ " */",
               "  // a line comment",
               "  /*@ probe_ast */",
-              "  if (x > " ^ Int.toString i ^ ") { x = x + " ^ Int.toString (k * 100 + i) ^ "; }" ])) @
+              "  if (x > " ^ Int.toString i ^ ") { x = x + "
+                ^ Int.toString (k * 100 + i) ^ "; }" ])) @
           [ "  par_" ^ tag ^ "_t" ^ n ^ " y = x;", "  return y;", "}" ]) ^ "\n"
     end
 
@@ -1761,41 +1866,54 @@ local
       fun go acc s =
         (case Substring.position pat (Substring.full s) of
            (pre, rest) =>
-             if Substring.isEmpty rest then String.concat (rev (Substring.string pre :: acc))
-             else go (rep :: Substring.string pre :: acc) (Substring.string (Substring.triml (size pat) rest)))
+             if Substring.isEmpty rest
+               then String.concat (rev (Substring.string pre :: acc))
+             else go (rep :: Substring.string pre :: acc)
+               (Substring.string (Substring.triml (size pat) rest)))
     in go [] s end
 
   fun normalize tag text = replace_all ("par_" ^ tag ^ "_t") "par_X_t" text
 
   fun parse loud text =
-    (case (if loud then C11_Parse.parse_loud else C11_Parse.parse_quiet) ctxt (Input.string text) of
+    (case (if loud then C11_Parse.parse_loud else C11_Parse.parse_quiet) ctxt
+     (Input.string text) of
        SOME r => C_Ast.pp_root r
      | NONE => error "parallel test: no result")
 
-  (* the reference: the same programs, parsed one after the other, with typedef names of their own *)
-  val reference = List.tabulate (12, fn k => normalize "ref" (parse true (prog "ref" k)))
+  (* the reference: the same programs, parsed one after the other, with typedef
+     names of their own *)
+  val reference =
+    List.tabulate (12, fn k => normalize "ref" (parse true (prog "ref" k)))
 in
   val _ =
     List.app (fn round =>
       let
         val tag = "r" ^ Int.toString round
         val results =
-          Par_List.map (fn k => Exn.capture (fn () => parse true (prog tag k)) ()) (List.tabulate (12, I))
+          Par_List.map
+            (fn k => Exn.capture (fn () => parse true (prog tag k)) ())
+              (List.tabulate (12, I))
       in
         List.app (fn (k, res) =>
           (case res of
              Exn.Res text =>
                if normalize tag text = nth reference k then ()
-               else error ("parallel parse: wrong result for program " ^ Int.toString k)
-           | Exn.Exn e => error ("parallel parse failed: " ^ Runtime.exn_message e)))
+               else error
+                 ("parallel parse: wrong result for program " ^ Int.toString k)
+           | Exn.Exn e =>
+             error ("parallel parse failed: " ^ Runtime.exn_message e)))
           (map_index I results)
       end) (List.tabulate (10, I))
 
   val _ =
-    if forall (fn (tag, k) => member (op =) (C11_Typedefs.snapshot ()) ("par_" ^ tag ^ "_t" ^ Int.toString k))
+    if forall
+      (fn (tag, k) =>
+       member (op =) (C11_Typedefs.snapshot ())
+         ("par_" ^ tag ^ "_t" ^ Int.toString k))
          (map (fn r => ("r" ^ Int.toString r, 7)) (List.tabulate (10, I)))
     then ()
-    else error "the typedef names of the accepted parses must be in the session's set"
+    else error
+      "the typedef names of the accepted parses must be in the session's set"
 end
 \<close>
 

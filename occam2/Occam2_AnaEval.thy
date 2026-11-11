@@ -1,4 +1,4 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay
  *
  * All rights reserved.
@@ -14,17 +14,18 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 theory Occam2_AnaEval
   imports "Occam2_Env"
@@ -34,46 +35,49 @@ section\<open>Analyse and Eval\<close>
 
 text\<open>
   \<open>analyse_and_eval\<close> is the occam 2 counterpart of the C11 pass of the same name
-  (\<^verbatim>\<open>C11_AnaEval.thy\<close>, whose long explanation applies here almost verbatim and is not
-  repeated): a single, purely functional, scoped walk over a parsed \<open>root\<close>, threading
-  \<open>oenv\<close> through the descent, collecting every antiquotation action paired with its
-  \<open>level\<close> instead of applying it, and hyperlinking every name use to its declaration.
-  What is specific to occam:
+  (\<^verbatim>\<open>C11_AnaEval.thy\<close>, whose long explanation applies here almost verbatim and is
+  not repeated): a single, purely functional, scoped walk over a parsed \<open>root\<close>,
+  threading \<open>oenv\<close> through the descent, collecting every antiquotation action
+  paired with its \<open>level\<close> instead of applying it, and hyperlinking every name
+  use to its declaration. What is specific to occam:
 
   \<^item> \<^bold>\<open>Scoping.\<close> A specification is in scope exactly in the process (or value
-    process, choice, option, variant, alternative) it prefixes: \<open>PSpecP (spec, p)\<close>
-    registers \<open>spec\<close>'s names, walks \<open>p\<close>, and then restores the incoming \<open>idents\<close>
-    table - the same shadow-and-restore discipline as C11's blocks. A replicator
-    (\<open>SEQ i = 0 FOR n\<close>) scopes its index over its body only; its base and count are
-    walked \<^emph>\<open>before\<close> the index is registered. A \<open>Specs\<close> unit (a library-style run of
-    specifications) is the one case that does \<^emph>\<open>not\<close> restore: its names stay in \<open>idents\<close>
-    and so are visible to every later fragment of the theory.
-  \<^item> \<^bold>\<open>No recursion.\<close> occam 2 forbids recursive procedures and functions: the body of a
-    \<open>PROC\<close>/\<open>FUNCTION\<close> is walked \<^emph>\<open>before\<close> its own name is registered, so a self-call is
-    reported as an undeclared name (\<^ML>\<open>Markup.bad ()\<close>), exactly as the language
-    demands. A declaration likewise sees only the names above it: \<open>x IS x:\<close> refers to
-    an \<^emph>\<open>outer\<close> \<open>x\<close>.
+    process, choice, option, variant, alternative) it prefixes: \<open>PSpecP (spec,
+    p)\<close> registers \<open>spec\<close>'s names, walks \<open>p\<close>, and then restores the incoming
+    \<open>idents\<close> table - the same shadow-and-restore discipline as C11's blocks. A
+    replicator (\<open>SEQ i = 0 FOR n\<close>) scopes its index over its body only; its base
+    and count are walked \<^emph>\<open>before\<close> the index is registered. A \<open>Specs\<close> unit (a
+    library-style run of specifications) is the one case that does \<^emph>\<open>not\<close>
+    restore: its names stay in \<open>idents\<close> and so are visible to every later
+    fragment of the theory.
+  \<^item> \<^bold>\<open>No recursion.\<close> occam 2 forbids recursive procedures and functions: the body
+    of a \<open>PROC\<close>/\<open>FUNCTION\<close> is walked \<^emph>\<open>before\<close> its own name is registered, so a
+    self-call is reported as an undeclared name (\<^ML>\<open>Markup.bad ()\<close>), exactly as
+    the language demands. A declaration likewise sees only the names above it:
+    \<open>x IS x:\<close> refers to an \<^emph>\<open>outer\<close> \<open>x\<close>.
   \<^item> \<^bold>\<open>Formals.\<close> Formal parameters are registered one by one, each type walked
     \<^emph>\<open>before\<close> its names, so a later formal's array size may use an earlier formal
     (\<open>PROC p (VAL INT n, []BYTE s)\<close> and \<open>[n]BYTE\<close> alike).
   \<^item> \<^bold>\<open>One name space.\<close> Variables, channels, abbreviations, parameters, replicator
-    indices, procedures, functions, protocols and protocol tags are all names in the one
-    \<open>idents\<close> table (see \<^verbatim>\<open>Occam2_Env.thy\<close>); a use is hyperlinked whatever it was
-    declared as, and the entity kind in the markup says which.
-  \<^item> \<^bold>\<open>The closest-context stack\<close> \<open>ctx : pos root list\<close>. \<open>walk_expr\<close>, \<open>walk_proc\<close> and
-    \<open>walk_spec\<close> always push their own node (\<open>Expr\<close>/\<open>Proc\<close>/\<open>Spec\<close>); everything else
-    (types, protocols, formals, replicators, choices, options, variants, alternatives,
-    guards) never pushes and uses \<open>hd ctx\<close>. An element used as an expression (an
-    assignment target, a channel, a variable on the right) is pushed as
-    \<open>Expr (EElem el)\<close>, so \<open>x[i]\<close> navigates to \<open>x\<close> and \<open>i\<close> as its two children.
-  \<^item> \<^bold>\<open>Navigation\<close> (\<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close>) is identical to C11's. The children of a node are, in
-    source order, its sub-expressions, sub-processes and sub-specifications; a
-    \<open>PSpecP (s, p)\<close> has the two children \<open>Spec s\<close> and \<open>Proc p\<close> (a chain of
-    specifications is therefore a right-nested chain of \<open>PSpecP\<close> nodes, each
-    reached by one more \<open>d\<close> step into \<open>r\<close>-th child 2); choices, options, variants,
-    alternatives, guards and replicators have no \<open>root\<close> variant and are flattened into
-    their parent's child list; types and protocols are dropped, as C11 drops
-    type-names.
+    indices, procedures, functions, protocols and protocol tags are all names in
+    the one \<open>idents\<close> table (see \<^verbatim>\<open>Occam2_Env.thy\<close>); a use is hyperlinked whatever
+    it was declared as, and the entity kind in the markup says which.
+  \<^item> \<^bold>\<open>The closest-context stack\<close> \<open>ctx : pos root list\<close>. \<open>walk_expr\<close>, \<open>walk_proc\<close>
+    and \<open>walk_spec\<close> always push their own node (\<open>Expr\<close>/\<open>Proc\<close>/\<open>Spec\<close>);
+    everything else (types, protocols, formals, replicators, choices, options,
+    variants, alternatives, guards) never pushes and uses \<open>hd ctx\<close>. An element
+    used as an expression (an assignment target, a channel, a variable on the
+    right) is pushed as \<open>Expr (EElem el)\<close>, so \<open>x[i]\<close> navigates to \<open>x\<close> and \<open>i\<close> as
+    its two children.
+  \<^item> \<^bold>\<open>Navigation\<close> (\<open>u\<close>/\<open>U\<close>/\<open>r\<close>/\<open>d\<close>) is identical to C11's. The children of a node
+    are, in source order, its sub-expressions, sub-processes and
+    sub-specifications; a \<open>PSpecP (s, p)\<close> has the two children \<open>Spec s\<close> and
+    \<open>Proc p\<close> (a chain of specifications is therefore a right-nested chain of
+    \<open>PSpecP\<close> nodes, each reached by one more \<open>d\<close> step into \<open>r\<close>-th child 2);
+    choices, options, variants, alternatives, guards and replicators have no
+    \<open>root\<close> variant and are flattened into their parent's child list; types and
+    protocols are dropped, as C11 drops type-names.
+
 \<close>
 ML\<open>
 structure AnaEval = struct
@@ -99,13 +103,15 @@ fun pos_of_root (A.Id id) = A.pos_of_ident id
 
 (* Exactly-once dispatch of every physical antiquotation, whatever number of AST
    nodes share its leftmost source position - the same design, for the same
-   reason, as C11's "Dispatched_Antiqs" (see C11_AnaEval.thy). The set of comments
-   already dispatched belongs to one walk ("analyse_and_eval" below installs a fresh one
-   for its dynamic extent) and is kept per thread: a walk is plain, synchronous recursion
-   on a single thread, so two walks running at the same time (in different threads) cannot
-   see each other's set - a process-wide variable, as before, made them interfere. *)
+   reason, as C11's "Dispatched_Antiqs" (see C11_AnaEval.thy). The set of
+   comments already dispatched belongs to one walk ("analyse_and_eval" below
+   installs a fresh one for its dynamic extent) and is kept per thread: a walk
+   is plain, synchronous recursion on a single thread, so two walks running at
+   the same time (in different threads) cannot see each other's set - a
+   process-wide variable, as before, made them interfere. *)
 structure Dispatched_Antiqs = struct
-  val state : Position.T A.comment list Unsynchronized.ref Thread_Data.var = Thread_Data.var ()
+  val state : Position.T A.comment list Unsynchronized.ref Thread_Data.var =
+    Thread_Data.var ()
   fun current () =
     (case Thread_Data.get state of
        SOME r => r
@@ -115,7 +121,8 @@ structure Dispatched_Antiqs = struct
   fun mark c = let val r = current () in r := c :: !r end
 end
 
-(* A navigation step's coarse target category, ignoring the constructor within. *)
+(* A navigation step's coarse target category, ignoring the constructor within.
+   *)
 fun category (A.Id _)    = 0
   | category (A.Expr _)  = 1
   | category (A.Proc _)  = 2
@@ -133,6 +140,7 @@ fun run_length (ctx as top :: _) =
    returning the unconsumed "(r|d)*" suffix together with the resulting
    stack. Derived directly from the user's own worked examples (each
    rule below cited by number):
+
    \<^item> Rule 1: "[u]" (the *whole* string, nothing left after it) on
      "[expr, ...]" is "that expr, unchanged" - a lone, final "u" is a no-op:
      "select_u" returns "ctx" as-is once it sees "up" with an empty tail.
@@ -150,6 +158,7 @@ fun run_length (ctx as top :: _) =
      necessarily final) "u" step against the smaller stack, i.e. "U" with a
      trivial run always moves past it, whereas a written-out "u" alone would
      not (rule 1) - "U" and "u" are deliberately not fully interchangeable. *)
+
 fun select_u ([], ctx) = ([], ctx)
   | select_u (A.up :: rest_navi, ctx) =
       if null rest_navi then ([], ctx)
@@ -163,7 +172,8 @@ fun select_u ([], ctx) = ([], ctx)
                 [_] => select_u (A.up :: rest_navi, ctx)
               | _ :: rest_ctx => select_u (A.up :: rest_navi, rest_ctx))
       end
-  | select_u (navi, ctx) = (navi, ctx) (* first "r"/"d": the "(u|U)*" phase is over *)
+  | select_u (navi, ctx) =
+      (navi, ctx) (* first "r"/"d": the "(u|U)*" phase is over *)
 
 (* The ordered, per-node-kind list of children "r"/"d" may navigate into
    (see the top-of-theory note): sub-expressions, sub-processes and
@@ -175,7 +185,8 @@ fun select_u ([], ctx) = ([], ctx)
 fun elem_expr el = A.Expr (A.EElem el)
 
 fun children_of_repl NONE = []
-  | children_of_repl (SOME (A.Repl (_, base, count, _))) = [A.Expr base, A.Expr count]
+  | children_of_repl (SOME (A.Repl (_, base, count, _))) =
+      [A.Expr base, A.Expr count]
 
 fun children_of_input (A.InVars (ch, items, _)) =
       elem_expr ch ::
@@ -187,7 +198,8 @@ fun children_of_outitem (A.OIExpr e) = [A.Expr e]
   | children_of_outitem (A.OICounted (e1, e2)) = [A.Expr e1, A.Expr e2]
 
 fun children_of_inputitem (A.IIVar el) = [elem_expr el]
-  | children_of_inputitem (A.IICounted (el1, el2)) = [elem_expr el1, elem_expr el2]
+  | children_of_inputitem (A.IICounted (el1, el2)) =
+      [elem_expr el1, elem_expr el2]
 
 fun children_of_vp (A.VPValof (p, es, _)) = A.Proc p :: map A.Expr es
   | children_of_vp (A.VPSpec (s, vp, _)) = A.Spec s :: children_of_vp vp
@@ -205,7 +217,8 @@ fun children_of_option (A.OpCases (es, p, _)) = map A.Expr es @ [A.Proc p]
   | children_of_option (A.OpSpec (s, o_, _)) = A.Spec s :: children_of_option o_
 
 fun children_of_guard (A.GInput (inp, _)) = children_of_input inp
-  | children_of_guard (A.GCondInput (e, inp, _)) = A.Expr e :: children_of_input inp
+  | children_of_guard (A.GCondInput (e, inp, _)) = A.Expr e
+      :: children_of_input inp
   | children_of_guard (A.GCondSkip (e, _)) = [A.Expr e]
 
 fun children_of_alt (A.AlGuarded (g, p, _)) = children_of_guard g @ [A.Proc p]
@@ -216,18 +229,21 @@ fun children_of_alt (A.AlGuarded (g, p, _)) = children_of_guard g @ [A.Proc p]
   | children_of_alt (A.AlSpec (s, a, _)) = A.Spec s :: children_of_alt a
 
 fun children_of_placed (A.PlProcessor (e, p, _)) = [A.Expr e, A.Proc p]
-  | children_of_placed (A.PlPar (repl, pls, _)) = children_of_repl repl @ maps children_of_placed pls
+  | children_of_placed (A.PlPar (repl, pls, _)) = children_of_repl repl
+      @ maps children_of_placed pls
 
 fun children_of_expr e =
   case e of
     A.EElem (A.ENamed _) => []
   | A.EElem (A.ESub (el, sub, _)) => [elem_expr el, A.Expr sub]
-  | A.EElem (A.ESlice (el, from, for, _)) => [elem_expr el, A.Expr from, A.Expr for]
+  | A.EElem (A.ESlice (el, from, for, _)) =>
+    [elem_expr el, A.Expr from, A.Expr for]
   | A.ELit _ => [] (* a typed literal's type is dropped, like any type *)
   | A.ETable (A.TabString _) => []
   | A.ETable (A.TabList (es, _)) => map A.Expr es
   | A.ETable (A.TabSub (t, sub, _)) => [A.Expr (A.ETable t), A.Expr sub]
-  | A.ETable (A.TabSlice (t, from, for, _)) => [A.Expr (A.ETable t), A.Expr from, A.Expr for]
+  | A.ETable (A.TabSlice (t, from, for, _)) =>
+    [A.Expr (A.ETable t), A.Expr from, A.Expr for]
   | A.EParen (e1, _) => [A.Expr e1]
   | A.EMon (_, e1, _) => [A.Expr e1]
   | A.EBin (e1, _, e2, _) => [A.Expr e1, A.Expr e2]
@@ -263,8 +279,10 @@ fun children_of_proc p =
   | A.PCase (e, opts, _) => A.Expr e :: maps children_of_option opts
   | A.PWhile (e, p1, _) => [A.Expr e, A.Proc p1]
   | A.PPar (_, repl, ps, _) => children_of_repl repl @ map A.Proc ps
-  | A.PAlt (_, repl, alts, _) => children_of_repl repl @ maps children_of_alt alts
-  | A.PPlacedPar (repl, pls, _) => children_of_repl repl @ maps children_of_placed pls
+  | A.PAlt (_, repl, alts, _) =>
+    children_of_repl repl @ maps children_of_alt alts
+  | A.PPlacedPar (repl, pls, _) =>
+    children_of_repl repl @ maps children_of_placed pls
   | A.PInstance (_, args, _) => map A.Expr args
   | A.PSpecP (s, p1, _) => [A.Spec s, A.Proc p1]
   | A.PPlace (_, e, p1, _) => [A.Expr e, A.Proc p1]
@@ -274,7 +292,8 @@ fun children_of _ (A.Proc p) = children_of_proc p
   | children_of _ (A.Spec s) = children_of_spec s
   | children_of _ (A.Specs ss) = map A.Spec ss
   | children_of antiq_pos (A.Id _) =
-      error ("select_ast: an identifier is a leaf, no \"r\"/\"d\" children" ^ Position.here antiq_pos)
+      error ("select_ast: an identifier is a leaf, no \"r\"/\"d\" children"
+             ^ Position.here antiq_pos)
 
 (* Resolves the "(r|d)*" suffix against a single "node" (the result of
    "select_u"'s ascent phase): "r" advances a 1-based cursor rightward among
@@ -292,18 +311,23 @@ fun children_of _ (A.Proc p) = children_of_proc p
    "[navi]" bracket - "antiq_pos" is the closest thing available to "where
    the string was written", and is what a user actually needs to jump to. *)
 fun select_rd (antiq_pos, [], node) = node
-  | select_rd (antiq_pos, navi as A.down :: _, node) = select_count_r (antiq_pos, 1, navi, node)
-  | select_rd (antiq_pos, A.right :: rest, node) = select_count_r (antiq_pos, 1, rest, node)
+  | select_rd (antiq_pos, navi as A.down :: _, node) =
+      select_count_r (antiq_pos, 1, navi, node)
+  | select_rd (antiq_pos, A.right :: rest, node) =
+      select_count_r (antiq_pos, 1, rest, node)
   | select_rd (antiq_pos, A.up :: _, _) =
       error ("select_ast: \"u\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
   | select_rd (antiq_pos, A.Up :: _, _) =
       error ("select_ast: \"U\" after \"r\"/\"d\"" ^ Position.here antiq_pos)
-and select_count_r (antiq_pos, n, A.right :: rest, node) = select_count_r (antiq_pos, n + 1, rest, node)
+and select_count_r (antiq_pos, n, A.right :: rest, node) =
+  select_count_r (antiq_pos, n + 1, rest, node)
   | select_count_r (antiq_pos, n, A.down :: rest, node) =
       let val cs = children_of antiq_pos node in
         if n > length cs then
-          error ("select_ast: navigation index " ^ Int.toString n ^ " out of range (only " ^
-                 Int.toString (length cs) ^ " navigable children here)" ^ Position.here antiq_pos)
+          error ("select_ast: navigation index " ^ Int.toString n
+                 ^ " out of range (only " ^
+                 Int.toString (length cs) ^ " navigable children here)"
+                   ^ Position.here antiq_pos)
         else select_rd (antiq_pos, rest, List.nth (cs, n - 1))
       end
   | select_count_r (antiq_pos, _, A.up :: _, _) =
@@ -311,7 +335,8 @@ and select_count_r (antiq_pos, n, A.right :: rest, node) = select_count_r (antiq
   | select_count_r (antiq_pos, _, A.Up :: _, _) =
       error ("select_ast: \"U\" after \"r\"" ^ Position.here antiq_pos)
   | select_count_r (antiq_pos, _, [], _) =
-      error ("select_ast: navigation string ends with a dangling \"r\", expected a final \"d\"" ^
+      error (("select_ast: navigation string ends with a dangling \"r\", " ^
+              "expected a final \"d\"") ^
              Position.here antiq_pos)
 
 (* Maps an antiquotation's own "navi list" (the "@tag[navi] ..." bracket -
@@ -356,17 +381,23 @@ fun check_antiq oenv (ctx : pos A.root list) (ni : pos A.nodeInfo)
     A.OnlyPos _ => []
   | A.NodeInfo (cs, _) =>
       List.mapPartial
-        (fn c as A.Antiquotation ({tag = (tag, tag_pos)}, navi, {level}, {cartouche = (body, body_pos)}) =>
+        (fn c as A.Antiquotation
+         ({tag = (tag, tag_pos)}, navi, {level},
+          {cartouche = (body, body_pos)}) =>
               if Dispatched_Antiqs.already_dispatched c then NONE
               else
                 let val mk {occam_antiq, ...} = oenv in
                   case Symtab.lookup occam_antiq tag of
                     NONE =>
-                      error ("analyse_and_eval: no antiquotation handler registered for tag " ^
+                      error (("analyse_and_eval: no antiquotation handler " ^
+                              "registered for tag ") ^
                              quote tag)
                   | SOME antiq_fun =>
                       (Dispatched_Antiqs.mark c;
-                       SOME (level, antiq_fun (oenv, select_ast tag_pos navi ctx, level) (body, body_pos)))
+                       SOME (level,
+                             antiq_fun
+                               (oenv, select_ast tag_pos navi ctx, level)
+                                 (body, body_pos)))
                 end
           | A.Raw_txt _ => NONE)
         cs
@@ -375,11 +406,13 @@ fun check_antiq oenv (ctx : pos A.root list) (ni : pos A.nodeInfo)
    "nodeInfo" carries a bare point, which would make an entity report claim a
    single character (see the same note on "name_range" in C11_AnaEval.thy). *)
 fun name_range (name, pos) =
-  Position.range_position (Position.range (pos, Position.symbol_explode name pos))
+  Position.range_position
+    (Position.range (pos, Position.symbol_explode name pos))
 
 fun report_decl kind name decl_pos =
   let val range_pos = name_range (name, decl_pos)
-  in Position.report range_pos (Position.entity_markup kind (name, range_pos)) end
+  in Position.report range_pos (Position.entity_markup kind (name, range_pos))
+    end
 
 (* Hyperlinks a use of "name" to its declaration, or marks it with
    \<^ML>\<open>Markup.bad ()\<close> (a highlight, deliberately not an error: "undeclared here"
@@ -393,10 +426,12 @@ fun report_use oenv name use_pos =
       NONE => Position.report use_range (Markup.bad ())
     | SOME k =>
         Position.report use_range
-          (Position.entity_markup (describe_kind k) (name, name_range (name, pos_of_kind k)))
+          (Position.entity_markup (describe_kind k)
+           (name, name_range (name, pos_of_kind k)))
   end
 
-fun report_ident_use oenv (A.Ident (name, _, ni)) = report_use oenv name (A.pos_of_NodeInfo ni)
+fun report_ident_use oenv (A.Ident (name, _, ni)) =
+  report_use oenv name (A.pos_of_NodeInfo ni)
 
 (* Registers one declared name, reporting its own declaration site. *)
 fun register mk_kind oenv (A.Ident (name, _, ni)) =
@@ -405,7 +440,8 @@ fun register mk_kind oenv (A.Ident (name, _, ni)) =
     val pos = A.pos_of_NodeInfo ni
     val kind = mk_kind pos
     val _ = report_decl (describe_kind kind) name pos
-  in mk {idents = Symtab.update (name, kind) idents, occam_antiq = occam_antiq, units = units} end
+  in mk {idents = Symtab.update (name, kind) idents, occam_antiq =
+         occam_antiq, units = units} end
 
 (* A declaration "T x:" declares a channel when T is (an array of) a channel,
    timer or port type, a variable otherwise. *)
@@ -420,17 +456,20 @@ fun kind_of_type t =
 
 (* Sequential walk of a list, threading "oenv" and collecting the actions. *)
 fun seq (f : oenv -> 'a -> oenv * acts) oenv xs =
-  fold (fn x => fn (oenv, acc) => let val (oenv', a) = f oenv x in (oenv', acc @ a) end)
+  fold (fn x => fn (oenv, acc) =>
+        let val (oenv', a) = f oenv x in (oenv', acc @ a) end)
     xs (oenv, [])
 
-(* Runs "f" in a nested scope: the incoming "idents" table is restored on exit. *)
+(* Runs "f" in a nested scope: the incoming "idents" table is restored on exit.
+   *)
 fun scoped oenv f =
   let
     val outer = idents_of oenv
     val (oenv1, acts) = f oenv
   in (set_idents outer oenv1, acts) end
 
-fun walk_exprs oenv ctx es = seq (fn oenv => fn e => walk_expr oenv ctx e) oenv es
+fun walk_exprs oenv ctx es =
+  seq (fn oenv => fn e => walk_expr oenv ctx e) oenv es
 
 (* Always pushes its own node (see the top-of-theory note). *)
 and walk_expr oenv ctx (e : pos A.oExpr) : oenv * acts =
@@ -441,14 +480,18 @@ and walk_expr oenv ctx (e : pos A.oExpr) : oenv * acts =
   in
     case e of
       A.EElem (A.ENamed id) => (report_ident_use oenv id; (oenv, here))
-    | A.EElem (A.ESub (el, sub, _)) => plus (walk_exprs oenv ctx' [A.EElem el, sub])
-    | A.EElem (A.ESlice (el, from, for, _)) => plus (walk_exprs oenv ctx' [A.EElem el, from, for])
+    | A.EElem (A.ESub (el, sub, _)) =>
+      plus (walk_exprs oenv ctx' [A.EElem el, sub])
+    | A.EElem (A.ESlice (el, from, for, _)) =>
+      plus (walk_exprs oenv ctx' [A.EElem el, from, for])
     | A.ELit (A.LTyped (_, t, _)) => plus (walk_type oenv ctx' t)
     | A.ELit _ => (oenv, here)
     | A.ETable (A.TabString _) => (oenv, here)
     | A.ETable (A.TabList (es, _)) => plus (walk_exprs oenv ctx' es)
-    | A.ETable (A.TabSub (t, sub, _)) => plus (walk_exprs oenv ctx' [A.ETable t, sub])
-    | A.ETable (A.TabSlice (t, from, for, _)) => plus (walk_exprs oenv ctx' [A.ETable t, from, for])
+    | A.ETable (A.TabSub (t, sub, _)) =>
+      plus (walk_exprs oenv ctx' [A.ETable t, sub])
+    | A.ETable (A.TabSlice (t, from, for, _)) =>
+      plus (walk_exprs oenv ctx' [A.ETable t, from, for])
     | A.EParen (e1, _) => plus (walk_exprs oenv ctx' [e1])
     | A.EMon (_, e1, _) => plus (walk_exprs oenv ctx' [e1])
     | A.EBin (e1, _, e2, _) => plus (walk_exprs oenv ctx' [e1, e2])
@@ -469,14 +512,17 @@ and walk_type oenv ctx (t : pos A.oType) : oenv * acts =
     case t of
       A.TPrim _ => (oenv, here)
     | A.TTimer _ => (oenv, here)
-    | A.TChan (p, _) => let val (o1, a1) = walk_protocol oenv ctx p in (o1, here @ a1) end
-    | A.TPort (t1, _) => let val (o1, a1) = walk_type oenv ctx t1 in (o1, here @ a1) end
+    | A.TChan (p, _) =>
+      let val (o1, a1) = walk_protocol oenv ctx p in (o1, here @ a1) end
+    | A.TPort (t1, _) =>
+      let val (o1, a1) = walk_type oenv ctx t1 in (o1, here @ a1) end
     | A.TArray (e, t1, _) =>
         let
           val (o1, a1) = walk_expr oenv ctx e
           val (o2, a2) = walk_type o1 ctx t1
         in (o2, here @ a1 @ a2) end
-    | A.TOpenArray (t1, _) => let val (o1, a1) = walk_type oenv ctx t1 in (o1, here @ a1) end
+    | A.TOpenArray (t1, _) =>
+      let val (o1, a1) = walk_type oenv ctx t1 in (o1, here @ a1) end
   end
 
 and walk_simple_prot oenv ctx sp =
@@ -491,11 +537,13 @@ and walk_simple_prot oenv ctx sp =
 and walk_protocol oenv ctx (p : pos A.oProtocol) : oenv * acts =
   case p of
     A.PrName id =>
-      (report_ident_use oenv id; (oenv, check_antiq oenv ctx (A.nodeInfo_of_ident id)))
+      (report_ident_use oenv
+       id; (oenv, check_antiq oenv ctx (A.nodeInfo_of_ident id)))
   | A.PrSeq (sps, ni) =>
       let
         val here = check_antiq oenv ctx ni
-        val (o1, a1) = seq (fn oenv => fn sp => walk_simple_prot oenv ctx sp) oenv sps
+        val (o1, a1) =
+          seq (fn oenv => fn sp => walk_simple_prot oenv ctx sp) oenv sps
       in (o1, here @ a1) end
   | A.PrAny ni => (oenv, check_antiq oenv ctx ni)
 
@@ -522,7 +570,8 @@ and walk_repl oenv ctx (A.Repl (id, base, count, ni)) =
 and walk_opt_repl_then oenv ctx repl body =
   scoped oenv (fn oenv =>
     let
-      val (o1, a1) = (case repl of NONE => (oenv, []) | SOME r => walk_repl oenv ctx r)
+      val (o1, a1) =
+        (case repl of NONE => (oenv, []) | SOME r => walk_repl oenv ctx r)
       val (o2, a2) = body o1
     in (o2, a1 @ a2) end)
 
@@ -532,7 +581,8 @@ and walk_input oenv ctx (inp : pos A.oInput) : oenv * acts =
       let
         val here = check_antiq oenv ctx ni
         val (o1, a1) = walk_exprs oenv ctx (A.EElem ch ::
-          maps (fn A.IIVar el => [A.EElem el] | A.IICounted (e1, e2) => [A.EElem e1, A.EElem e2]) items)
+          maps (fn A.IIVar el => [A.EElem el] | A.IICounted (e1, e2) =>
+                [A.EElem e1, A.EElem e2]) items)
       in (o1, here @ a1) end
   | A.InAfter (tm, e, ni) =>
       let
@@ -542,7 +592,8 @@ and walk_input oenv ctx (inp : pos A.oInput) : oenv * acts =
 
 and walk_input_items oenv ctx items =
   walk_exprs oenv ctx
-    (maps (fn A.IIVar el => [A.EElem el] | A.IICounted (e1, e2) => [A.EElem e1, A.EElem e2]) items)
+    (maps (fn A.IIVar el => [A.EElem el] | A.IICounted (e1, e2) =>
+           [A.EElem e1, A.EElem e2]) items)
 
 and walk_choice oenv ctx (c : pos A.oChoice) : oenv * acts =
   case c of
@@ -629,7 +680,8 @@ and walk_alt oenv ctx (a : pos A.oAlt) : oenv * acts =
   | A.AlCase (eo, ch, vs, ni) =>
       let
         val here = check_antiq oenv ctx ni
-        val (o1, a1) = (case eo of NONE => (oenv, []) | SOME e => walk_expr oenv ctx e)
+        val (o1, a1) =
+          (case eo of NONE => (oenv, []) | SOME e => walk_expr oenv ctx e)
         val (o2, a2) = walk_expr o1 ctx (A.EElem ch)
         val (o3, a3) = seq (fn oenv => fn v => walk_variant oenv ctx v) o2 vs
       in (o3, here @ a1 @ a2 @ a3) end
@@ -682,7 +734,8 @@ and walk_spec oenv ctx (s : pos A.oSpec) : oenv * acts =
     fun plus (oenv1, acts) = (oenv1, here @ acts)
     fun walk_opt_type oenv NONE = (oenv, [])
       | walk_opt_type oenv (SOME t) = walk_type oenv ctx' t
-    fun decl_ids kind oenv ids = fold (fn id => fn o_ => register kind o_ id) ids oenv
+    fun decl_ids kind oenv ids =
+      fold (fn id => fn o_ => register kind o_ id) ids oenv
   in
     case s of
       A.SDecl (t, ids, _) =>
@@ -716,7 +769,9 @@ and walk_spec oenv ctx (s : pos A.oSpec) : oenv * acts =
           val (o1, a1) = seq (fn oenv => fn (A.Tagged (tag, sps, ni)) =>
                                let
                                  val th = check_antiq oenv ctx' ni
-                                 val (oa, aa) = seq (fn oenv => fn sp => walk_simple_prot oenv ctx' sp) oenv sps
+                                 val (oa, aa) =
+                                   seq (fn oenv => fn sp =>
+                                        walk_simple_prot oenv ctx' sp) oenv sps
                                in (register Tag oa tag, th @ aa) end)
                              oenv tagged
         in plus (register Protocol o1 id, a1) end
@@ -759,38 +814,46 @@ and walk_proc oenv ctx (p : pos A.oProcess) : oenv * acts =
     case p of
       A.PSkip _ => (oenv, here)
     | A.PStop _ => (oenv, here)
-    | A.PAssign (lhs, rhs, _) => plus (walk_exprs oenv ctx' (map A.EElem lhs @ rhs))
+    | A.PAssign (lhs, rhs, _) =>
+      plus (walk_exprs oenv ctx' (map A.EElem lhs @ rhs))
     | A.PInput (inp, _) => plus (walk_input oenv ctx' inp)
     | A.POutput (ch, items, _) =>
         plus (walk_exprs oenv ctx'
                 (A.EElem ch ::
-                 maps (fn A.OIExpr e => [e] | A.OICounted (e1, e2) => [e1, e2]) items))
+                 maps (fn A.OIExpr e => [e] | A.OICounted (e1, e2) => [e1, e2])
+                   items))
     | A.PCaseInput (ch, vs, _) =>
         let
           val (o1, a1) = walk_expr oenv ctx' (A.EElem ch)
           val (o2, a2) = seq (fn oenv => fn v => walk_variant oenv ctx' v) o1 vs
         in plus (o2, a1 @ a2) end
-    | A.PSeq (repl, ps, _) => plus (walk_opt_repl_then oenv ctx' repl (fn oenv => procs oenv ps))
+    | A.PSeq (repl, ps, _) =>
+      plus (walk_opt_repl_then oenv ctx' repl (fn oenv => procs oenv ps))
     | A.PIf (repl, chs, _) =>
         plus (walk_opt_repl_then oenv ctx' repl
-                (fn oenv => seq (fn oenv => fn c => walk_choice oenv ctx' c) oenv chs))
+                (fn oenv =>
+                 seq (fn oenv => fn c => walk_choice oenv ctx' c) oenv chs))
     | A.PCase (e, opts, _) =>
         let
           val (o1, a1) = walk_expr oenv ctx' e
-          val (o2, a2) = seq (fn oenv => fn o_ => walk_option oenv ctx' o_) o1 opts
+          val (o2, a2) =
+            seq (fn oenv => fn o_ => walk_option oenv ctx' o_) o1 opts
         in plus (o2, a1 @ a2) end
     | A.PWhile (e, q, _) =>
         let
           val (o1, a1) = walk_expr oenv ctx' e
           val (o2, a2) = walk_proc o1 ctx' q
         in plus (o2, a1 @ a2) end
-    | A.PPar (_, repl, ps, _) => plus (walk_opt_repl_then oenv ctx' repl (fn oenv => procs oenv ps))
+    | A.PPar (_, repl, ps, _) =>
+      plus (walk_opt_repl_then oenv ctx' repl (fn oenv => procs oenv ps))
     | A.PAlt (_, repl, alts, _) =>
         plus (walk_opt_repl_then oenv ctx' repl
-                (fn oenv => seq (fn oenv => fn a => walk_alt oenv ctx' a) oenv alts))
+                (fn oenv =>
+                 seq (fn oenv => fn a => walk_alt oenv ctx' a) oenv alts))
     | A.PPlacedPar (repl, pls, _) =>
         plus (walk_opt_repl_then oenv ctx' repl
-                (fn oenv => seq (fn oenv => fn pl => walk_placed oenv ctx' pl) oenv pls))
+                (fn oenv =>
+                 seq (fn oenv => fn pl => walk_placed oenv ctx' pl) oenv pls))
     | A.PInstance (id, args, _) =>
         (report_ident_use oenv id; plus (walk_exprs oenv ctx' args))
     | A.PSpecP (s, q, _) =>
@@ -826,7 +889,8 @@ fun analyse_and_eval0 (root : pos A.root) thy =
     | A.Expr e => finish (walk_expr oenv0 ctx0 e)
     | A.Proc p => finish (walk_proc oenv0 ctx0 p)
     | A.Spec s => finish (walk_spec oenv0 ctx0 s)
-    | A.Specs ss => finish (seq (fn oenv => fn s => walk_spec oenv ctx0 s) oenv0 ss)
+    | A.Specs ss =>
+      finish (seq (fn oenv => fn s => walk_spec oenv ctx0 s) oenv0 ss)
   end
 
 fun analyse_and_eval root thy =
@@ -838,14 +902,14 @@ end
 subsection\<open>Some Basic Antiquotation Settings\<close>
 
 text\<open>
-  The same eight demonstration antiquotations as C11's (\<open>C11_AnaEval.thy\<close>, whose notes on
-  each apply unchanged): \<open>probe_oenv\<close>, \<open>probe_ast\<close>, \<open>highlight\<close>, \<open>term\<close>, \<open>ML\<close>, \<open>text\<close>,
-  \<open>definition\<close> and \<open>lemma\<close>. They are written in an occam comment as
-  \<^verbatim>\<open>-- @term \<open>x + 1 = (2::nat)\<close>\<close> (or \<^verbatim>\<open>--@ term \<open>...\<close>\<close>) and attach to the node that
-  begins on the next token; \<^verbatim>\<open>@tag[navi](level)\<close> selects another node and an
-  evaluation order exactly as in C11. Handlers are registered under their tag in
-  \<open>oenv\<close>'s \<open>occam_antiq\<close> table; nothing here knows occam, only the \<open>root\<close> they are
-  handed.
+  The same eight demonstration antiquotations as C11's (\<open>C11_AnaEval.thy\<close>, whose
+  notes on each apply unchanged): \<open>probe_oenv\<close>, \<open>probe_ast\<close>, \<open>highlight\<close>,
+  \<open>term\<close>, \<open>ML\<close>, \<open>text\<close>, \<open>definition\<close> and \<open>lemma\<close>. They are written in an occam
+  comment as \<^verbatim>\<open>-- @term \<open>x + 1 = (2::nat)\<close>\<close> (or \<^verbatim>\<open>--@ term \<open>...\<close>\<close>) and attach to
+  the node that begins on the next token; \<^verbatim>\<open>@tag[navi](level)\<close> selects another
+  node and an evaluation order exactly as in C11. Handlers are registered under
+  their tag in \<open>oenv\<close>'s \<open>occam_antiq\<close> table; nothing here knows occam, only the
+  \<open>root\<close> they are handed.
 \<close>
 
 declare [[ML_catch_all = true]]
@@ -854,19 +918,24 @@ ML\<open>
 val OENV = Unsynchronized.ref(OEnv.empty_oenv);
 val probe_oenv = let fun probe (oenv, _ , _) (_ : string * Position.T) thy =
                               (OENV := oenv; thy)
-                 in  OEnv.store_antiq ("probe_oenv",  OEnv.lift_theory_antiq probe) end
+                 in  OEnv.store_antiq
+                   ("probe_oenv",  OEnv.lift_theory_antiq probe) end
 
-val OCCAM_AST = Unsynchronized.ref((Occam2_Ast.Specs []): (Position.T Occam2_Ast.root) )
+val OCCAM_AST =
+  Unsynchronized.ref((Occam2_Ast.Specs []): (Position.T Occam2_Ast.root) )
 val probe_ast = let fun probe (_, ast , l) (_ : string * Position.T) thy =
                               (writeln("Level: "^ Int.toString l);
                                writeln("Read : " ^ Occam2_Ast.pp_root ast);
                                OCCAM_AST := ast; thy)
-                in  OEnv.store_antiq ("probe_ast",  OEnv.lift_theory_antiq probe) end
+                in  OEnv.store_antiq
+                  ("probe_ast",  OEnv.lift_theory_antiq probe) end
 
 val highlight = let fun probe (_, ast , _) (_ : string * Position.T) thy =
-                              (Position.report (AnaEval.pos_of_root ast) Markup.intensify;
+                              (Position.report (AnaEval.pos_of_root ast)
+                               Markup.intensify;
                                thy)
-                in  OEnv.store_antiq ("highlight",  OEnv.lift_theory_antiq probe) end
+                in  OEnv.store_antiq
+                  ("highlight",  OEnv.lift_theory_antiq probe) end
 
 (* The cartouche body as an "Input.source" with the body's own real position,
    rebuilt from the merged range position the lexer records: see the long note
@@ -882,7 +951,8 @@ fun body_source (body, body_pos) =
    term is a real Isabelle error positioned in the occam source. The catch-all
    handler is needed because "Syntax.read_term" fails with "Par_Exn", not
    "ERROR". *)
-val OCCAM_TERM_PROBE = Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
+val OCCAM_TERM_PROBE =
+  Unsynchronized.ref (Free ("dummy_term_probe", dummyT) : term)
 val term_antiq =
   let
     fun probe (_, ast, _) (body, body_pos) thy =
@@ -920,8 +990,10 @@ val text_antiq =
       let
         val ctxt = Proof_Context.init_global thy
         val source = body_source (body, body_pos)
-        val _ = Context_Position.reports ctxt (Document_Output.document_reports source)
-        val latex = Document_Output.output_document ctxt {markdown = true} source
+        val _ = Context_Position.reports ctxt
+          (Document_Output.document_reports source)
+        val latex =
+          Document_Output.output_document ctxt {markdown = true} source
       in (OCCAM_TEXT_PROBE := latex; thy) end
   in OEnv.store_antiq ("text", OEnv.lift_theory_antiq probe) end
 
@@ -935,7 +1007,9 @@ val definition_antiq =
         val source = body_source (body, body_pos)
         val keywords = Keyword.no_major_keywords (Thy_Header.get_keywords' ctxt)
         val parser =
-          Scan.option Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name ":" -- Parse.prop) --
+          Scan.option
+            Parse_Spec.constdecl -- (Parse_Spec.opt_thm_name
+                                     ":" -- Parse.prop) --
             Parse_Spec.if_assumes -- Parse.for_fixes
         val (((decl, spec), prems), params) =
           Parse.read_embedded ctxt keywords parser source
@@ -944,7 +1018,8 @@ val definition_antiq =
             else error ("definition antiquotation: " ^ Runtime.exn_message exn ^
                          Position.here (AnaEval.pos_of_root ast))
         val lthy' =
-          #2 (Specification.definition_cmd {verbose = false} decl params prems spec
+          #2 (Specification.definition_cmd {verbose = false} decl params prems
+              spec
                 (Named_Target.theory_init thy))
       in Local_Theory.exit_global lthy' end
   in OEnv.store_antiq ("definition", OEnv.lift_theory_antiq probe) end
@@ -960,7 +1035,8 @@ val lemma_antiq =
           (Binding.empty_atts, [Element.Fixes fixes, Element.Assumes assumes],
            Element.Shows shows))
     val parser =
-      short_statement -- (Parse.$$$ "by" |-- Method.parse -- Scan.option Method.parse)
+      short_statement -- (Parse.$$$ "by" |-- Method.parse -- Scan.option
+                          Method.parse)
     fun probe (_, ast, _) (body, body_pos) thy =
       let
         val ctxt = Proof_Context.init_global thy
@@ -973,10 +1049,12 @@ val lemma_antiq =
         val ((binding, elems, concl), (m1, m2)) =
           Parse.read_embedded ctxt keywords parser source handle exn => fail exn
         val lthy' =
-          (Specification.theorem_cmd {verbose = false, long = false, kind = Thm.theoremK}
+          (Specification.theorem_cmd {verbose = false, long = false, kind =
+                                      Thm.theoremK}
              NONE (K I) binding [] elems concl
              (Named_Target.theory_init thy)
-           |> tap (fn _ => (Method.report m1; Option.map Method.report m2 |> ignore))
+           |> tap (fn _ =>
+                   (Method.report m1; Option.map Method.report m2 |> ignore))
            |> Proof.global_terminal_proof (m1, m2))
           handle exn => fail exn
       in Local_Theory.exit_global lthy' end

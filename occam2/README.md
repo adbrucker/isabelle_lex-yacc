@@ -1,13 +1,13 @@
 # Isabelle/occam
 
-A front-end for the **occam 2** language inside Isabelle/HOL: the occam
-analogue of the C11 project ("Isabelle/C, Version 2.0", folder `../C11`).
-occam 2 source text lives inside an Isabelle theory, is parsed by a real
-grammar that follows the INMOS
-[*occam 2 Reference Manual*](https://www.transputer.net/obooks/isbn-013629312-3/oc20refman.pdf),
-and is checked incrementally under Isabelle/PIDE. It is not a compiler and
-has no semantics (no type checker, no usage rules); it is the front-end layer
-on which such tools can be built.
+A front-end for the **occam 2** language inside Isabelle/HOL: the occam analogue
+of the C11 project ("Isabelle/C, Version 2.0", folder `../C11`). occam 2 source
+text lives inside an Isabelle theory, is parsed by a real grammar that follows
+the INMOS [*occam 2 Reference
+Manual*](https://www.transputer.net/obooks/isbn-013629312-3/oc20refman.pdf), and
+is checked incrementally under Isabelle/PIDE. It is not a compiler and has no
+semantics (no type checker, no usage rules); it is the front-end layer on which
+such tools can be built.
 
 The concepts are those of the C11 project, carried over one for one:
 
@@ -22,10 +22,10 @@ The concepts are those of the C11 project, carried over one for one:
   click in jEdit), following occam's scoping rules (a specification scopes
   over the process it prefixes; no recursion; replicator indices scope over
   their body). Undeclared names are underlined, not rejected.
-* **Antiquotations** in `--` comments, `--@ tag[navi](level) \<open>body\<close>`,
-  with programmable handlers, an evaluation order given by the level, and
-  eight standard ones (`probe_oenv`, `probe_ast`, `highlight`, `term`, `ML`,
-  `text`, `definition`, `lemma`).
+* **Antiquotations** in `--` comments,
+  `--@ tag[navi](level) \<open>body\<close>`, with programmable handlers, an
+  evaluation order given by the level, and eight standard ones (`probe_oenv`,
+  `probe_ast`, `highlight`, `term`, `ML`, `text`, `definition`, `lemma`).
 * **Navigation**: the optional `[navi]` string (`u`, `U`, `r`, `d`) re-targets
   an antiquotation from the node it is attached to to a parent, sibling or
   child, with the same rules as in C11.
@@ -94,9 +94,9 @@ Everything described above builds and passes its tests. Deliberate gaps,
 documented in the manual's *Limitations* section: indentation is checked for
 consistency, not for exact width; compiler directives (`#USE`, `#INCLUDE`, ...)
 are not recognised; there is no type or usage checking; four benign yacc
-conflicts are resolved in the intended way. The parser is re-entrant: it is built
-with `ml_lex_yacc [state]`, so every parse has its own state object and any number
-of parses may run at the same time.
+conflicts are resolved in the intended way. The parser is re-entrant: it is
+built with `ml_lex_yacc [state]`, so every parse has its own state object and
+any number of parses may run at the same time.
 
 ## License
 

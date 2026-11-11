@@ -1,13 +1,13 @@
 # Isabelle/Scala 3
 
-A front-end for **Scala 3** inside Isabelle/HOL: the Scala 3 analogue of the
-C11 and occam 2 projects (folders `../C11`, `../occam2`), built on the same
+A front-end for **Scala 3** inside Isabelle/HOL: the Scala 3 analogue of the C11
+and occam 2 projects (folders `../C11`, `../occam2`), built on the same
 architecture. Scala 3 source text lives inside an Isabelle theory, is parsed by
-a real grammar that follows the
-[Scala 3 syntax summary](https://docs.scala-lang.org/scala3/reference/syntax.html),
-and is analysed incrementally under Isabelle/PIDE. It is not a compiler and has
-no semantics (no type checker, no implicits resolution); it is the front-end
-layer on which such tools can be built, e.g. for Isabelle's own Scala sources.
+a real grammar that follows the [Scala 3 syntax
+summary](https://docs.scala-lang.org/scala3/reference/syntax.html), and is
+analysed incrementally under Isabelle/PIDE. It is not a compiler and has no
+semantics (no type checker, no implicits resolution); it is the front-end layer
+on which such tools can be built, e.g. for Isabelle's own Scala sources.
 
 * **Parsing** with `ml_lex_yacc [state]` into a real abstract syntax tree
   (`scala3_ast.ML`) with a source position at every node. Parses are re-entrant

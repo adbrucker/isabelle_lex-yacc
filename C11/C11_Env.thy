@@ -1,4 +1,4 @@
-(***********************************************************************************
+(******************************************************************************
  * Copyright (c) University of Paris-Saclay
  *
  * All rights reserved.
@@ -14,17 +14,18 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * SPDX-License-Identifier: BSD-2-Clause
- ***********************************************************************************)
+ ******************************************************************************)
 
 theory C11_Env
   imports "C11_Ast"
@@ -33,35 +34,34 @@ begin
 section\<open>The CEnv Environment: storing Ast's and Environments\<close>
 
 text\<open>
-  \<^verbatim>\<open>CEnv\<close> is the environment/AST-store infrastructure shared by every \<open>c11\<close>-family
-  command and by \<^verbatim>\<open>AnaEval\<close> (the \<open>analyse_and_eval\<close> pass, in its own theory
-  importing this one). It bundles two plain \<^verbatim>\<open>Generic_Data\<close> registries (the standard
-  Isabelle/Pure idiom for per-theory, persistent-through-merge state) behind one
-  structure: \<^verbatim>\<open>Env\<close> holds the symbolic environment - \<open>idents\<close> (declared names),
-  \<open>types\<close> (struct/union/enum tags), \<open>c_antiq\<close> (registered antiquotation handlers),
-  and \<open>predefined_envs\<close> (\<^verbatim>\<open>c11_predef\<close>'s own reusable header effects, applied by a
-  later \<open>#include\<close> - see the note on \<open>predefined_envs\<close> below) - plus the running
-  \<open>units\<close> counter that gives every AST this theory
-  stores a fresh, per-theory sequence number; \<^verbatim>\<open>Ast_Store\<close> maps \<open>(theory_name,
-  unit_number)\<close> - encoded as one \<^verbatim>\<open>Symtab\<close> key, since \<^verbatim>\<open>Symtab.table\<close> is
-  string-keyed - to the \<^verbatim>\<open>Position.T root\<close> that one of the \<open>c11\<close>/\<open>c11_file\<close>/
-  \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> commands parsed there; see \<open>store_root\<close>,
-  below, for the key format and the counter update. \<^verbatim>\<open>Source_Store\<close>, a
-  sibling table keyed the same way, holds each of those commands' own
-  verbatim source text alongside its AST - written together with
-  \<^verbatim>\<open>Ast_Store\<close> by the very same \<open>store_root\<close> call, so the two never drift
-  out of sync - for \<open>c11_export_h\<close>/\<open>c11_export_c\<close>'s \<open>[verbatim]\<close> option
-  (\<open>\<section>3\<close>) to hand back later. \<^verbatim>\<open>Env\<close> and \<^verbatim>\<open>Ast_Store\<close> are
-  declared as \<^emph>\<open>sibling\<close> substructures of \<^verbatim>\<open>CEnv\<close> - not \<^verbatim>\<open>Ast_Store\<close> nested inside
-  a structure also named \<^verbatim>\<open>Env\<close> or vice versa, and neither named \<^verbatim>\<open>CEnv\<close> itself -
-  which would self-shadow; \<^verbatim>\<open>get\<close>/\<^verbatim>\<open>put\<close> re-export \<^verbatim>\<open>Env\<close>'s own
-  \<^verbatim>\<open>Generic_Data\<close> accessors directly on \<^verbatim>\<open>CEnv\<close>, so a caller never needs to name
-  \<^verbatim>\<open>Env\<close> itself - \<^verbatim>\<open>Env.map\<close> is deliberately \<^emph>\<open>not\<close> re-exported under the bare
-  name \<open>map\<close>, since that would silently shadow the ubiquitous \<^verbatim>\<open>List.map\<close>/Basis
-  \<open>map\<close> for every caller using \<^verbatim>\<open>open CEnv\<close> - a real problem, not a hypothetical
-  one (it broke an unrelated theory's own \<open>map\<close> calls the first time this was
-  tried). Callers elsewhere are expected to write \<^verbatim>\<open>open CEnv\<close> where that
-  reads better than qualifying every operation.
+  \<^verbatim>\<open>CEnv\<close> is the environment/AST-store infrastructure shared by every
+  \<open>c11\<close>-family command and by \<^verbatim>\<open>AnaEval\<close> (the \<open>analyse_and_eval\<close> pass, in its own
+  theory importing this one). It bundles two plain \<^verbatim>\<open>Generic_Data\<close> registries
+  (the standard Isabelle/Pure idiom for per-theory, persistent-through-merge
+  state) behind one structure: \<^verbatim>\<open>Env\<close> holds the symbolic environment - \<open>idents\<close>
+  (declared names), \<open>types\<close> (struct/union/enum tags), \<open>c_antiq\<close> (registered
+  antiquotation handlers), and \<open>predefined_envs\<close> (\<^verbatim>\<open>c11_predef\<close>'s own reusable
+  header effects, applied by a later \<open>#include\<close> - see the note on
+  \<open>predefined_envs\<close> below) - plus the running \<open>units\<close> counter that gives every
+  AST this theory stores a fresh, per-theory sequence number; \<^verbatim>\<open>Ast_Store\<close> maps
+  \<open>(theory_name, unit_number)\<close> - encoded as one \<^verbatim>\<open>Symtab\<close> key, since
+  \<^verbatim>\<open>Symtab.table\<close> is string-keyed - to the \<^verbatim>\<open>Position.T root\<close> that one of the
+  \<open>c11\<close>/\<open>c11_file\<close>/ \<open>c11_ident\<close>/\<open>c11_expr\<close>/\<open>c11_statement\<close> commands parsed
+  there; see \<open>store_root\<close>, below, for the key format and the counter update.
+  \<^verbatim>\<open>Source_Store\<close>, a sibling table keyed the same way, holds each of those
+  commands' own verbatim source text alongside its AST - written together with
+  \<^verbatim>\<open>Ast_Store\<close> by the very same \<open>store_root\<close> call, so the two never drift out of
+  sync - for \<open>c11_export_h\<close>/\<open>c11_export_c\<close>'s \<open>[verbatim]\<close> option (\<open>\<section>3\<close>) to hand
+  back later. \<^verbatim>\<open>Env\<close> and \<^verbatim>\<open>Ast_Store\<close> are declared as \<^emph>\<open>sibling\<close> substructures of
+  \<^verbatim>\<open>CEnv\<close> - not \<^verbatim>\<open>Ast_Store\<close> nested inside a structure also named \<^verbatim>\<open>Env\<close> or vice
+  versa, and neither named \<^verbatim>\<open>CEnv\<close> itself - which would self-shadow; \<^verbatim>\<open>get\<close>/\<^verbatim>\<open>put\<close>
+  re-export \<^verbatim>\<open>Env\<close>'s own \<^verbatim>\<open>Generic_Data\<close> accessors directly on \<^verbatim>\<open>CEnv\<close>, so a caller
+  never needs to name \<^verbatim>\<open>Env\<close> itself - \<^verbatim>\<open>Env.map\<close> is deliberately \<^emph>\<open>not\<close> re-exported
+  under the bare name \<open>map\<close>, since that would silently shadow the ubiquitous
+  \<^verbatim>\<open>List.map\<close>/Basis \<open>map\<close> for every caller using \<^verbatim>\<open>open CEnv\<close> - a real problem,
+  not a hypothetical one (it broke an unrelated theory's own \<open>map\<close> calls the
+  first time this was tried). Callers elsewhere are expected to write
+  \<^verbatim>\<open>open CEnv\<close> where that reads better than qualifying every operation.
 \<close>
 ML\<open>
 structure CEnv = struct
@@ -73,7 +73,8 @@ datatype ident_kind = Global of (pos C_Ast.cDeclaration)
                     | Enum   of (pos C_Ast.cDeclaration)
                     | Parameter of (pos C_Ast.cDeclaration) (* really  ? *)
                     | Cpp_const of (pos C_Ast.cDeclaration)
-                    | Cpp_macro of (pos C_Ast.ident list * pos C_Ast.cDeclaration)
+                    | Cpp_macro
+                        of (pos C_Ast.ident list * pos C_Ast.cDeclaration)
 
 (* A struct/union/enum tag's own registration in "cenv"'s "types" table - the
    C11 tag namespace, shared by all three, kept separate from "idents" (see
@@ -129,13 +130,15 @@ datatype type_ident = Struct_tag of pos * pos C_Ast.cDeclaration list
    "Toplevel.transition -> Toplevel.transition", and that lift must happen
    exactly once, at the outermost point (C11.thy's own "c11"/"c11_file"
    command registrations), not per handler. *)
-type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic
+type 'a type_antiq_fun0 = 'a * pos C_Ast.root * int -> (string * pos)
+  -> Context.generic -> Context.generic
 
 datatype cenv = mk of {idents  : ident_kind Symtab.table,
                        types   : type_ident Symtab.table,
                        c_antiq : (cenv type_antiq_fun0) Symtab.table,
                        predefined_envs : (pos * (cenv -> cenv)) Symtab.table,
-                       units   : int} \<comment> \<open>used for numbering translation units internally.\<close>
+                       units   : int}
+  \<comment> \<open>"units" numbers the translation units internally.\<close>
 
 type type_antiq_fun = cenv type_antiq_fun0
 
@@ -148,9 +151,12 @@ type type_antiq_fun = cenv type_antiq_fun0
    Isabelle/Pure type synonym), so "Local_Theory.background_theory f" is
    already usable directly as "Context.mapping"'s second,
    "Proof.context -> Proof.context" argument. *)
-fun lift_theory_antiq (f : 'a * pos C_Ast.root * int -> (string * pos) -> theory -> theory)
-    : 'a * pos C_Ast.root * int -> (string * pos) -> Context.generic -> Context.generic =
-  fn args => fn body => Context.mapping (f args body) (Local_Theory.background_theory (f args body))
+fun lift_theory_antiq
+  (f : 'a * pos C_Ast.root * int -> (string * pos) -> theory -> theory)
+    : 'a * pos C_Ast.root * int -> (string * pos) -> Context.generic
+      -> Context.generic =
+  fn args => fn body =>
+    Context.mapping (f args body) (Local_Theory.background_theory (f args body))
 
 (* "predefined_envs" holds, per header name (\<^verbatim>\<open>c11_predef\<close>'s own bracketed
    label, e.g. \<open>"stdio.h"\<close>), a pair of the reusable *effect* that header's
@@ -190,8 +196,10 @@ val empty_cenv = mk{idents  = Symtab.empty,
    case this needs to resolve cleverly); "units" takes the larger of the two
    counters, so a merge can only grow it, never shrink it back into a range
    that could collide with already-issued "Ast_Store" keys. *)
-fun merge_cenv (mk {idents = i1, types = t1, c_antiq = a1, predefined_envs = p1, units = u1},
-                mk {idents = i2, types = t2, c_antiq = a2, predefined_envs = p2, units = u2}) =
+fun merge_cenv
+  (mk {idents = i1, types = t1, c_antiq = a1, predefined_envs = p1, units = u1},
+                mk {idents = i2, types = t2, c_antiq = a2, predefined_envs =
+                    p2, units = u2}) =
   mk {idents = Symtab.merge (K true) (i1, i2),
       types = Symtab.merge (K true) (t1, t2),
       c_antiq = Symtab.merge (K true) (a1, a2),
@@ -227,7 +235,8 @@ structure Source_Store = Generic_Data
    caller of this structure via "open CEnv" would then have the ubiquitous
    "List.map"/Basis "map" silently shadowed by "Generic_Data"'s very
    differently-typed one - a real, previously-hit problem, not a hypothetical
-   one. "get"/"put" collide with nothing comparably common, so those two stay. *)
+   one. "get"/"put" collide with nothing comparably common, so those two stay.
+   *)
 val get = Env.get
 val put = Env.put
 
@@ -244,7 +253,8 @@ fun ast_store_key thy unit_no =
    Returns the store key (for user-facing reporting) and the updated theory. *)
 fun store_root (root : Position.T C_Ast.root) (text : string) thy =
     let
-      val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
+      val mk {idents, types, c_antiq, predefined_envs, units} =
+        get (Context.Theory thy)
       val key = ast_store_key thy units
       val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq,
                        predefined_envs = predefined_envs, units = units + 1}
@@ -268,7 +278,8 @@ fun get_source key thy =
 
 fun store_antiq (name, antiq_fun) thy =
     let
-       val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
+       val mk {idents, types, c_antiq, predefined_envs, units} =
+         get (Context.Theory thy)
        val c_antiq' = Symtab.update(name, antiq_fun) c_antiq
        val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq',
                         predefined_envs = predefined_envs, units = units}
@@ -289,7 +300,8 @@ fun get_antiq name thy =
    later "#include". *)
 fun store_predefined_env (header, pos, f) thy =
     let
-       val mk {idents, types, c_antiq, predefined_envs, units} = get (Context.Theory thy)
+       val mk {idents, types, c_antiq, predefined_envs, units} =
+         get (Context.Theory thy)
        val predefined_envs' = Symtab.update (header, (pos, f)) predefined_envs
        val cenv' = mk {idents = idents, types = types, c_antiq = c_antiq,
                         predefined_envs = predefined_envs', units = units}
@@ -345,16 +357,19 @@ structure Backend = Generic_Data
    val empty = NONE
    val merge = fn (a, b) => if is_some a then a else b)
 
-fun get_backend thy : backend = the_default (K I) (Backend.get (Context.Theory thy))
+fun get_backend thy : backend =
+  the_default (K I) (Backend.get (Context.Theory thy))
 
 fun set_backend (f : backend) = Context.theory_map (Backend.put (SOME f))
 
 fun reset_backend thy = Context.theory_map (Backend.put NONE) thy
 
-fun set_cenv_default thy = Context.theory_map (Default_Env.put (SOME (get (Context.Theory thy)))) thy
+fun set_cenv_default thy =
+  Context.theory_map (Default_Env.put (SOME (get (Context.Theory thy)))) thy
 
 fun reset_cenv thy =
-    let val default = case Default_Env.get (Context.Theory thy) of SOME c => c | NONE => empty_cenv
+    let val default = case Default_Env.get (Context.Theory thy) of SOME c =>
+      c | NONE => empty_cenv
     in Context.theory_map (put default) thy end
 
 end

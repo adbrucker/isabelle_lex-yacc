@@ -20,8 +20,9 @@ begin
 
 section\<open>The Problem\<close>
 
-text\<open>We re-formulate the SelectionSort Example from the Suite of the 
-why-tool \<^url>\<open>https://why3.org/\<close>. In its specific language WhyML, it reads as follows:
+text\<open>We re-formulate the SelectionSort Example from the Suite of the
+why-tool \<^url>\<open>https://why3.org/\<close>. In its specific language WhyML, it reads
+as follows:
 @{verbatim \<open>
 module SelectionSort
 
@@ -34,13 +35,15 @@ val swap (t : array int) (i j : int): unit
   requires { 0 <= i < length t }
   requires { 0 <= j < length t }
   ensures { t[i] = old t[j] /\ t[j] = old t[i] }
-  ensures { forall k:int. 0 <= k < length t /\ k <> i /\ k <> j -> t[k] = (old t)[k] }
+  ensures { forall k:int. 0 <= k < length t /\ k <> i /\ k <> j
+                          -> t[k] = (old t)[k] }
 
 let selectionsort (t : array int) =
   ensures { forall i j:int. 0 <= i <= j < length t -> t[i] <= t[j] }
   for i = 0 to length t - 1 do
     invariant { forall k l:int. 0 <= k <= l < i -> t[k] <= t[l] }
-    invariant { forall k l:int. 0 <= k < i /\ i <= l < length t -> t[k] <= t[l] }
+    invariant { forall k l:int. 0 <= k < i /\ i <= l < length t
+                                -> t[k] <= t[l] }
     let min = ref i in
     for j = i + 1 to length t - 1 do
       invariant { i <= !min < j }
@@ -55,11 +58,12 @@ end\<close>}
   This example demonstrates syntactic issues; no semantic interpretation 
   and therefore no formal verification is intended.
 
-  As a consequence, the WhyML front-end's own \<open>requires\<close>/\<open>ensures\<close>/\<open>invariant\<close> specification 
-  language, kept for reference in the genuine \<open>C11\<close> example below, is realized by mockups.
-  This concerns the four WhyML annotation kinds - \<open>requires\<close>, \<open>ensures\<close>, loop \<open>invariant\<close>,
-  and the implicit termination argument every WhyML \<open>for\<close> loop carries, which become
-  become four C-antiquotations of the same shape (\<open>@tag \<open>...\<close>\<close>.
+  As a consequence, the WhyML front-end's own \<open>requires\<close>/\<open>ensures\<close>/\<open>invariant\<close>
+  specification language, kept for reference in the genuine \<open>C11\<close> example below,
+  is realized by mockups. This concerns the four WhyML annotation kinds -
+  \<open>requires\<close>, \<open>ensures\<close>, loop \<open>invariant\<close>, and the implicit termination argument
+  every WhyML \<open>for\<close> loop carries, which become become four C-antiquotations of
+  the same shape (\<open>@tag \<open>...\<close>\<close>.
 
   The definition of these mockups follows here:
 \<close>
@@ -74,7 +78,8 @@ fun mockup_annotation_antiq name =
         val ctxt = Proof_Context.init_global thy
         val start_pos = Position.no_range_position body_pos
         val end_pos = Position.symbol_explode body start_pos
-        val encoded = Syntax.implode_input (Input.source true body (start_pos, end_pos))
+        val encoded =
+          Syntax.implode_input (Input.source true body (start_pos, end_pos))
         val t = Syntax.read_term ctxt encoded
           handle exn =>
             if Exn.is_interrupt exn then Exn.reraise exn

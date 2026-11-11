@@ -1,5 +1,6 @@
-(* Pruned from the Isabelle_C AFP entry's generated C11-FrontEnd/generated/c_ast.ML
-   (itself generated from Run.thy - originally "DO NOT EDIT").
+(* Pruned from the Isabelle_C AFP entry's generated
+   C11-FrontEnd/generated/c_ast.ML (itself generated from Run.thy - originally
+   "DO NOT EDIT").
 
    The original file mechanically concatenates, from one shared code-generation
    pipeline, four independent things: the real C11 AST (the "cXxx"-prefixed
@@ -339,7 +340,8 @@
    surfacing as a "NodeInfo" with a vacuous empty comment list.
 
    This file is derived, hand-pruned content, not a straight re-export of any
-   Isabelle theory - edit it directly if the retained C11 AST needs to change. *)
+   Isabelle theory - edit it directly if the retained C11 AST needs to change.
+   *)
 
 structure C_Ast : sig
   datatype ('a, 'b) either = Left of 'a | Right of 'b
@@ -353,7 +355,9 @@ structure C_Ast : sig
      worth reporting, unlike a name or a body. *)
   datatype navi = up | Up | right | down
   datatype 'a comment = Raw_txt of (string*'a) list
-                      | Antiquotation of {tag : string*'a} * navi list * {level:int} * {cartouche:string * 'a}
+                      | Antiquotation
+                          of {tag : string*'a} * navi
+                            list * {level:int} * {cartouche:string * 'a}
   datatype 'a nodeInfo = OnlyPos of 'a | NodeInfo of 'a comment list * 'a
 
   datatype namea = Name of int
@@ -368,11 +372,15 @@ structure C_Ast : sig
   datatype cUnaryOp = CPreIncOp | CPreDecOp | CPostIncOp | CPostDecOp 
                     | CAdrOp | CIndOp | CPlusOp | CMinOp | CCompOp | CNegOp
 
-  datatype cAssignOp = CAssignOp | CMulAssOp | CDivAssOp | CRmdAssOp | CAddAssOp 
-                     | CSubAssOp | CShlAssOp | CShrAssOp | CAndAssOp | CXorAssOp | COrAssOp
+  datatype cAssignOp = CAssignOp | CMulAssOp | CDivAssOp | CRmdAssOp
+    | CAddAssOp 
+                     | CSubAssOp | CShlAssOp | CShrAssOp | CAndAssOp
+                         | CXorAssOp | COrAssOp
 
-  datatype cBinaryOp = CMulOp | CDivOp | CRmdOp | CAddOp | CSubOp | CShlOp | CShrOp 
-                     | CLeOp  | CGrOp  | CLeqOp | CGeqOp | CEqOp  | CNeqOp | CAndOp | CXorOp 
+  datatype cBinaryOp = CMulOp | CDivOp | CRmdOp | CAddOp | CSubOp | CShlOp
+    | CShrOp 
+                     | CLeOp  | CGrOp  | CLeqOp | CGeqOp | CEqOp  | CNeqOp
+                         | CAndOp | CXorOp 
                      | COrOp  | CLndOp | CLorOp
 
   datatype 'a cConstant          = CIntConst of cInteger * 'a nodeInfo
@@ -398,8 +406,12 @@ structure C_Ast : sig
                                  | CArrSize of bool * 'a cExpression
 
   and 'a cDerivedDeclarator = CPtrDeclr of 'a cTypeQualifier list * 'a nodeInfo
-                            | CArrDeclr of 'a cTypeQualifier list * 'a cArraySize * 'a nodeInfo
-                            | CFunDeclr of (('a ident list), ('a cDeclaration list * bool)) either 
+                            | CArrDeclr
+                                of 'a cTypeQualifier list * 'a cArraySize * 'a
+                                  nodeInfo
+                            | CFunDeclr
+                                of (('a ident list),
+                                    ('a cDeclaration list * bool)) either 
                                             * 'a cAttribute list 
                                             * 'a nodeInfo
   and 'a cDeclarator   = CDeclr of 'a ident option 
@@ -416,15 +428,21 @@ structure C_Ast : sig
                             | CBlockDecl of 'a cDeclaration 
                             | CNestedFunDef of 'a cFunctionDef
 
-  and 'a cStatement  = CLabel of 'a ident * 'a cStatement * 'a cAttribute list * 'a nodeInfo
+  and 'a cStatement  = CLabel
+    of 'a ident * 'a cStatement * 'a cAttribute list * 'a nodeInfo
                      | CCase of 'a cExpression * 'a cStatement * 'a nodeInfo
-                     | CCases of 'a cExpression * 'a cExpression * 'a cStatement * 'a nodeInfo
+                     | CCases of 'a cExpression * 'a cExpression * 'a
+                         cStatement * 'a nodeInfo
                      | CDefault of 'a cStatement * 'a nodeInfo
                      | CExpr of 'a cExpression option * 'a nodeInfo
-                     | CCompound of 'a ident list * 'a cCompoundBlockItem list * 'a nodeInfo
-                     | CIf of 'a cExpression * 'a cStatement * 'a cStatement option * 'a nodeInfo
+                     | CCompound
+                         of 'a ident list * 'a cCompoundBlockItem list * 'a
+                           nodeInfo
+                     | CIf of 'a cExpression * 'a cStatement * 'a cStatement
+                         option * 'a nodeInfo
                      | CSwitch of 'a cExpression * 'a cStatement * 'a nodeInfo
-                     | CWhile of 'a cExpression * 'a cStatement * bool * 'a nodeInfo
+                     | CWhile of 'a cExpression * 'a cStatement * bool * 'a
+                         nodeInfo
                      | CFor of ('a cExpression option, 'a cDeclaration) either 
                                 * 'a cExpression option 
                                 * 'a cExpression option 
@@ -438,12 +456,16 @@ structure C_Ast : sig
                      | CAsm of 'a cAssemblyStatement * 'a nodeInfo
                     
   and 'a cExpression = CComma of 'a cExpression list * 'a nodeInfo
-                     | CAssign of cAssignOp * 'a cExpression * 'a cExpression * 'a nodeInfo
+                     | CAssign
+                         of cAssignOp * 'a cExpression * 'a cExpression * 'a
+                           nodeInfo
                      | CCond of 'a cExpression 
                                   * 'a cExpression option 
                                   * 'a cExpression 
                                   * 'a nodeInfo
-                     | CBinary of cBinaryOp * 'a cExpression * 'a cExpression * 'a nodeInfo
+                     | CBinary
+                         of cBinaryOp * 'a cExpression * 'a cExpression * 'a
+                           nodeInfo
                      | CCast of 'a cDeclaration * 'a cExpression * 'a nodeInfo
                      | CUnary of cUnaryOp * 'a cExpression * 'a nodeInfo
                      | CSizeofExpr of 'a cExpression * 'a nodeInfo
@@ -453,15 +475,18 @@ structure C_Ast : sig
                      | CComplexReal of 'a cExpression * 'a nodeInfo
                      | CComplexImag of 'a cExpression * 'a nodeInfo
                      | CIndex of 'a cExpression * 'a cExpression * 'a nodeInfo
-                     | CCall of 'a cExpression * 'a cExpression list * 'a nodeInfo
+                     | CCall of 'a cExpression * 'a cExpression list * 'a
+                         nodeInfo
                      | CMember of 'a cExpression * 'a ident * bool * 'a nodeInfo
                      | CVar of 'a ident * 'a nodeInfo
                      | CConst of 'a cConstant 
                      | CCompoundLit of 'a cDeclaration 
-                                       * ('a cPartDesignator list * 'a cInitializer) list 
+                                       * ('a cPartDesignator list * 'a
+                                          cInitializer) list 
                                        * 'a nodeInfo
                      | CGenericSelection of 'a cExpression 
-                                           * ('a cDeclaration option * 'a cExpression) list 
+                                           * ('a cDeclaration option * 'a
+                                              cExpression) list 
                                            * 'a nodeInfo
                      | CStatExpr of 'a cStatement * 'a nodeInfo
                      | CLabAddrExpr of 'a ident * 'a nodeInfo
@@ -478,15 +503,19 @@ structure C_Ast : sig
                         | CNonnullQual of 'a nodeInfo
 
   and 'a cEnumeration   = CEnum of 'a ident option 
-                                   * (('a ident * 'a cExpression option) list) option 
+                                   * (('a ident * 'a cExpression option) list)
+                                     option 
                                    * 'a cAttribute list * 'a nodeInfo
 
   and 'a cPartDesignator = CArrDesig of 'a cExpression * 'a nodeInfo
                          | CMemberDesig of 'a ident * 'a nodeInfo
-                         | CRangeDesig of 'a cExpression * 'a cExpression * 'a nodeInfo
+                         | CRangeDesig
+                             of 'a cExpression * 'a cExpression * 'a nodeInfo
 
   and 'a cInitializer    = CInitExpr of 'a cExpression * 'a nodeInfo
-                         | CInitList of ('a cPartDesignator list * 'a cInitializer) list 
+                         | CInitList
+                             of ('a cPartDesignator list * 'a cInitializer)
+                               list 
                                          * 'a nodeInfo
 
   and 'a cAssemblyOperand = CAsmOperand of 'a ident option 
@@ -511,14 +540,20 @@ structure C_Ast : sig
                                | CAlignSpec   of 'a cAlignmentSpecifier
 
   and 'a cDeclaration  = CDecl of 'a cDeclarationSpecifier list 
-                                   * (('a cDeclarator option * 'a cInitializer option) 
+                                   * (('a cDeclarator option * 'a cInitializer
+                                       option) 
                                    * 'a cExpression option) list 
                                    * 'a nodeInfo
-                       | CStaticAssert of 'a cExpression * 'a cStringLiteral * 'a nodeInfo
+                       | CStaticAssert
+                           of 'a cExpression * 'a cStringLiteral * 'a nodeInfo
 
-  and 'a cBuiltinThing = CBuiltinVaArg of 'a cExpression * 'a cDeclaration * 'a nodeInfo
-                       | CBuiltinOffsetOf of 'a cDeclaration * 'a cPartDesignator list * 'a nodeInfo
-                       | CBuiltinTypesCompatible of 'a cDeclaration * 'a cDeclaration * 'a nodeInfo
+  and 'a cBuiltinThing = CBuiltinVaArg
+    of 'a cExpression * 'a cDeclaration * 'a nodeInfo
+                       | CBuiltinOffsetOf
+                           of 'a cDeclaration * 'a cPartDesignator list * 'a
+                             nodeInfo
+                       | CBuiltinTypesCompatible
+                           of 'a cDeclaration * 'a cDeclaration * 'a nodeInfo
 
   and 'a cStructureUnion = CStruct of cStructTag 
                                        * 'a ident option 
@@ -564,24 +599,33 @@ structure C_Ast : sig
      "#ifndef", false for "#ifdef"; its two declaration lists are the
      "#else" branch and the then-branch, the latter empty when there is no
      "#else". *)
-  datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo * 'a nodeInfo
-                                 | CPPDefine of 'a ident * 'a cExpression * 'a nodeInfo
-                                 | CPPDefineFun of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
-                                 | CPPIfdef of bool * 'a ident * 'a cExternalDeclaration list
-                                              * 'a cExternalDeclaration list * 'a nodeInfo
+  datatype 'a cPreprocDirective = CPPInclude
+    of bool * string * 'a nodeInfo * 'a nodeInfo
+                                 | CPPDefine
+                                     of 'a ident * 'a cExpression * 'a nodeInfo
+                                 | CPPDefineFun
+                                     of 'a ident * 'a ident list * 'a
+                                       cExpression * 'a nodeInfo
+                                 | CPPIfdef
+                                     of bool * 'a ident * 'a
+                                       cExternalDeclaration list
+                                              * 'a cExternalDeclaration
+                                                list * 'a nodeInfo
 
   and 'a cExternalDeclaration = CDeclExt of 'a cDeclaration
                                | CFDefExt of 'a cFunctionDef
                                | CAsmExt of 'a cStringLiteral * 'a nodeInfo
                                | CPPExt of 'a cPreprocDirective
 
-  datatype 'a cTranslationUnit = CTranslUnit of 'a cExternalDeclaration list * 'a nodeInfo
+  datatype 'a cTranslationUnit = CTranslUnit
+    of 'a cExternalDeclaration list * 'a nodeInfo
 
   val STa   : int list -> string
   val ident : 'a ident -> string
 
   val pos_of_NodeInfo   : 'a nodeInfo -> 'a
-  val merge_nodeInfo    : Position.T nodeInfo -> Position.T nodeInfo -> Position.T nodeInfo
+  val merge_nodeInfo    : Position.T nodeInfo -> Position.T nodeInfo
+    -> Position.T nodeInfo
   val nodeInfo_of_CFunDef : 'a cFunctionDef -> 'a nodeInfo
   val pos_of_CFunDef    : 'a cFunctionDef -> 'a
   val nodeInfo_of_CStat : 'a cStatement -> 'a nodeInfo
@@ -608,7 +652,8 @@ structure C_Ast : sig
   val nodeInfo_of_CExpr    : 'a cExpression -> 'a nodeInfo
   val pos_of_CExpr         : 'a cExpression -> 'a
   val statement0_case      : 'a cExpression list -> 'a cStatement 
-                                                 -> bool * ('a cExpression list * 'a cStatement)
+                                                 -> bool * ('a cExpression
+                                                     list * 'a cStatement)
   val stringLiteral        : 'a cStringLiteral -> string
 
 
@@ -647,7 +692,9 @@ datatype 'a flags = Flags of int;
 datatype navi = up | Up | right | down;
 
 datatype 'a comment = Raw_txt of (string*'a) list
-                    | Antiquotation of {tag : string * 'a} * navi list * {level : int} * {cartouche : string * 'a}
+                    | Antiquotation
+                        of {tag : string * 'a} * navi
+                          list * {level : int} * {cartouche : string * 'a}
 
 datatype 'a nodeInfo = OnlyPos of 'a | NodeInfo of 'a comment list * 'a
 
@@ -665,11 +712,15 @@ datatype cIntRepr = DecRepr | HexRepr | OctalRepr;
 
 datatype cInteger = CInteger of int * cIntRepr * cIntFlag flags;
 
-datatype cUnaryOp = CPreIncOp | CPreDecOp | CPostIncOp | CPostDecOp | CAdrOp | CIndOp | CPlusOp | CMinOp | CCompOp | CNegOp;
+datatype cUnaryOp = CPreIncOp | CPreDecOp | CPostIncOp | CPostDecOp | CAdrOp
+  | CIndOp | CPlusOp | CMinOp | CCompOp | CNegOp;
 
-datatype cAssignOp = CAssignOp | CMulAssOp | CDivAssOp | CRmdAssOp | CAddAssOp | CSubAssOp | CShlAssOp | CShrAssOp | CAndAssOp | CXorAssOp | COrAssOp;
+datatype cAssignOp = CAssignOp | CMulAssOp | CDivAssOp | CRmdAssOp | CAddAssOp
+  | CSubAssOp | CShlAssOp | CShrAssOp | CAndAssOp | CXorAssOp | COrAssOp;
 
-datatype cBinaryOp = CMulOp | CDivOp | CRmdOp | CAddOp | CSubOp | CShlOp | CShrOp | CLeOp | CGrOp | CLeqOp | CGeqOp | CEqOp | CNeqOp | CAndOp | CXorOp | COrOp | CLndOp | CLorOp;
+datatype cBinaryOp = CMulOp | CDivOp | CRmdOp | CAddOp | CSubOp | CShlOp
+  | CShrOp | CLeOp | CGrOp | CLeqOp | CGeqOp | CEqOp | CNeqOp | CAndOp | CXorOp
+      | COrOp | CLndOp | CLorOp;
 
 datatype 'a cConstant = CIntConst of cInteger * 'a nodeInfo
                       | CCharConst of cChar * 'a nodeInfo
@@ -692,51 +743,128 @@ datatype cStructTag = CStructTag | CUnionTag;
 datatype 'a cStringLiteral = CStrLit of cString * 'a  nodeInfo;
 
 datatype 'a cArraySize = CNoArrSize of bool | CArrSize of bool * 'a cExpression
-and 'a cDerivedDeclarator = CPtrDeclr of 'a cTypeQualifier list * 'a nodeInfo | CArrDeclr of 'a cTypeQualifier list * 'a cArraySize * 'a nodeInfo | CFunDeclr of (('a ident list), ('a cDeclaration list * bool)) either * 'a cAttribute list * 'a nodeInfo
-and 'a cDeclarator = CDeclr of 'a ident option * 'a cDerivedDeclarator list * 'a cStringLiteral option * 'a cAttribute list * 'a nodeInfo
-and 'a cFunctionDef = CFunDef of 'a cDeclarationSpecifier list * 'a cDeclarator * 'a cDeclaration list * 'a cStatement * 'a nodeInfo
-and 'a cCompoundBlockItem = CBlockStmt of 'a cStatement | CBlockDecl of 'a cDeclaration | CNestedFunDef of 'a cFunctionDef
-and 'a cStatement = CLabel of 'a ident * 'a cStatement * 'a cAttribute list * 'a nodeInfo | CCase of 'a cExpression * 'a cStatement * 'a nodeInfo | CCases of 'a cExpression * 'a cExpression * 'a cStatement * 'a nodeInfo | CDefault of 'a cStatement * 'a nodeInfo |
-  CExpr of 'a cExpression option * 'a nodeInfo | CCompound of 'a ident list * 'a cCompoundBlockItem list * 'a nodeInfo | CIf of 'a cExpression * 'a cStatement * 'a cStatement option * 'a nodeInfo | CSwitch of 'a cExpression * 'a cStatement * 'a nodeInfo |
-  CWhile of 'a cExpression * 'a cStatement * bool * 'a nodeInfo | CFor of ('a cExpression option, 'a cDeclaration) either * 'a cExpression option * 'a cExpression option * 'a cStatement * 'a nodeInfo | CGoto of 'a ident * 'a nodeInfo |
-  CGotoPtr of 'a cExpression * 'a nodeInfo | CCont of 'a nodeInfo | CBreak of 'a nodeInfo | CReturn of 'a cExpression option * 'a nodeInfo | CAsm of 'a cAssemblyStatement * 'a nodeInfo
-and 'a cExpression = CComma of 'a cExpression list * 'a nodeInfo | CAssign of cAssignOp * 'a cExpression * 'a cExpression * 'a nodeInfo | CCond of 'a cExpression * 'a cExpression option * 'a cExpression * 'a nodeInfo |
-  CBinary of cBinaryOp * 'a cExpression * 'a cExpression * 'a nodeInfo | CCast of 'a cDeclaration * 'a cExpression * 'a nodeInfo | CUnary of cUnaryOp * 'a cExpression * 'a nodeInfo | CSizeofExpr of 'a cExpression * 'a nodeInfo | CSizeofType of 'a cDeclaration * 'a nodeInfo |
-  CAlignofExpr of 'a cExpression * 'a nodeInfo | CAlignofType of 'a cDeclaration * 'a nodeInfo | CComplexReal of 'a cExpression * 'a nodeInfo | CComplexImag of 'a cExpression * 'a nodeInfo | CIndex of 'a cExpression * 'a cExpression * 'a nodeInfo |
-  CCall of 'a cExpression * 'a cExpression list * 'a nodeInfo | CMember of 'a cExpression * 'a ident * bool * 'a nodeInfo | CVar of 'a ident * 'a nodeInfo | CConst of 'a cConstant |
-  CCompoundLit of 'a cDeclaration * ('a cPartDesignator list * 'a cInitializer) list * 'a nodeInfo | CGenericSelection of 'a cExpression * ('a cDeclaration option * 'a cExpression) list * 'a nodeInfo | CStatExpr of 'a cStatement * 'a nodeInfo |
+and 'a cDerivedDeclarator = CPtrDeclr of 'a cTypeQualifier list * 'a nodeInfo
+  | CArrDeclr of 'a cTypeQualifier list * 'a cArraySize * 'a nodeInfo
+      | CFunDeclr
+          of (('a ident list), ('a cDeclaration list * bool)) either * 'a
+            cAttribute list * 'a nodeInfo
+and 'a cDeclarator = CDeclr
+  of 'a ident option * 'a cDerivedDeclarator list * 'a cStringLiteral
+    option * 'a cAttribute list * 'a nodeInfo
+and 'a cFunctionDef = CFunDef
+  of 'a cDeclarationSpecifier list * 'a cDeclarator * 'a cDeclaration list * 'a
+    cStatement * 'a nodeInfo
+and 'a cCompoundBlockItem = CBlockStmt of 'a cStatement | CBlockDecl
+  of 'a cDeclaration | CNestedFunDef of 'a cFunctionDef
+and 'a cStatement = CLabel
+  of 'a ident * 'a cStatement * 'a cAttribute list * 'a nodeInfo | CCase
+    of 'a cExpression * 'a cStatement * 'a nodeInfo | CCases
+      of 'a cExpression * 'a cExpression * 'a cStatement * 'a nodeInfo
+        | CDefault of 'a cStatement * 'a nodeInfo |
+  CExpr of 'a cExpression option * 'a nodeInfo | CCompound
+    of 'a ident list * 'a cCompoundBlockItem list * 'a nodeInfo | CIf
+      of 'a cExpression * 'a cStatement * 'a cStatement option * 'a nodeInfo
+        | CSwitch of 'a cExpression * 'a cStatement * 'a nodeInfo |
+  CWhile of 'a cExpression * 'a cStatement * bool * 'a nodeInfo | CFor
+    of ('a cExpression option, 'a cDeclaration) either * 'a cExpression
+      option * 'a cExpression option * 'a cStatement * 'a nodeInfo | CGoto
+        of 'a ident * 'a nodeInfo |
+  CGotoPtr of 'a cExpression * 'a nodeInfo | CCont of 'a nodeInfo | CBreak
+    of 'a nodeInfo | CReturn of 'a cExpression option * 'a nodeInfo | CAsm
+      of 'a cAssemblyStatement * 'a nodeInfo
+and 'a cExpression = CComma of 'a cExpression list * 'a nodeInfo | CAssign
+  of cAssignOp * 'a cExpression * 'a cExpression * 'a nodeInfo | CCond
+    of 'a cExpression * 'a cExpression option * 'a cExpression * 'a nodeInfo |
+  CBinary of cBinaryOp * 'a cExpression * 'a cExpression * 'a nodeInfo | CCast
+    of 'a cDeclaration * 'a cExpression * 'a nodeInfo | CUnary
+      of cUnaryOp * 'a cExpression * 'a nodeInfo | CSizeofExpr
+        of 'a cExpression * 'a nodeInfo | CSizeofType
+          of 'a cDeclaration * 'a nodeInfo |
+  CAlignofExpr of 'a cExpression * 'a nodeInfo | CAlignofType
+    of 'a cDeclaration * 'a nodeInfo | CComplexReal
+      of 'a cExpression * 'a nodeInfo | CComplexImag
+        of 'a cExpression * 'a nodeInfo | CIndex
+          of 'a cExpression * 'a cExpression * 'a nodeInfo |
+  CCall of 'a cExpression * 'a cExpression list * 'a nodeInfo | CMember
+    of 'a cExpression * 'a ident * bool * 'a nodeInfo | CVar
+      of 'a ident * 'a nodeInfo | CConst of 'a cConstant |
+  CCompoundLit
+    of 'a cDeclaration * ('a cPartDesignator list * 'a cInitializer) list * 'a
+      nodeInfo | CGenericSelection
+        of 'a cExpression * ('a cDeclaration option * 'a cExpression) list * 'a
+          nodeInfo | CStatExpr of 'a cStatement * 'a nodeInfo |
   CLabAddrExpr of 'a ident * 'a nodeInfo | CBuiltinExpr of 'a cBuiltinThing
 and 'a cAttribute = CAttr of 'a ident * 'a cExpression list * 'a nodeInfo
-and 'a cTypeQualifier = CConstQual of 'a nodeInfo | CVolatQual of 'a nodeInfo | CRestrQual of 'a nodeInfo | CAtomicQual of 'a nodeInfo | CAttrQual of 'a cAttribute | CNullableQual of 'a nodeInfo | CNonnullQual of 'a nodeInfo
-and 'a cEnumeration = CEnum of 'a ident option * (('a ident * 'a cExpression option) list) option * 'a cAttribute list * 'a nodeInfo
-and 'a cPartDesignator = CArrDesig of 'a cExpression * 'a nodeInfo | CMemberDesig of 'a ident * 'a nodeInfo | CRangeDesig of 'a cExpression * 'a cExpression * 'a nodeInfo
-and 'a cInitializer = CInitExpr of 'a cExpression * 'a nodeInfo | CInitList of ('a cPartDesignator list * 'a cInitializer) list * 'a nodeInfo
-and 'a cAssemblyOperand = CAsmOperand of 'a ident option * 'a cStringLiteral * 'a cExpression * 'a nodeInfo
-and 'a cAssemblyStatement = CAsmStmt of 'a cTypeQualifier option * 'a cStringLiteral * 'a cAssemblyOperand list * 'a cAssemblyOperand list * 'a cStringLiteral list * 'a nodeInfo
-and 'a cAlignmentSpecifier = CAlignAsType of 'a cDeclaration * 'a nodeInfo | CAlignAsExpr of 'a cExpression * 'a nodeInfo
-and 'a cDeclarationSpecifier = CStorageSpec of 'a cStorageSpecifier | CTypeSpec of 'a cTypeSpecifier | CTypeQual of 'a cTypeQualifier | CFunSpec of 'a cFunctionSpecifier | CAlignSpec of 'a cAlignmentSpecifier
-and 'a cDeclaration = CDecl of 'a cDeclarationSpecifier list * (('a cDeclarator option * 'a cInitializer option) * 'a cExpression option) list * 'a nodeInfo | CStaticAssert of 'a cExpression * 'a cStringLiteral * 'a nodeInfo
-and 'a cBuiltinThing = CBuiltinVaArg of 'a cExpression * 'a cDeclaration * 'a nodeInfo | CBuiltinOffsetOf of 'a cDeclaration * 'a cPartDesignator list * 'a nodeInfo | CBuiltinTypesCompatible of 'a cDeclaration * 'a cDeclaration * 'a nodeInfo
-and 'a cStructureUnion = CStruct of cStructTag * 'a ident option * ('a cDeclaration list) option * 'a cAttribute list * 'a nodeInfo
-and 'a cTypeSpecifier = CVoidType of 'a nodeInfo | CCharType of 'a nodeInfo | CShortType of 'a nodeInfo | CIntType of 'a nodeInfo | CLongType of 'a nodeInfo | CFloatType of 'a nodeInfo | CDoubleType of 'a nodeInfo | CSignedType of 'a nodeInfo | CUnsigType of 'a nodeInfo | CBoolType of 'a nodeInfo |
-  CComplexType of 'a nodeInfo | CInt128Type of 'a nodeInfo | CSUType of 'a cStructureUnion * 'a nodeInfo | CEnumType of 'a cEnumeration * 'a nodeInfo | CTypeDef of 'a ident * 'a nodeInfo | CTypeOfExpr of 'a cExpression * 'a nodeInfo | CTypeOfType of 'a cDeclaration * 'a nodeInfo |
+and 'a cTypeQualifier = CConstQual of 'a nodeInfo | CVolatQual of 'a nodeInfo
+  | CRestrQual of 'a nodeInfo | CAtomicQual of 'a nodeInfo | CAttrQual
+      of 'a cAttribute | CNullableQual of 'a nodeInfo | CNonnullQual
+        of 'a nodeInfo
+and 'a cEnumeration = CEnum
+  of 'a ident option * (('a ident * 'a cExpression option) list) option * 'a
+    cAttribute list * 'a nodeInfo
+and 'a cPartDesignator = CArrDesig of 'a cExpression * 'a nodeInfo
+  | CMemberDesig of 'a ident * 'a nodeInfo | CRangeDesig
+      of 'a cExpression * 'a cExpression * 'a nodeInfo
+and 'a cInitializer = CInitExpr of 'a cExpression * 'a nodeInfo | CInitList
+  of ('a cPartDesignator list * 'a cInitializer) list * 'a nodeInfo
+and 'a cAssemblyOperand = CAsmOperand
+  of 'a ident option * 'a cStringLiteral * 'a cExpression * 'a nodeInfo
+and 'a cAssemblyStatement = CAsmStmt
+  of 'a cTypeQualifier option * 'a cStringLiteral * 'a cAssemblyOperand
+    list * 'a cAssemblyOperand list * 'a cStringLiteral list * 'a nodeInfo
+and 'a cAlignmentSpecifier = CAlignAsType of 'a cDeclaration * 'a nodeInfo
+  | CAlignAsExpr of 'a cExpression * 'a nodeInfo
+and 'a cDeclarationSpecifier = CStorageSpec of 'a cStorageSpecifier | CTypeSpec
+  of 'a cTypeSpecifier | CTypeQual of 'a cTypeQualifier | CFunSpec
+    of 'a cFunctionSpecifier | CAlignSpec of 'a cAlignmentSpecifier
+and 'a cDeclaration = CDecl
+  of 'a cDeclarationSpecifier
+    list * (('a cDeclarator option * 'a cInitializer option) * 'a cExpression
+            option) list * 'a nodeInfo | CStaticAssert
+              of 'a cExpression * 'a cStringLiteral * 'a nodeInfo
+and 'a cBuiltinThing = CBuiltinVaArg
+  of 'a cExpression * 'a cDeclaration * 'a nodeInfo | CBuiltinOffsetOf
+    of 'a cDeclaration * 'a cPartDesignator list * 'a nodeInfo
+      | CBuiltinTypesCompatible
+          of 'a cDeclaration * 'a cDeclaration * 'a nodeInfo
+and 'a cStructureUnion = CStruct
+  of cStructTag * 'a ident option * ('a cDeclaration list) option * 'a
+    cAttribute list * 'a nodeInfo
+and 'a cTypeSpecifier = CVoidType of 'a nodeInfo | CCharType of 'a nodeInfo
+  | CShortType of 'a nodeInfo | CIntType of 'a nodeInfo | CLongType
+      of 'a nodeInfo | CFloatType of 'a nodeInfo | CDoubleType of 'a nodeInfo
+        | CSignedType of 'a nodeInfo | CUnsigType of 'a nodeInfo | CBoolType
+            of 'a nodeInfo |
+  CComplexType of 'a nodeInfo | CInt128Type of 'a nodeInfo | CSUType
+    of 'a cStructureUnion * 'a nodeInfo | CEnumType
+      of 'a cEnumeration * 'a nodeInfo | CTypeDef of 'a ident * 'a nodeInfo
+        | CTypeOfExpr of 'a cExpression * 'a nodeInfo | CTypeOfType
+            of 'a cDeclaration * 'a nodeInfo |
   CAtomicType of 'a cDeclaration * 'a nodeInfo;
 
 
 datatype clangCVersion = ClangCVersion of string;
 
-datatype 'a cPreprocDirective = CPPInclude of bool * string * 'a nodeInfo * 'a nodeInfo
-                               | CPPDefine of 'a ident * 'a cExpression * 'a nodeInfo
-                               | CPPDefineFun of 'a ident * 'a ident list * 'a cExpression * 'a nodeInfo
-                               | CPPIfdef of bool * 'a ident * 'a cExternalDeclaration list
-                                            * 'a cExternalDeclaration list * 'a nodeInfo
+datatype 'a cPreprocDirective = CPPInclude
+  of bool * string * 'a nodeInfo * 'a nodeInfo
+                               | CPPDefine
+                                   of 'a ident * 'a cExpression * 'a nodeInfo
+                               | CPPDefineFun
+                                   of 'a ident * 'a ident list * 'a
+                                     cExpression * 'a nodeInfo
+                               | CPPIfdef
+                                   of bool * 'a ident * 'a cExternalDeclaration
+                                     list
+                                            * 'a cExternalDeclaration list * 'a
+                                              nodeInfo
 
 and 'a cExternalDeclaration = CDeclExt of 'a cDeclaration
                              | CFDefExt of 'a cFunctionDef
                              | CAsmExt of 'a cStringLiteral * 'a nodeInfo
                              | CPPExt of 'a cPreprocDirective;
 
-datatype 'a cTranslationUnit = CTranslUnit of 'a cExternalDeclaration list * 'a nodeInfo;
+datatype 'a cTranslationUnit = CTranslUnit
+  of 'a cExternalDeclaration list * 'a nodeInfo;
 
 datatype 'a root = Id of 'a ident | Expr of 'a cExpression 
                  | Stmt of 'a cStatement | Units of 'a cTranslationUnit list
@@ -747,17 +875,29 @@ fun STa l = String.implode (List.map (Char.chr o IntInf.toInt) l);
 
 fun String_concatWith (sep, l) = String.concatWith sep l;
 
-fun replace_integersa f s = String_concatWith ("", (map f ((List.map (fn c => let val k = Char.ord c in if k < 128 then IntInf.fromInt k else raise Fail "Non-ASCII character in literal" end)  o String.explode) s)));
+fun replace_integersa f s =
+  String_concatWith
+    ("", (map f
+          ((List.map
+            (fn c => let val k = Char.ord c in if k < 128 then IntInf.fromInt k
+             else raise Fail "Non-ASCII character in literal" end)  o
+               String.explode) s)));
 
-fun minus_nat (m : int) (n : int) = (if m - n < (0 : IntInf.int) then (0 : IntInf.int) else m - n);
+fun minus_nat (m : int) (n : int) =
+  (if m - n < (0 : IntInf.int) then (0 : IntInf.int) else m - n);
 
-fun nth (x :: xs) (n : int) = (if n = (0 : IntInf.int) then x else nth xs (minus_nat n (1 : IntInf.int)));
+fun nth (x :: xs) (n : int) =
+  (if n = (0 : IntInf.int) then x else nth xs (minus_nat n (1 : IntInf.int)));
 
 fun app_rev x f = f x;
 
 fun less_eq_nat (m : int) (n : int) = m <= n;
 
-fun foldl_one f accu = List.foldl (fn (x, acc) => f acc x) accu o (List.map (fn c => let val k = Char.ord c in if k < 128 then IntInf.fromInt k else raise Fail "Non-ASCII character in literal" end)  o String.explode);
+fun foldl_one f accu =
+  List.foldl (fn (x, acc) => f acc x) accu o
+    (List.map
+     (fn c => let val k = Char.ord c in if k < 128 then IntInf.fromInt k
+      else raise Fail "Non-ASCII character in literal" end)  o String.explode);
 
 fun foldlb f accu (s : string) = foldl_one f accu s;
 
@@ -767,11 +907,17 @@ fun to_list s = rev (foldla (fn l => fn c => c :: l) [] s);
 
 val length = String.size
 
-fun pref_ident s = (if less_eq_nat (1 : IntInf.int) (length s) andalso nth (to_list s) (0 : IntInf.int) = (95 : IntInf.int) then String_concatWith ("", ["StrictC'", s]) else s);
+fun pref_ident s =
+  (if less_eq_nat (1 : IntInf.int) (length s)
+   andalso nth (to_list s) (0 : IntInf.int) = (95 : IntInf.int)
+     then String_concatWith ("", ["StrictC'", s]) else s);
 
 fun ident x = (fn Ident (s, _, _) => pref_ident s) x;
 
-fun meta_of_logic x = ((String.implode o List.map (fn k => if 0 <= k andalso k < 128 then (Char.chr o IntInf.toInt) k else raise Fail "Non-ASCII character in literal")) o to_list) x;
+fun meta_of_logic x =
+  ((String.implode o List.map
+    (fn k => if 0 <= k andalso k < 128 then (Char.chr o IntInf.toInt) k
+     else raise Fail "Non-ASCII character in literal")) o to_list) x;
 
 fun not_yet_supported x = (warning o meta_of_logic) x;
 
@@ -810,18 +956,22 @@ fun nodeInfo_of_CDecl x =
 
 fun pos_of_CDecl x = (pos_of_NodeInfo o nodeInfo_of_CDecl) x;
 
-fun nodeInfo_of_CBlockItem x = (fn a => (case a of CBlockStmt aa => nodeInfo_of_CStat aa 
+fun nodeInfo_of_CBlockItem x =
+  (fn a => (case a of CBlockStmt aa => nodeInfo_of_CStat aa 
                                         | CBlockDecl aa => nodeInfo_of_CDecl aa 
-                                        | CNestedFunDef aa => nodeInfo_of_CFunDef aa)) x;
+                                        | CNestedFunDef aa =>
+                                          nodeInfo_of_CFunDef aa)) x;
 
 fun pos_of_CBlockItem x = (pos_of_NodeInfo o nodeInfo_of_CBlockItem) x;
 
 fun null [] = true
   | null (x :: xs) = false;
 
-fun merge_nodeInfo (ndI1 : Position.T nodeInfo) (ndI2 : Position.T nodeInfo) : Position.T nodeInfo =
+fun merge_nodeInfo (ndI1 : Position.T nodeInfo)
+  (ndI2 : Position.T nodeInfo) : Position.T nodeInfo =
   let
-    val pos = Position.range_position (pos_of_NodeInfo ndI1, pos_of_NodeInfo ndI2);
+    val pos =
+      Position.range_position (pos_of_NodeInfo ndI1, pos_of_NodeInfo ndI2);
     fun comments_of (OnlyPos _) = []
       | comments_of (NodeInfo (cs, _)) = cs;
     val cs = comments_of ndI1 @ comments_of ndI2;
@@ -829,8 +979,10 @@ fun merge_nodeInfo (ndI1 : Position.T nodeInfo) (ndI2 : Position.T nodeInfo) : P
       Library.distinct (op =)
         (List.concat (List.map (fn Raw_txt l => l | Antiquotation _ => []) cs));
     val antiquotations =
-      Library.distinct (op =) (List.filter (fn Antiquotation _ => true | Raw_txt _ => false) cs);
-    val comments = (if null raw_txts then [] else [Raw_txt raw_txts]) @ antiquotations;
+      Library.distinct (op =)
+        (List.filter (fn Antiquotation _ => true | Raw_txt _ => false) cs);
+    val comments = (if null raw_txts then [] else [Raw_txt raw_txts])
+      @ antiquotations;
   in
     if null comments then OnlyPos pos else NodeInfo (comments, pos)
   end;
@@ -843,34 +995,87 @@ fun bindb m f acc = let
                       f x acca
                     end;
 
-fun foldM_o f = (fn a => (case a of NONE => return NONE | SOME e => bindb (f e) (fn ea => return (SOME ea))));
+fun foldM_o f =
+  (fn a => (case a of NONE => return NONE | SOME e =>
+            bindb (f e) (fn ea => return (SOME ea))));
 
 fun unsupported p s = return (let
-                                val _ = not_yet_supported (String_concatWith ("", ["Statements in expression not yet supported ", s, " (empty variable returned)"]));
+                                val _ = not_yet_supported
+                                  (String_concatWith
+                                   ("", [("Statements in expression not yet " ^
+                                          "supported "), s, (" (empty " ^
+                                            "variable returned)")]));
                               in
-                                CVar (Ident ("", (0 : IntInf.int), OnlyPos p), OnlyPos p)
+                                CVar (Ident ("", (0 : IntInf.int), OnlyPos p),
+                                      OnlyPos p)
                               end);
 
 fun foldM f [] = return []
-  | foldM f (x :: xs) = bindb (f x) (fn xa => bindb (foldM f xs) (fn xsa => return (xa :: xsa)));
+  | foldM f (x :: xs) =
+      bindb (f x) (fn xa => bindb (foldM f xs) (fn xsa => return (xa :: xsa)));
 
 fun stmt_out_of_expr p e =
-  (case e of CComma (l, _) => bindb (foldM (stmt_out_of_expr p) l) (fn _ => unsupported p ("CComma"))
-    | CAssign (_, e1, e2, _) => bindb (stmt_out_of_expr p e1) (fn _ => bindb (stmt_out_of_expr p e2) (fn _ => unsupported p ("CAssign")))
-    | CCond (e1, o_e2, e3, pos) => bindb (stmt_out_of_expr p e1) (fn e1a => bindb (foldM_o (stmt_out_of_expr p) o_e2) (fn o_e2a => bindb (stmt_out_of_expr p e3) (fn e3a => return (CCond (e1a, o_e2a, e3a, pos)))))
-    | CBinary (bin, e1, e2, pos) => bindb (stmt_out_of_expr p e1) (fn e1a => bindb (stmt_out_of_expr p e2) (fn e2a => return (CBinary (bin, e1a, e2a, pos))))
-    | CCast (d, ea, pos) => bindb (stmt_out_of_expr p ea) (fn eb => return (CCast (d, eb, pos)))
+  (case e of CComma (l, _) =>
+   bindb (foldM (stmt_out_of_expr p) l) (fn _ => unsupported p ("CComma"))
+    | CAssign (_, e1, e2, _) =>
+      bindb (stmt_out_of_expr p e1)
+        (fn _ => bindb (stmt_out_of_expr p e2)
+         (fn _ => unsupported p ("CAssign")))
+    | CCond (e1, o_e2, e3, pos) =>
+      bindb (stmt_out_of_expr p e1)
+        (fn e1a =>
+         bindb (foldM_o (stmt_out_of_expr p) o_e2)
+           (fn o_e2a =>
+            bindb (stmt_out_of_expr p e3)
+              (fn e3a => return (CCond (e1a, o_e2a, e3a, pos)))))
+    | CBinary (bin, e1, e2, pos) =>
+      bindb (stmt_out_of_expr p e1)
+        (fn e1a =>
+         bindb (stmt_out_of_expr p e2)
+           (fn e2a => return (CBinary (bin, e1a, e2a, pos))))
+    | CCast (d, ea, pos) =>
+      bindb (stmt_out_of_expr p ea) (fn eb => return (CCast (d, eb, pos)))
     | CUnary (una, ea, pos) =>
       bindb (stmt_out_of_expr p ea)
-        (fn eb => (case (case una of CPreIncOp => SOME ("CPreIncOp") | CPreDecOp => SOME ("CPreDecOp") | CPostIncOp => SOME ("CPostIncOp") | CPostDecOp => SOME ("CPostDecOp")
-                          | CAdrOp => NONE | CIndOp => NONE | CPlusOp => NONE | CMinOp => NONE | CCompOp => NONE | CNegOp => NONE)
-                    of NONE => return (CUnary (una, eb, pos)) | SOME s => unsupported p (String_concatWith ("", [s, " |> CUnary"]))))
-    | CSizeofExpr (cExpression, a) => return (CSizeofExpr (cExpression, a)) | CSizeofType (cDeclaration, a) => return (CSizeofType (cDeclaration, a)) | CAlignofExpr (cExpression, a) => return (CAlignofExpr (cExpression, a))
-    | CAlignofType (_, _) => unsupported p ("CAlignofType") | CComplexReal (cExpression, a) => return (CComplexReal (cExpression, a)) | CComplexImag (cExpression, a) => return (CComplexImag (cExpression, a))
-    | CIndex (e1, e2, pos) => bindb (stmt_out_of_expr p e2) (fn e2a => bindb (stmt_out_of_expr p e1) (fn e1a => return (CIndex (e1a, e2a, pos))))
-    | CCall (ea, l, pos) => bindb (stmt_out_of_expr p ea) (fn eb => bindb (foldM (stmt_out_of_expr p) l) (fn la => return (CCall (eb, la, pos)))) | CMember (cExpression, ident, boola, a) => return (CMember (cExpression, ident, boola, a))
-    | CVar (ident, a) => return (CVar (ident, a)) | CConst cConstant => return (CConst cConstant) | CCompoundLit (cDeclaration, lista, a) => return (CCompoundLit (cDeclaration, lista, a))
-    | CGenericSelection (cExpression, lista, a) => return (CGenericSelection (cExpression, lista, a)) | CStatExpr (_, _) => unsupported p ("CStatExpr") | CLabAddrExpr (ident, a) => return (CLabAddrExpr (ident, a))
+        (fn eb =>
+         (case (case una of CPreIncOp => SOME ("CPreIncOp") | CPreDecOp =>
+                SOME ("CPreDecOp") | CPostIncOp =>
+                  SOME ("CPostIncOp") | CPostDecOp => SOME ("CPostDecOp")
+                          | CAdrOp => NONE | CIndOp => NONE | CPlusOp =>
+                            NONE | CMinOp => NONE | CCompOp => NONE | CNegOp =>
+                              NONE)
+                    of NONE => return (CUnary (una, eb, pos)) | SOME s =>
+                      unsupported p
+                        (String_concatWith ("", [s, " |> CUnary"]))))
+    | CSizeofExpr (cExpression, a) =>
+      return (CSizeofExpr (cExpression, a)) | CSizeofType (cDeclaration, a) =>
+        return (CSizeofType (cDeclaration, a))
+          | CAlignofExpr (cExpression, a) =>
+            return (CAlignofExpr (cExpression, a))
+    | CAlignofType (_, _) =>
+      unsupported p ("CAlignofType") | CComplexReal (cExpression, a) =>
+        return (CComplexReal (cExpression, a))
+          | CComplexImag (cExpression, a) =>
+            return (CComplexImag (cExpression, a))
+    | CIndex (e1, e2, pos) =>
+      bindb (stmt_out_of_expr p e2)
+        (fn e2a =>
+         bindb (stmt_out_of_expr p e1)
+           (fn e1a => return (CIndex (e1a, e2a, pos))))
+    | CCall (ea, l, pos) =>
+      bindb (stmt_out_of_expr p ea)
+        (fn eb =>
+         bindb (foldM (stmt_out_of_expr p) l)
+           (fn la => return (CCall (eb, la, pos))))
+             | CMember (cExpression, ident, boola, a) =>
+               return (CMember (cExpression, ident, boola, a))
+    | CVar (ident, a) => return (CVar (ident, a)) | CConst cConstant =>
+      return (CConst cConstant) | CCompoundLit (cDeclaration, lista, a) =>
+        return (CCompoundLit (cDeclaration, lista, a))
+    | CGenericSelection (cExpression, lista, a) =>
+      return (CGenericSelection (cExpression, lista, a)) | CStatExpr (_, _) =>
+        unsupported p ("CStatExpr") | CLabAddrExpr (ident, a) =>
+          return (CLabAddrExpr (ident, a))
     | CBuiltinExpr _ => unsupported p ("CBuiltinExpr"));
 
 fun stmt_out_of_expra p x = app_rev (stmt_out_of_expr p x ()) snd;
@@ -878,7 +1083,8 @@ fun stmt_out_of_expra p x = app_rev (stmt_out_of_expr p x ()) snd;
 fun fresh_ident x = "V_"^serial_string ();
 
 fun identa (Ident (s, _, _)) = pref_ident (if s = "const" 
-                                            then String_concatWith ("", ["__", s, "__"]) 
+                                            then String_concatWith
+                                              ("", ["__", s, "__"]) 
                                             else s);
 
 fun equal_CAssignOp (x : cAssignOp) (y : cAssignOp) = (x = y);
@@ -899,9 +1105,12 @@ fun statement_of_expression_CAssign_fun e =
     | CStatExpr (_, _) => false          | CLabAddrExpr (_, _) => false 
     | CBuiltinExpr _ => false);
 
-fun nodeInfo_of_CBuiltin x = (fn a => (case a of CBuiltinVaArg (_, _, ndI) => ndI
-                                               | CBuiltinOffsetOf (_, _, ndI) => ndI
-                                               | CBuiltinTypesCompatible (_, _, ndI) => ndI)) x;
+fun nodeInfo_of_CBuiltin x =
+  (fn a => (case a of CBuiltinVaArg (_, _, ndI) => ndI
+                                               | CBuiltinOffsetOf
+                                                   (_, _, ndI) => ndI
+                                               | CBuiltinTypesCompatible
+                                                   (_, _, ndI) => ndI)) x;
 
 fun pos_of_CBuiltin x = (pos_of_NodeInfo o nodeInfo_of_CBuiltin) x;
 
@@ -938,11 +1147,23 @@ fun nodeInfo_of_CExpr (CComma (_, ndI)) = ndI
 fun pos_of_CExpr x = (pos_of_NodeInfo o nodeInfo_of_CExpr) x;
 
 fun statement0_case l s =
-  (case s of CLabel (_, _, _, _) => (false, (rev l, s)) | CCase (e, sa, _) => statement0_case (e :: l) sa | CCases (_, _, _, _) => (false, (rev l, s)) | CDefault (sa, _) => (true, (rev l, sa)) | CExpr (_, _) => (false, (rev l, s))
-    | CCompound (_, _, _) => (false, (rev l, s)) | CIf (_, _, _, _) => (false, (rev l, s)) | CSwitch (_, _, _) => (false, (rev l, s)) | CWhile (_, _, _, _) => (false, (rev l, s)) | CFor (_, _, _, _, _) => (false, (rev l, s))
-    | CGoto (_, _) => (false, (rev l, s)) | CGotoPtr (_, _) => (false, (rev l, s)) | CCont _ => (false, (rev l, s)) | CBreak _ => (false, (rev l, s)) | CReturn (_, _) => (false, (rev l, s)) | CAsm (_, _) => (false, (rev l, s)));
+  (case s of CLabel (_, _, _, _) => (false, (rev l, s)) | CCase (e, sa, _) =>
+   statement0_case (e :: l) sa | CCases (_, _, _, _) =>
+     (false, (rev l, s)) | CDefault (sa, _) =>
+       (true, (rev l, sa)) | CExpr (_, _) => (false, (rev l, s))
+    | CCompound (_, _, _) => (false, (rev l, s)) | CIf (_, _, _, _) =>
+      (false, (rev l, s)) | CSwitch (_, _, _) =>
+        (false, (rev l, s)) | CWhile (_, _, _, _) =>
+          (false, (rev l, s)) | CFor (_, _, _, _, _) => (false, (rev l, s))
+    | CGoto (_, _) => (false, (rev l, s)) | CGotoPtr (_, _) =>
+      (false, (rev l, s)) | CCont _ => (false, (rev l, s)) | CBreak _ =>
+        (false, (rev l, s)) | CReturn (_, _) =>
+          (false, (rev l, s)) | CAsm (_, _) => (false, (rev l, s)));
 
-fun stringLiteral x = (fn CStrLit (CString (s, _), _) => replace_integersa (fn xa => (if xa = (10 : IntInf.int) then "\092n" else (STa [xa]))) s) x;
+fun stringLiteral x =
+  (fn CStrLit (CString (s, _), _) =>
+   replace_integersa
+     (fn xa => (if xa = (10 : IntInf.int) then "\092n" else (STa [xa]))) s) x;
 
 fun nodeInfo_of_CPPDirective x = (fn a => (case a of
     CPPInclude (_, _, ndI, _) => ndI
@@ -952,7 +1173,10 @@ fun nodeInfo_of_CPPDirective x = (fn a => (case a of
 
 fun pos_of_CPPDirective x = (pos_of_NodeInfo o nodeInfo_of_CPPDirective) x;
 
-fun nodeInfo_of_CExtDecl x = (fn a => (case a of CDeclExt aa => nodeInfo_of_CDecl aa | CFDefExt aa => nodeInfo_of_CFunDef aa | CAsmExt (_, ndI) => ndI | CPPExt aa => nodeInfo_of_CPPDirective aa)) x;
+fun nodeInfo_of_CExtDecl x =
+  (fn a => (case a of CDeclExt aa => nodeInfo_of_CDecl aa | CFDefExt aa =>
+            nodeInfo_of_CFunDef aa | CAsmExt (_, ndI) => ndI | CPPExt aa =>
+              nodeInfo_of_CPPDirective aa)) x;
 
 fun pos_of_CExtDecl x = (pos_of_NodeInfo o nodeInfo_of_CExtDecl) x;
 
@@ -985,20 +1209,23 @@ fun pp_unaryOp CPreIncOp = "++" | pp_unaryOp CPreDecOp = "--"
   | pp_unaryOp CPlusOp = "+" | pp_unaryOp CMinOp = "-"
   | pp_unaryOp CCompOp = "~" | pp_unaryOp CNegOp = "!";
 
-fun pp_binaryOp CMulOp = "*" | pp_binaryOp CDivOp = "/" | pp_binaryOp CRmdOp = "%"
+fun pp_binaryOp CMulOp = "*" | pp_binaryOp CDivOp = "/" | pp_binaryOp CRmdOp =
+  "%"
   | pp_binaryOp CAddOp = "+" | pp_binaryOp CSubOp = "-"
   | pp_binaryOp CShlOp = "<<" | pp_binaryOp CShrOp = ">>"
   | pp_binaryOp CLeOp = "<" | pp_binaryOp CGrOp = ">"
   | pp_binaryOp CLeqOp = "<=" | pp_binaryOp CGeqOp = ">="
   | pp_binaryOp CEqOp = "==" | pp_binaryOp CNeqOp = "!="
-  | pp_binaryOp CAndOp = "&" | pp_binaryOp CXorOp = "^" | pp_binaryOp COrOp = "|"
+  | pp_binaryOp CAndOp = "&" | pp_binaryOp CXorOp = "^" | pp_binaryOp COrOp =
+      "|"
   | pp_binaryOp CLndOp = "&&" | pp_binaryOp CLorOp = "||";
 
 fun pp_assignOp CAssignOp = "=" | pp_assignOp CMulAssOp = "*="
   | pp_assignOp CDivAssOp = "/=" | pp_assignOp CRmdAssOp = "%="
   | pp_assignOp CAddAssOp = "+=" | pp_assignOp CSubAssOp = "-="
   | pp_assignOp CShlAssOp = "<<=" | pp_assignOp CShrAssOp = ">>="
-  | pp_assignOp CAndAssOp = "&=" | pp_assignOp CXorAssOp = "^=" | pp_assignOp COrAssOp = "|=";
+  | pp_assignOp CAndAssOp = "&=" | pp_assignOp CXorAssOp = "^="
+      | pp_assignOp COrAssOp = "|=";
 
 fun pp_integer (CInteger (n, _, _)) = IntInf.toString n;
 fun pp_float (CFloat s) = s;
@@ -1033,7 +1260,8 @@ fun pp_escape_char quote c =
 fun pp_escape_string s = String.translate (pp_escape_char #"\"") s;
 
 fun pp_char (CChar (c, _)) = "'" ^ pp_escape_char #"'" c ^ "'"
-  | pp_char (CChars (cs, _)) = "'" ^ String.concat (map (pp_escape_char #"'") cs) ^ "'";
+  | pp_char (CChars (cs, _)) = "'"
+      ^ String.concat (map (pp_escape_char #"'") cs) ^ "'";
 fun pp_string (CString (s, _)) = "\"" ^ pp_escape_string s ^ "\"";
 
 fun pp_constant (CIntConst (i, _)) = pp_integer i
@@ -1053,7 +1281,8 @@ fun pp_derived (CPtrDeclr _) = "*"
   | pp_derived (CFunDeclr (Left ids, _, _)) = "(" ^ pp_join ", " ident ids ^ ")"
   | pp_derived (CFunDeclr (Right (params, has_ellipsis), _, _)) =
       "(" ^ pp_join ", " pp_declaration params ^
-      (if has_ellipsis then (if null params then "..." else ", ...") else "") ^ ")"
+      (if has_ellipsis then (if null params then "..." else ", ...") else "")
+        ^ ")"
 
 and pp_declarator (CDeclr (id_opt, derived, _, _, _)) =
   (* A leading run of pointers prints as a prefix, e.g. "*name", with any
@@ -1071,7 +1300,8 @@ and pp_declarator (CDeclr (id_opt, derived, _, _, _)) =
           else ([], d :: ds)
     val (ptrs, rest) = split_prefix derived
   in
-    pp_join "" pp_derived ptrs ^ pp_option ident id_opt ^ pp_join "" pp_derived rest
+    pp_join "" pp_derived ptrs ^ pp_option ident id_opt
+      ^ pp_join "" pp_derived rest
   end
 
 and pp_typeSpecifier (CVoidType _) = "void"
@@ -1113,8 +1343,10 @@ and pp_storageSpecifier (CAuto _) = "auto"
 and pp_functionSpecifier (CInlineQual _) = "inline"
   | pp_functionSpecifier (CNoreturnQual _) = "_Noreturn"
 
-and pp_alignmentSpecifier (CAlignAsType (d, _)) = "_Alignas(" ^ pp_declaration d ^ ")"
-  | pp_alignmentSpecifier (CAlignAsExpr (e, _)) = "_Alignas(" ^ pp_expression e ^ ")"
+and pp_alignmentSpecifier (CAlignAsType (d, _)) = "_Alignas("
+  ^ pp_declaration d ^ ")"
+  | pp_alignmentSpecifier (CAlignAsExpr (e, _)) = "_Alignas(" ^ pp_expression e
+      ^ ")"
 
 and pp_declarationSpecifier (CStorageSpec s) = pp_storageSpecifier s
   | pp_declarationSpecifier (CTypeSpec s) = pp_typeSpecifier s
@@ -1141,28 +1373,36 @@ and pp_partDesignator (CArrDesig (e, _)) = "[" ^ pp_expression e ^ "]"
       "[" ^ pp_expression e1 ^ " ... " ^ pp_expression e2 ^ "]"
 
 and pp_init_pair (desigs, init) =
-  (if null desigs then "" else pp_join "" pp_partDesignator desigs ^ " = ") ^ pp_initializer init
+  (if null desigs then "" else pp_join "" pp_partDesignator desigs ^ " = ")
+    ^ pp_initializer init
 
 and pp_initializer (CInitExpr (e, _)) = pp_expression e
-  | pp_initializer (CInitList (inits, _)) = "{" ^ pp_join ", " pp_init_pair inits ^ "}"
+  | pp_initializer (CInitList (inits, _)) = "{"
+      ^ pp_join ", " pp_init_pair inits ^ "}"
 
 and pp_builtinThing (CBuiltinVaArg (e, d, _)) =
       "__builtin_va_arg(" ^ pp_expression e ^ ", " ^ pp_declaration d ^ ")"
   | pp_builtinThing (CBuiltinOffsetOf (d, desigs, _)) =
-      "__builtin_offsetof(" ^ pp_declaration d ^ ", " ^ pp_join "" pp_partDesignator desigs ^ ")"
+      "__builtin_offsetof(" ^ pp_declaration d ^ ", "
+        ^ pp_join "" pp_partDesignator desigs ^ ")"
   | pp_builtinThing (CBuiltinTypesCompatible (d1, d2, _)) =
-      "__builtin_types_compatible_p(" ^ pp_declaration d1 ^ ", " ^ pp_declaration d2 ^ ")"
+      "__builtin_types_compatible_p(" ^ pp_declaration d1 ^ ", "
+        ^ pp_declaration d2 ^ ")"
 
 and pp_generic_assoc (NONE, e) = "default: " ^ pp_expression e
   | pp_generic_assoc (SOME d, e) = pp_declaration d ^ ": " ^ pp_expression e
 
 and pp_expression e = (case e of
     CComma (es, _) => pp_join ", " pp_expression es
-  | CAssign (op_, e1, e2, _) => pp_expression e1 ^ " " ^ pp_assignOp op_ ^ " " ^ pp_expression e2
+  | CAssign (op_, e1, e2, _) =>
+    pp_expression e1 ^ " " ^ pp_assignOp op_ ^ " " ^ pp_expression e2
   | CCond (e1, oe2, e3, _) =>
       "(" ^ pp_expression e1 ^ " ? " ^
-      (case oe2 of NONE => "" | SOME e2 => pp_expression e2 ^ " ") ^ ": " ^ pp_expression e3 ^ ")"
-  | CBinary (op_, e1, e2, _) => "(" ^ pp_expression e1 ^ " " ^ pp_binaryOp op_ ^ " " ^ pp_expression e2 ^ ")"
+      (case oe2 of NONE => "" | SOME e2 => pp_expression e2 ^ " ") ^ ": "
+        ^ pp_expression e3 ^ ")"
+  | CBinary (op_, e1, e2, _) =>
+    "(" ^ pp_expression e1 ^ " " ^ pp_binaryOp op_ ^ " " ^ pp_expression e2
+      ^ ")"
   | CCast (d, e1, _) => "(" ^ pp_declaration d ^ ") " ^ pp_expression e1
   | CUnary (op_, e1, _) => pp_unaryOp op_ ^ pp_expression e1
   | CSizeofExpr (e1, _) => "sizeof(" ^ pp_expression e1 ^ ")"
@@ -1172,22 +1412,28 @@ and pp_expression e = (case e of
   | CComplexReal (e1, _) => "__real__ " ^ pp_expression e1
   | CComplexImag (e1, _) => "__imag__ " ^ pp_expression e1
   | CIndex (e1, e2, _) => pp_expression e1 ^ "[" ^ pp_expression e2 ^ "]"
-  | CCall (e1, es, _) => pp_expression e1 ^ "(" ^ pp_join ", " pp_expression es ^ ")"
-  | CMember (e1, id, arrow, _) => pp_expression e1 ^ (if arrow then "->" else ".") ^ ident id
+  | CCall (e1, es, _) =>
+    pp_expression e1 ^ "(" ^ pp_join ", " pp_expression es ^ ")"
+  | CMember (e1, id, arrow, _) =>
+    pp_expression e1 ^ (if arrow then "->" else ".") ^ ident id
   | CVar (id, _) => ident id
   | CConst c => pp_constant c
-  | CCompoundLit (d, inits, _) => "(" ^ pp_declaration d ^ ") {" ^ pp_join ", " pp_init_pair inits ^ "}"
+  | CCompoundLit (d, inits, _) =>
+    "(" ^ pp_declaration d ^ ") {" ^ pp_join ", " pp_init_pair inits ^ "}"
   | CGenericSelection (e1, assocs, _) =>
-      "_Generic(" ^ pp_expression e1 ^ ", " ^ pp_join ", " pp_generic_assoc assocs ^ ")"
+      "_Generic(" ^ pp_expression e1 ^ ", "
+        ^ pp_join ", " pp_generic_assoc assocs ^ ")"
   | CStatExpr (s, _) => "({ " ^ pp_statement 0 s ^ " })"
   | CLabAddrExpr (id, _) => "&&" ^ ident id
   | CBuiltinExpr b => pp_builtinThing b)
 
 and pp_statement n s = (case s of
     CLabel (id, s1, _, _) => ident id ^ ":\n" ^ pp_statement n s1
-  | CCase (e, s1, _) => pp_indent n ^ "case " ^ pp_expression e ^ ":\n" ^ pp_statement (n + 1) s1
+  | CCase (e, s1, _) =>
+    pp_indent n ^ "case " ^ pp_expression e ^ ":\n" ^ pp_statement (n + 1) s1
   | CCases (e1, e2, s1, _) =>
-      pp_indent n ^ "case " ^ pp_expression e1 ^ " ... " ^ pp_expression e2 ^ ":\n" ^ pp_statement (n + 1) s1
+      pp_indent n ^ "case " ^ pp_expression e1 ^ " ... " ^ pp_expression e2
+        ^ ":\n" ^ pp_statement (n + 1) s1
   | CDefault (s1, _) => pp_indent n ^ "default:\n" ^ pp_statement (n + 1) s1
   | CExpr (eo, _) => pp_indent n ^ pp_option pp_expression eo ^ ";"
   | CCompound (_, items, _) =>
@@ -1196,22 +1442,29 @@ and pp_statement n s = (case s of
       "\n" ^ pp_indent n ^ "}"
   | CIf (e, s1, os2, _) =>
       pp_indent n ^ "if (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1 ^
-      (case os2 of NONE => "" | SOME s2 => "\n" ^ pp_indent n ^ "else\n" ^ pp_statement (n + 1) s2)
-  | CSwitch (e, s1, _) => pp_indent n ^ "switch (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1
+      (case os2 of NONE => "" | SOME s2 =>
+       "\n" ^ pp_indent n ^ "else\n" ^ pp_statement (n + 1) s2)
+  | CSwitch (e, s1, _) =>
+    pp_indent n ^ "switch (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1
   | CWhile (e, s1, is_do, _) =>
       if is_do
-      then pp_indent n ^ "do\n" ^ pp_statement (n + 1) s1 ^ "\n" ^ pp_indent n ^ "while (" ^ pp_expression e ^ ");"
-      else pp_indent n ^ "while (" ^ pp_expression e ^ ")\n" ^ pp_statement (n + 1) s1
+      then pp_indent n ^ "do\n" ^ pp_statement (n + 1) s1 ^ "\n" ^ pp_indent n
+        ^ "while (" ^ pp_expression e ^ ");"
+      else pp_indent n ^ "while (" ^ pp_expression e ^ ")\n"
+        ^ pp_statement (n + 1) s1
   | CFor (init, cond, step, s1, _) =>
       pp_indent n ^ "for (" ^
-      (case init of Left eo => pp_option pp_expression eo | Right d => pp_declaration d) ^ "; " ^
-      pp_option pp_expression cond ^ "; " ^ pp_option pp_expression step ^ ")\n" ^
+      (case init of Left eo => pp_option pp_expression eo | Right d =>
+       pp_declaration d) ^ "; " ^
+      pp_option pp_expression cond ^ "; " ^ pp_option pp_expression step
+        ^ ")\n" ^
       pp_statement (n + 1) s1
   | CGoto (id, _) => pp_indent n ^ "goto " ^ ident id ^ ";"
   | CGotoPtr (e, _) => pp_indent n ^ "goto *" ^ pp_expression e ^ ";"
   | CCont _ => pp_indent n ^ "continue;"
   | CBreak _ => pp_indent n ^ "break;"
-  | CReturn (eo, _) => pp_indent n ^ "return" ^ pp_option (fn e => " " ^ pp_expression e) eo ^ ";"
+  | CReturn (eo, _) =>
+    pp_indent n ^ "return" ^ pp_option (fn e => " " ^ pp_expression e) eo ^ ";"
   | CAsm _ => pp_indent n ^ "__asm__(...);")
 
 and pp_blockItem n (CBlockStmt s) = pp_statement n s
@@ -1225,7 +1478,8 @@ and pp_functionDef n (CFunDef (specs, declr, decls, body, _)) =
 
 and pp_externalDeclaration (CDeclExt d) = pp_declaration d ^ ";"
   | pp_externalDeclaration (CFDefExt f) = pp_functionDef 0 f
-  | pp_externalDeclaration (CAsmExt (s, _)) = "__asm__(" ^ pp_stringLiteral s ^ ");"
+  | pp_externalDeclaration (CAsmExt (s, _)) = "__asm__(" ^ pp_stringLiteral s
+      ^ ");"
   | pp_externalDeclaration (CPPExt d) = pp_preprocDirective d
 
 and pp_preprocDirective (CPPInclude (system, name, _, _)) =
@@ -1233,14 +1487,17 @@ and pp_preprocDirective (CPPInclude (system, name, _, _)) =
   | pp_preprocDirective (CPPDefine (id, e, _)) =
       "#define " ^ ident id ^ " " ^ pp_expression e
   | pp_preprocDirective (CPPDefineFun (id, params, e, _)) =
-      "#define " ^ ident id ^ "(" ^ pp_join ", " ident params ^ ") " ^ pp_expression e
+      "#define " ^ ident id ^ "(" ^ pp_join ", " ident params ^ ") "
+        ^ pp_expression e
   | pp_preprocDirective (CPPIfdef (negate, id, thn, els, _)) =
       "#" ^ (if negate then "ifndef " else "ifdef ") ^ ident id ^ "\n" ^
       pp_join "\n" pp_externalDeclaration thn ^
-      (if null els then "" else "\n#else\n" ^ pp_join "\n" pp_externalDeclaration els) ^
+      (if null els then "" else "\n#else\n"
+       ^ pp_join "\n" pp_externalDeclaration els) ^
       "\n#endif"
 
-and pp_translationUnit (CTranslUnit (eds, _)) = pp_join "\n\n" pp_externalDeclaration eds;
+and pp_translationUnit (CTranslUnit (eds, _)) =
+  pp_join "\n\n" pp_externalDeclaration eds;
 
 fun pp_root (Id id) = ident id
   | pp_root (Expr e) = pp_expression e

@@ -69,7 +69,8 @@ fun this_theory_units n =
     val my_keys =
       Symtab.keys store
       |> List.filter (String.isPrefix prefix)
-      |> List.mapPartial (fn k => (case suffix_num k of SOME i => SOME (k, i) | NONE => NONE))
+      |> List.mapPartial
+          (fn k => (case suffix_num k of SOME i => SOME (k, i) | NONE => NONE))
       |> sort (fn ((_, a), (_, b)) => Int.compare (a, b))
       |> map #1
   in List.drop (my_keys, length my_keys - n) end
@@ -80,21 +81,27 @@ fun pp_navi C_Ast.up = "u"
   | pp_navi C_Ast.down = "d"
 
 fun pp_comment (C_Ast.Raw_txt frags) =
-      "Raw_txt " ^ String.concatWith " | " (map (fn (t, _) => "[" ^ t ^ "]") frags)
-  | pp_comment (C_Ast.Antiquotation ({tag = (tag, _)}, navi, {level}, {cartouche = (body, _)})) =
-      "Antiquotation tag=" ^ tag ^ " navi=[" ^ String.concat (map pp_navi navi) ^
+      "Raw_txt "
+        ^ String.concatWith " | " (map (fn (t, _) => "[" ^ t ^ "]") frags)
+  | pp_comment
+      (C_Ast.Antiquotation
+       ({tag = (tag, _)}, navi, {level}, {cartouche = (body, _)})) =
+      "Antiquotation tag=" ^ tag ^ " navi=["
+        ^ String.concat (map pp_navi navi) ^
       "] level=" ^ Int.toString level ^ " body=[" ^ body ^ "]"
 
 fun comments_of_ni ni = (case ni of
       C_Ast.OnlyPos _ => [] | C_Ast.NodeInfo (cs, _) => cs)
 
 fun comments_of (C_Ast.CDeclExt d) = comments_of_ni (C_Ast.nodeInfo_of_CDecl d)
-  | comments_of (C_Ast.CFDefExt f) = comments_of_ni (C_Ast.nodeInfo_of_CFunDef f)
+  | comments_of (C_Ast.CFDefExt f) =
+      comments_of_ni (C_Ast.nodeInfo_of_CFunDef f)
   | comments_of _ = []
 
 fun dump_unit key =
   let
-    val SOME (C_Ast.Units [C_Ast.CTranslUnit (eds, _)]) = CEnv.get_ast key @{theory}
+    val SOME (C_Ast.Units [C_Ast.CTranslUnit (eds, _)]) =
+      CEnv.get_ast key @{theory}
     val all = List.concat (map comments_of eds)
   in String.concatWith "\n" (map pp_comment all) end
 
@@ -104,7 +111,8 @@ val labels =
    "bare quote, no tag"]
 
 val report =
-  ListPair.map (fn (key, label) => "=== " ^ label ^ " (" ^ key ^ ") ===\n" ^ dump_unit key)
+  ListPair.map
+    (fn (key, label) => "=== " ^ label ^ " (" ^ key ^ ") ===\n" ^ dump_unit key)
     (this_theory_units 5, labels)
   |> String.concatWith "\n"
 

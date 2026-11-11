@@ -5,15 +5,16 @@
  *
  * Authors: Burkhart Wolff, Claude Sonnet 5.5
  *
- * This is an LLM-generated replication of the Isabelle/C version 2 design to the
- * programming language Rust (MicroRust). It provides an efficient parser for
- * MicroRust, deeply integrated into the Isabelle/PIDE document model, allowing
- * external files as well as in-theory code-snippets which are transparent to
- * the underlying theory. It provides an API for the generated AST’s, and an API
- * to hook up semantic backends that compile these AST’s to theory extensions in
- * Isabelle/HOL. Members of the family come with a MicroRust-specific
- * antiquotation mechanism allowing programmable links to the semantic backends
- * as necessary for support of program-annotations with HOL formulas.
+ * This is an LLM-generated replication of the Isabelle/C version 2 design to
+ * the programming language Rust (MicroRust). It provides an efficient parser
+ * for MicroRust, deeply integrated into the Isabelle/PIDE document model,
+ * allowing external files as well as in-theory code-snippets which are
+ * transparent to the underlying theory. It provides an API for the generated
+ * AST’s, and an API to hook up semantic backends that compile these AST’s to
+ * theory extensions in Isabelle/HOL. Members of the family come with a
+ * MicroRust-specific antiquotation mechanism allowing programmable links to the
+ * semantic backends as necessary for support of program-annotations with HOL
+ * formulas.
  *
  * This session is part of the Isabelle Programming Language Toolkit
  * (Isabelle/PLTk). The generation has been done with Claude Sonnet 5.5; while
