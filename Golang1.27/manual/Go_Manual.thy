@@ -66,6 +66,9 @@ text\<open>
   (3\,406 files) is accepted but for the 73 files that it contains \<^emph>\<open>in order to be
   rejected\<close>.
 
+  The folder of this front-end is called \<^verbatim>\<open>Golang1.27\<close>, after the language version it
+  implements; the session, the theories and the commands are called \<open>Go\<close> and \<open>go\<close>.
+
   Isabelle/Go is the sixth language front-end built on the design of \<^bold>\<open>Isabelle/C, Version
   2.0\<close>, which this repository's \<^verbatim>\<open>C11/\<close> folder contains \<^cite>\<open>"tuong.ea:isabellec:2019" and
   "tuong.ea:deeply:2019"\<close>, after occam 2, Scala 3, MicroRust and AdaSpark. It is built from the same

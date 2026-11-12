@@ -5,12 +5,12 @@ chapter AFP
 
    Generate the PDF with
 
-     isabelle build -d Go Go_Manual
+     isabelle build -d Golang1.27 Go_Manual
 
    which writes "manual/output/document.pdf" ("output" is git-ignored). The LaTeX sources are in
-   "document/": "root.tex" (the same style as the C11 and occam 2 manuals, uses the lualatex/fontspec
-   setup of Isabelle's own document build) and "root.bib" (copied from the occam 2 manual, plus the
-   Go specification and the Go source tree). *)
+   "document/": "root.tex" (the same style as the C11 and occam 2 manuals, uses the
+   lualatex/fontspec setup of Isabelle's own document build) and "root.bib" (copied from the
+   occam 2 manual, plus the Go specification and the Go source tree). *)
 session "Go_Manual" (AFP) = "Go" +
   options [timeout = 1200, document = pdf, document_output = "output"]
   theories

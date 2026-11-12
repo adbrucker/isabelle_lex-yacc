@@ -25,7 +25,7 @@ output
 /AdaSpark/*.ada
 /AdaSpark/manual/*.ada
 
-# go_export output of Go_Cmd_Tests.thy and the manual (regenerated on every build) - not Go/examples/*.go,
+# go_export output of Go_Cmd_Tests.thy and the manual (regenerated on every build) - not Golang1.27/examples/*.go,
 # which are genuine fixtures
-/Go/*.go
-/Go/manual/*.go
+/Golang1.27/*.go
+/Golang1.27/manual/*.go
