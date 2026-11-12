@@ -1,0 +1,17 @@
+chapter AFP
+
+(* Independent of the parent "../Isabelle_Lex-Yacc" session and of the other front-ends
+   ("../C11", "../occam2", "../scala3", "../MicroRust", "../AdaSpark"): the "directories" entry
+   reaches "LexYacc.thy"/"YaccLib.thy" for "Go_Parser.thy"'s own relative import, which makes the
+   sessions unable to share one build graph. Build with "isabelle build -d Go Go" - never together
+   with the other front-ends in the same invocation. "Go/ROOTS" makes the manual's sub-session
+   visible to "-d Go". *)
+session "Go" (AFP) = HOL +
+  options [timeout = 1200]
+  directories
+    "../Isabelle_Lex-Yacc"
+  theories
+    Go_Parser
+    Go (global)
+    Go_Tests
+    Go_Cmd_Tests

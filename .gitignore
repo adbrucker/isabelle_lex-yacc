@@ -24,3 +24,8 @@ output
 # AdaSpark/examples/*.ads|*.adb, which are genuine fixtures
 /AdaSpark/*.ada
 /AdaSpark/manual/*.ada
+
+# go_export output of Go_Cmd_Tests.thy and the manual (regenerated on every build) - not Go/examples/*.go,
+# which are genuine fixtures
+/Go/*.go
+/Go/manual/*.go
