@@ -82,13 +82,14 @@ end
 
 ## Building
 
-The folder is called `Golang1.27`, after the language version it implements; the session, the
-theories and the commands are called `Go` and `go`. The session is independent of the other
+The folder is called `Golang1.27`, after the language version it implements; the session is
+`Golang1_27` (a dot cannot occur in a session name), the theories and the commands are called `Go`
+and `go`. The session is independent of the other
 sessions of this repository: build it on its own, never together with them. Isabelle2026 is the
 supported version.
 
 ```sh
-isabelle build -d Golang1.27 Go            # all theories and tests
+isabelle build -d Golang1.27 Golang1_27    # all theories and tests
 isabelle build -d Golang1.27 Go_Manual     # the manual: manual/output/document.pdf
 ```
 
@@ -96,7 +97,7 @@ The manual is generated, not stored in the repository: building `Go_Manual` writ
 `Golang1.27/manual/output/document.pdf` (the `output` folders are git-ignored). Building with `-c`
 regenerates it from scratch. `Golang1.27/ROOTS` makes the manual's sub-session visible to
 `-d Golang1.27`. To work interactively, open a theory importing `Go` with
-`isabelle jedit -d Golang1.27 -l Go`.
+`isabelle jedit -d Golang1.27 -l Golang1_27`.
 
 ## Tests
 
@@ -105,7 +106,7 @@ the environment variable `GO_SRC` names one (for instance `$GOROOT/src`, or the 
 checkout of `github.com/golang/go`), skipping `testdata` directories:
 
 ```sh
-GO_SRC=/path/to/go/src isabelle build -d Golang1.27 Go
+GO_SRC=/path/to/go/src isabelle build -d Golang1.27 Golang1_27
 ```
 
 `Go_Cmd_Tests.thy` counts the entity markups for each scoping rule and exercises navigation, levels,

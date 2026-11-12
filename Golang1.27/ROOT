@@ -3,11 +3,11 @@ chapter AFP
 (* Independent of the parent "../Isabelle_Lex-Yacc" session and of the other front-ends
    ("../C11", "../occam2", "../scala3", "../MicroRust", "../AdaSpark"): the "directories" entry
    reaches "LexYacc.thy"/"YaccLib.thy" for "Go_Parser.thy"'s own relative import, which makes the
-   sessions unable to share one build graph. Build with "isabelle build -d Golang1.27 Go" - never
+   sessions unable to share one build graph. Build with "isabelle build -d Golang1.27 Golang1_27" - never
    together with the other front-ends in the same invocation. "Golang1.27/ROOTS" makes the manual's
    sub-session visible to "-d Golang1.27". The folder is named after the language version, the
    session after the language. *)
-session "Go" (AFP) = HOL +
+session "Golang1_27" (AFP) = HOL +
   options [timeout = 1200]
   directories
     "../Isabelle_Lex-Yacc"
