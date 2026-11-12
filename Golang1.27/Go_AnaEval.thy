@@ -83,10 +83,31 @@ text\<open>
     receiver type (\<open>func (l *List[T]) Push(x T)\<close>), and are visible in the signature and the
     body. A method is declared (its name is reported) but not entered into the table: it is
     reached by selection.
-  \<^item> \<^bold>\<open>Selections are not resolved.\<close> \<open>x.f\<close> resolves \<open>x\<close>, and \<open>f\<close> if it is the name of a package
-    member only in the sense that \<open>pkg\<close> is an imported package; fields and methods need types. The
-    keys of a composite literal that are bare names are field names (or, in a map literal,
-    variables - this pass cannot tell) and are not resolved; any other key is an expression.
+  \<^item> \<^bold>\<open>Selections are resolved with types, and only when that is certain.\<close> \<open>x.f\<close> resolves \<open>x\<close>;
+    \<open>f\<close> is hyperlinked to the field or method it denotes if the type of \<open>x\<close> is known well enough
+    to tell, and left unmarked otherwise. The types are computed by a pure function
+    \<open>type_of\<close> over the expression: the type of a name is the one it was declared with
+    (\<open>var\<close>, a parameter, a result, a receiver, a constant) or the one of the value that
+    defined it (\<open>:=\<close>, \<open>var x = v\<close>, a range variable, the variable of a type switch in the
+    clause); a call has the result type of the signature of its callee, a conversion the type
+    converted to, \<open>*p\<close>, \<open>&x\<close>, \<open><-c\<close>, \<open>a[i]\<close>, \<open>a[i:j]\<close>, \<open>x.(T)\<close>, a composite literal and a
+    function literal their natural types, and the builtins \<open>len\<close>, \<open>new\<close>, \<open>make\<close>, \<open>append\<close>... what
+    they are known to return. Everything else - the standard library, an imported type, a
+    result of a generic function whose type arguments would have to be inferred - is
+    \<open>TUnknown\<close>, on which nothing is ever linked. A named type is a \<^emph>\<open>reference\<close> to its declaration
+    (the position of its name), so types, fields and methods may be mutually recursive and
+    declared in any order: the types, signatures and methods of a package are registered
+    before anything is walked, and the types of package-level variables that are inferred are
+    found in a few rounds, which also settles variables that depend on each other. The lookup
+    follows the language: the pointer is dereferenced automatically, the members of an
+    embedded type are promoted, the shallowest depth wins and a tie is ambiguous (no link), an
+    interface has the methods of the interfaces it embeds, a type parameter those of its
+    constraint, an alias those of its target, and an instantiated generic type has its type
+    arguments substituted; a match is dropped if an embedded type this pass does not know
+    could have provided the same name nearer. The keys of a composite literal are fields of
+    its (struct) type, also in elided elements (\<open>[]T{{a: 1}}\<close>); in a map literal they are
+    expressions; when the type of the literal is unknown a bare name as a key is left alone,
+    as it could be either.
   \<^item> \<^bold>\<open>Imports\<close> declare the package name - the alias, or the last element of the import path -
     at the import path; a use \<open>pkg.Name\<close> is hyperlinked to it. The standard library is not seen
     by this pass.
@@ -113,9 +134,26 @@ open GEnv
 type acts = (int * (Context.generic -> Context.generic)) list
 
 fun names_of (mk {names, ...} : genv) = names
+fun vtypes_of (mk {vtypes, ...} : genv) = vtypes
+fun defs_of (mk {defs, ...} : genv) = defs
+fun meths_of (mk {meths, ...} : genv) = meths
 
-fun set_names names' (mk {names = _, go_antiq, units}) =
-  mk {names = names', go_antiq = go_antiq, units = units}
+(* The scope of a name is that of its type: the two tables are always set together. *)
+fun set_scope (names', vtypes') (mk {names = _, vtypes = _, defs, meths, go_antiq, units}) =
+  mk {names = names', vtypes = vtypes', defs = defs, meths = meths, go_antiq = go_antiq,
+      units = units}
+
+fun add_def key d (mk {names, vtypes, defs, meths, go_antiq, units}) =
+  mk {names = names, vtypes = vtypes, defs = Symtab.update (key, d) defs, meths = meths,
+      go_antiq = go_antiq, units = units}
+
+fun add_meth key m (mk {names, vtypes, defs, meths, go_antiq, units}) =
+  mk {names = names, vtypes = vtypes, defs = defs, meths = Symtab.update (key, m) meths,
+      go_antiq = go_antiq, units = units}
+
+fun set_vtypes vtypes' (mk {names, vtypes = _, defs, meths, go_antiq, units}) =
+  mk {names = names, vtypes = vtypes', defs = defs, meths = meths, go_antiq = go_antiq,
+      units = units}
 
 (* The position a "root" itself spans: what a "type_antiq_fun" sees as its own "current term". A
    source file has no single span. *)
@@ -413,8 +451,16 @@ fun use_label genv lbl =
      NONE => ()
    | SOME (A.Ident (name, _, ni)) => use_key genv (label_key name) name (A.pos_of_NodeInfo ni))
 
+(* A name that is declared again at the very same site (the pre-pass of a package, then the walk)
+   keeps its type; at another site (a shadowing declaration) it starts without one. *)
 fun declare kind genv key =
-  set_names (Symtab.update (key, kind) (names_of genv)) genv
+  let
+    val same_site =
+      (case Symtab.lookup (names_of genv) key of
+         SOME k => pos_of_kind k = pos_of_kind kind
+       | NONE => false)
+    val vts = if same_site then vtypes_of genv else Symtab.delete_safe key (vtypes_of genv)
+  in set_scope (Symtab.update (key, kind) (names_of genv), vts) genv end
 
 (* Enters a name silently (no declaration site is reported). *)
 fun enter mk_kind genv (A.Ident (name, _, ni)) =
@@ -447,9 +493,9 @@ fun decl_only mk_kind (A.Ident (name, _, ni)) =
 (* Runs "f" in a nested scope: the table is restored on exit. *)
 fun scoped genv f =
   let
-    val names = names_of genv
+    val scope = (names_of genv, vtypes_of genv)
     val (genv1, acts) = f genv
-  in (set_names names genv1, acts) end
+  in (set_scope scope genv1, acts) end
 
 fun optl f x = (case x of NONE => [] | SOME y => f y)
 
@@ -506,7 +552,479 @@ fun recv_targs t = (case recv_base t of
 
 fun recv_head t = (case recv_base t of A.EIndex (b, _, _) => b | _ => t)
 
-fun walk_expr senv ctx (e : pos A.gExpr) : acts =
+(* ---- Types: what the resolution of selections needs ----------------------------------------
+
+   Everything below is pure (no report, no antiquotation) and works on the "genv" it is given, so
+   it can be asked about any expression at any point of the walk. See the top-of-theory note. *)
+
+val int_ty = TBasic "int"
+val bool_ty = TBasic "bool"
+
+val basic_type_names =
+  ["bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int", "int8",
+   "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64",
+   "uintptr", "comparable"]
+
+val integer_type_names =
+  ["byte", "int", "int8", "int16", "int32", "int64", "rune", "uint", "uint8", "uint16", "uint32",
+   "uint64", "uintptr"]
+
+(* What an expression denotes: a value of a type, or a type. *)
+datatype tv = Val of ty | Ty of ty
+
+(* A name of the universe block, unless the program has declared it itself. *)
+fun lookup_ident genv name : tv =
+  (case Symtab.lookup (names_of genv) name of
+     SOME (Typ p) => Ty (TNamed (pos_key p, []))
+   | SOME (Tparam p) => Ty (TVar (pos_key p))
+   | SOME (Var _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
+   | SOME (Const _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
+   | SOME (Param _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
+   | SOME (Func _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
+   | SOME _ => Val TUnknown
+   | NONE =>
+       if name = "any" then Ty (TIface ([], []))
+       else if member (op =) basic_type_names name then Ty (TBasic name)
+       else if name = "true" orelse name = "false" then Val bool_ty
+       else if name = "iota" then Val int_ty
+       else Val TUnknown)
+
+fun meth_key tkey name = tkey ^ "|" ^ name
+
+(* Substitution of type parameters (by key). *)
+fun subst (m : (string * ty) list) (t : ty) : ty =
+  let
+    fun s t = (case t of
+        TVar k => the_default t (AList.lookup (op =) m k)
+      | TNamed (k, args) => TNamed (k, map s args)
+      | TPtr t1 => TPtr (s t1)
+      | TSlice t1 => TSlice (s t1)
+      | TArray t1 => TArray (s t1)
+      | TMap (a, b) => TMap (s a, s b)
+      | TChan t1 => TChan (s t1)
+      | TFunc sg => TFunc (ssig sg)
+      | TStruct fs => TStruct (map (fn TF (n, p, t1, e) => TF (n, p, s t1, e)) fs)
+      | TIface (ms, es) => TIface (map (fn TM (n, p, sg) => TM (n, p, ssig sg)) ms, map s es)
+      | TTuple ts => TTuple (map s ts)
+      | _ => t)
+    and ssig (TSig (ps, rs, v)) = TSig (map s ps, map s rs, v)
+  in if null m then t else s t end
+
+(* The type parameters of a declaration instantiated by "args"; with the wrong number of
+   arguments (an uninstantiated mention, or an inference this pass does not do) they are
+   unknown. *)
+fun inst_map (tparams, args) =
+  if length tparams = length args then tparams ~~ args else map (fn k => (k, TUnknown)) tparams
+
+(* The structure of a type: named types and aliases are unfolded, type arguments substituted. A
+   cycle (invalid Go) is cut by the fuel. *)
+fun under genv fuel (t : ty) : ty =
+  (case t of
+     TNamed (k, args) =>
+       if fuel <= 0 then TUnknown
+       else
+         (case Symtab.lookup (defs_of genv) k of
+            SOME (TDef {tparams, rhs, ...}) =>
+              under genv (fuel - 1) (subst (inst_map (tparams, args)) rhs)
+          | NONE => TUnknown)
+   | _ => t)
+
+fun strip_paren e = (case e of A.EParen (e1, _) => strip_paren e1 | _ => e)
+
+fun embedded_id t = (case t of
+    A.EStar (t1, _) => embedded_id t1
+  | A.EParen (t1, _) => embedded_id t1
+  | A.EIdent id => SOME id
+  | A.ESelector (_, id, _) => SOME id
+  | A.EIndex (b, _, _) => embedded_id b
+  | _ => NONE)
+
+(* A type expression as a type. Pure; a name that is not found (a package member, a name this
+   pass does not see) gives "TUnknown". *)
+fun ty_of genv (e : pos A.gExpr) : ty =
+  (case e of
+     A.EIdent (A.Ident (n, _, _)) => (case lookup_ident genv n of Ty t => t | Val _ => TUnknown)
+   | A.EParen (e1, _) => ty_of genv e1
+   | A.EStar (e1, _) => TPtr (ty_of genv e1)
+   | A.EIndex (b, args, _) =>
+       (case ty_of genv b of
+          TNamed (k, _) => TNamed (k, map (ty_of genv) args)
+        | _ => TUnknown)
+   | A.EArrayType (NONE, t, _) => TSlice (ty_of genv t)
+   | A.EArrayType (SOME _, t, _) => TArray (ty_of genv t)
+   | A.EEllipsisArray (t, _) => TArray (ty_of genv t)
+   | A.EMapType (k, v, _) => TMap (ty_of genv k, ty_of genv v)
+   | A.EChanType (_, t, _) => TChan (ty_of genv t)
+   | A.EFuncType (sg, _) => TFunc (ty_of_sig genv sg)
+   | A.EStructType (fields, _) => TStruct (maps (ty_of_field genv) fields)
+   | A.EInterfaceType (elems, _) =>
+       TIface (List.mapPartial
+                 (fn A.IMethod (A.Ident (n, _, ni), sg, _) =>
+                       SOME (TM (n, A.pos_of_NodeInfo ni, ty_of_sig genv sg))
+                   | _ => NONE) elems,
+               List.mapPartial (fn A.IType (t, _) => SOME (ty_of genv t) | _ => NONE) elems)
+   | _ => TUnknown)
+
+and ty_of_sig genv (A.Sig (ps, rs, _)) : tsig =
+  let
+    fun one (A.Param (names, t, variadic, _)) =
+      let val t0 = ty_of genv t
+      in replicate (Int.max (1, length names)) (if variadic then TSlice t0 else t0) end
+  in TSig (maps one ps, maps one rs, exists (fn A.Param (_, _, v, _) => v) ps) end
+
+and ty_of_field genv (A.Field (names, t, _, _)) : tfield list =
+  let val ft = ty_of genv t
+  in
+    if null names then
+      (case embedded_id t of
+         SOME (A.Ident (n, _, ni)) => [TF (n, A.pos_of_NodeInfo ni, ft, true)]
+       | NONE => [])
+    else map (fn A.Ident (n, _, ni) => TF (n, A.pos_of_NodeInfo ni, ft, false)) names
+  end
+
+(* The members called "name" a type has itself - its methods, the fields of a struct, the methods
+   of an interface - and the types embedded in it, which provide the members of the next depth. *)
+fun direct genv fuel name (t : ty) : (ident_kind * ty) list * ty list =
+  if fuel <= 0 then ([], [])
+  else
+    (case t of
+       TNamed (k, args) =>
+         let
+           val own =
+             (case Symtab.lookup (meths_of genv) (meth_key k name) of
+                SOME (MDef {pos, sg, rtvars, ...}) =>
+                  [(Meth pos, subst (inst_map (rtvars, args)) (TFunc sg))]
+              | NONE => [])
+           val (ms, es) =
+             (case Symtab.lookup (defs_of genv) k of
+                SOME (TDef {tparams, rhs, alias}) =>
+                  let val rhs' = subst (inst_map (tparams, args)) rhs
+                  in
+                    if alias then direct genv (fuel - 1) name rhs'
+                    else direct genv (fuel - 1) name (under genv 20 rhs')
+                  end
+              | NONE => ([], [TUnknown]))
+         in (own @ filter (fn (Meth _, _) => own = [] | _ => true) ms, es) end
+     | TStruct fs =>
+         (List.mapPartial (fn TF (n, p, ft, _) => if n = name then SOME (Fld p, ft) else NONE) fs,
+          List.mapPartial (fn TF (_, _, ft, emb) => if emb then SOME (deref ft) else NONE) fs)
+     | TIface (ms, es) =>
+         let
+           val own = List.mapPartial (fn TM (n, p, sg) =>
+                       if n = name then SOME (Meth p, TFunc sg) else NONE) ms
+           val subs = map (fn e => direct genv (fuel - 1) name (under genv 20 e)) es
+           val inh = distinct (fn ((Meth p1, _), (Meth p2, _)) => p1 = p2 | _ => false)
+                       (own @ maps (fn (m, _) => filter (fn (Meth _, _) => true | _ => false) m)
+                                subs)
+           val unk = exists (fn e => under genv 20 e = TUnknown) es
+         in (inh, if unk then [TUnknown] else []) end
+     | TVar k =>
+         (case Symtab.lookup (defs_of genv) k of
+            SOME (TDef {rhs, ...}) =>
+              (filter (fn (Meth _, _) => true | _ => false)
+                 (#1 (direct genv (fuel - 1) name (under genv 20 rhs))), [])
+          | NONE => ([], []))
+     | _ => ([], []))
+
+and deref t = (case t of TPtr t1 => t1 | _ => t)
+
+(* Field or method selection "x.name" on a value of type "t", by the rules of the language: the
+   pointer is dereferenced automatically, members of an embedded type are promoted, the
+   shallowest depth wins and a tie is ambiguous. The answer is given only when it is certain: an
+   embedded type this pass does not know (an imported one) could provide the name at a
+   shallower depth than a match that is found further down, so then there is none. *)
+fun lookup_member genv name (t : ty) : (ident_kind * ty) option =
+  let
+    fun level ts depth seen uncertain =
+      if null ts orelse depth > 16 then NONE
+      else
+        let
+          val rs = map (direct genv 20 name) ts
+          val found = maps #1 rs
+        in
+          (case found of
+             [m] => if uncertain then NONE else SOME m
+           | _ :: _ => NONE
+           | [] =>
+               let
+                 val embeds = map deref (maps #2 rs)
+                 val unk = exists (fn e => under genv 20 e = TUnknown) embeds
+                 val fresh = filter (fn e => (case e of
+                     TNamed (k, _) => not (member (op =) seen k)
+                   | _ => true)) embeds
+                 val seen' = seen @ List.mapPartial (fn TNamed (k, _) => SOME k | _ => NONE) fresh
+               in level (filter (fn e => e <> TUnknown) fresh) (depth + 1) seen' (uncertain orelse unk)
+               end)
+        end
+  in level [deref t] 0 [] false end
+
+fun elem_of genv t =
+  (case under genv 20 t of
+     TSlice e => e
+   | TArray e => e
+   | TMap (_, v) => v
+   | TPtr p => (case under genv 20 p of TArray e => e | _ => TUnknown)
+   | TBasic "string" => TBasic "byte"
+   | _ => TUnknown)
+
+fun slice_of genv t =
+  (case under genv 20 t of
+     TBasic "string" => t
+   | TSlice _ => t
+   | TArray e => TSlice e
+   | TPtr p => (case under genv 20 p of TArray e => TSlice e | _ => TUnknown)
+   | _ => TUnknown)
+
+fun is_literal e =
+  (case strip_paren e of
+     A.EInt _ => true | A.EFloat _ => true | A.EImag _ => true | A.ERune _ => true
+   | A.EString _ => true | _ => false)
+
+(* The type an expression has, or the type it is. Pure, and conservative: whatever is not known is
+   "TUnknown", on which nothing is ever linked. *)
+fun type_of genv (e : pos A.gExpr) : tv =
+  let
+    fun val_of e1 = (case type_of genv e1 of Val t => t | Ty _ => TUnknown)
+  in
+    (case e of
+       A.EIdent (A.Ident (n, _, _)) => lookup_ident genv n
+     | A.EInt _ => Val int_ty
+     | A.EFloat _ => Val (TBasic "float64")
+     | A.EImag _ => Val (TBasic "complex128")
+     | A.ERune _ => Val (TBasic "rune")
+     | A.EString _ => Val (TBasic "string")
+     | A.EParen (e1, _) => type_of genv e1
+     | A.ESelector (e1, A.Ident (n, _, _), _) =>
+         (case type_of genv e1 of
+            Val t => Val (case lookup_member genv n t of SOME (_, mt) => mt | NONE => TUnknown)
+          | Ty t => Val (case lookup_member genv n t of
+                           SOME (Meth _, mt) => mt | _ => TUnknown))
+     | A.EIndex (e1, args, _) =>
+         (case type_of genv e1 of
+            Ty (TNamed (k, _)) => Ty (TNamed (k, map (ty_of genv) args))
+          | Ty _ => Ty TUnknown
+          | Val t => Val (elem_of genv t))
+     | A.ESlice (e1, _, _, _, _) => Val (slice_of genv (val_of e1))
+     | A.ETypeAssert (_, SOME t, _) => Val (ty_of genv t)
+     | A.ETypeAssert (_, NONE, _) => Val TUnknown
+     | A.ECall (f, args, _, _) => call_type genv f args
+     | A.EStar (e1, _) =>
+         (case type_of genv e1 of
+            Ty t => Ty (TPtr t)
+          | Val t => Val (case under genv 20 t of TPtr p => p | _ => TUnknown))
+     | A.EUnary (A.UAnd, e1, _) => Val (case type_of genv e1 of Val t => TPtr t | Ty _ => TUnknown)
+     | A.EUnary (A.Not, _, _) => Val bool_ty
+     | A.EUnary (A.URecv, e1, _) =>
+         Val (case under genv 20 (val_of e1) of TChan t => t | _ => TUnknown)
+     | A.EUnary (_, e1, _) => type_of genv e1
+     | A.EBinary (opr, a, b, _) =>
+         if member (op =) [A.Eq, A.Ne, A.Lt, A.Le, A.Gt, A.Ge, A.LAnd, A.LOr] opr then Val bool_ty
+         else if member (op =) [A.Shl, A.Shr] opr then type_of genv a
+         else if is_literal a then type_of genv b
+         else if is_literal b then type_of genv a
+         else
+           let val (ta, tb) = (val_of a, val_of b)
+           in Val (if ta = tb then ta else TUnknown) end
+     | A.ECompLit (SOME t, _, _) => Val (ty_of genv t)
+     | A.ECompLit (NONE, _, _) => Val TUnknown
+     | A.EFuncLit (sg, _, _) => Val (TFunc (ty_of_sig genv sg))
+     | _ => Ty (ty_of genv e))
+  end
+
+and call_type genv f args : tv =
+  let
+    val builtin =
+      (case f of
+         A.EIdent (A.Ident (n, _, _)) =>
+           if Symtab.defined (names_of genv) n then NONE else SOME n
+       | _ => NONE)
+    fun first_arg () = (case args of a :: _ => type_of genv a | [] => Val TUnknown)
+  in
+    (case builtin of
+       SOME b =>
+         if member (op =) ["len", "cap", "copy"] b then Val int_ty
+         else if b = "new" then
+           Val (case args of t :: _ => TPtr (ty_of genv t) | [] => TUnknown)
+         else if b = "make" then
+           Val (case args of t :: _ => ty_of genv t | [] => TUnknown)
+         else if member (op =) ["append", "min", "max"] b then first_arg ()
+         else (case type_of genv f of Ty t => Val t | Val _ => Val TUnknown)
+     | NONE =>
+         (case type_of genv f of
+            Ty t => Val t
+          | Val t =>
+              (case under genv 20 t of
+                 TFunc (TSig (_, [r], _)) => Val r
+               | TFunc (TSig (_, [], _)) => Val TUnknown
+               | TFunc (TSig (_, rs, _)) => Val (TTuple rs)
+               | _ => Val TUnknown)))
+  end
+
+fun val_ty genv e = (case type_of genv e of Val t => t | Ty _ => TUnknown)
+
+(* The types of the names that "a, b := rhs" declares (and of "var a, b = rhs"): "n" names. *)
+fun rhs_types genv n (rhs : pos A.gExpr list) : ty list =
+  if length rhs = n then map (val_ty genv) rhs
+  else
+    (case rhs of
+       [e] =>
+         (case (n, strip_paren e) of
+            (2, A.EIndex (m, _, _)) => [elem_of genv (val_ty genv m), bool_ty]
+          | (2, A.ETypeAssert (_, SOME t, _)) => [ty_of genv t, bool_ty]
+          | (2, A.EUnary (A.URecv, c, _)) =>
+              [(case under genv 20 (val_ty genv c) of TChan t => t | _ => TUnknown), bool_ty]
+          | _ =>
+              (case val_ty genv e of
+                 TTuple ts => if length ts = n then ts else replicate n TUnknown
+               | _ => replicate n TUnknown))
+     | _ => replicate n TUnknown)
+
+(* The key and value types of "for k, v := range e". *)
+fun range_types genv (e : pos A.gExpr) : ty * ty =
+  let
+    val unk = (TUnknown, TUnknown)
+    val t = val_ty genv e
+  in
+    (case under genv 20 t of
+       TSlice el => (int_ty, el)
+     | TArray el => (int_ty, el)
+     | TPtr p => (case under genv 20 p of TArray el => (int_ty, el) | _ => unk)
+     | TMap (k, v) => (k, v)
+     | TBasic "string" => (int_ty, TBasic "rune")
+     | TChan el => (el, TUnknown)
+     | TBasic s => if member (op =) integer_type_names s then (t, TUnknown) else unk
+     | TFunc (TSig ([y], _, _)) =>
+         (case under genv 20 y of
+            TFunc (TSig (ps, _, _)) =>
+              (case ps of
+                 [a] => (a, TUnknown)
+               | a :: b :: _ => (a, b)
+               | [] => unk)
+          | _ => unk)
+     | _ => unk)
+  end
+
+(* Gives the name just declared by "id" its type, if one is known (never overwriting a known type
+   with an unknown one). *)
+fun set_vty genv (A.Ident (name, _, ni)) ty =
+  if name = "_" orelse ty = TUnknown then genv
+  else
+    (case Symtab.lookup (names_of genv) name of
+       SOME k =>
+         if pos_of_kind k = A.pos_of_NodeInfo ni
+         then set_vtypes (Symtab.update (name, ty) (vtypes_of genv)) genv
+         else genv
+     | NONE => genv)
+
+fun restore_scope genv0 genv1 = set_scope (names_of genv0, vtypes_of genv0) genv1
+
+fun id_key (A.Ident (_, _, ni)) = pos_key (A.pos_of_NodeInfo ni)
+
+(* The type parameters of a declaration, entered silently in a scope the caller discards; the
+   constraint of each is recorded under the key of the parameter. *)
+fun register_tparams genv (tps : pos A.gTParam list) : genv * string list =
+  let
+    val genv1 =
+      fold (fn A.TParam (ids, _, _) => fn g => fold (fn id => fn g1 => enter Tparam g1 id) ids g)
+        tps genv
+    val genv2 =
+      fold (fn A.TParam (ids, c, _) => fn g =>
+              let val cty = ty_of g c
+              in fold (fn id => fn g1 =>
+                         add_def (id_key id) (TDef {tparams = [], rhs = cty, alias = false}) g1)
+                   ids g end)
+        tps genv1
+  in (genv2, maps (fn A.TParam (ids, _, _) => map id_key ids) tps) end
+
+(* The declaration of a type (its name already in the table), a function or a method. These are
+   idempotent and are run for the whole package before anything is walked, so that a function may
+   use a type, a method or a function that is declared further down. *)
+fun register_typespec genv (A.TypeSpec (name, tps, alias, t, _)) =
+      let
+        val (g1, tpkeys) = register_tparams genv tps
+        val rhs = ty_of g1 t
+        val g2 = add_def (id_key name) (TDef {tparams = tpkeys, rhs = rhs, alias = alias}) g1
+      in restore_scope genv g2 end
+  | register_typespec genv _ = genv
+
+fun register_func genv (A.DFunc (name, tps, sg, _, _)) =
+      let
+        val (g1, tpkeys) = register_tparams genv tps
+        (* the type parameters of a function are unknown to a caller: this pass does not infer
+           them *)
+        val fty = subst (map (fn k => (k, TUnknown)) tpkeys) (TFunc (ty_of_sig g1 sg))
+      in set_vty (restore_scope genv g1) name fty end
+  | register_func genv _ = genv
+
+fun register_method genv (A.DMethod ([A.Param (_, rt, _, _)], A.Ident (mname, _, mni), _, sg, _, _)) =
+      if mname = "_" then genv
+      else
+        (case (case recv_base rt of A.EIndex (b, _, _) => b | b => b) of
+           A.EIdent (A.Ident (tn, _, _)) =>
+             (case Symtab.lookup (names_of genv) tn of
+                SOME (Typ tp) =>
+                  let
+                    val targs = recv_targs rt
+                    val g0 = fold (fn id => fn g => enter Tparam g id) targs genv
+                    val ptr = (case strip_paren rt of A.EStar _ => true | _ => false)
+                    val m = MDef {pos = A.pos_of_NodeInfo mni, sg = ty_of_sig g0 sg, ptr = ptr,
+                                  rtvars = map id_key targs}
+                  in add_meth (meth_key (pos_key tp) mname) m genv end
+              | _ => genv)
+         | _ => genv)
+  | register_method genv _ = genv
+
+fun register_decl genv (d : pos A.gDecl) =
+  (case d of
+     A.DType (specs, _, _) => fold (fn sp => fn g => register_typespec g sp) specs genv
+   | A.DFunc _ => register_func genv d
+   | A.DMethod _ => register_method genv d
+   | _ => genv)
+
+(* The types of the names a "var"/"const" specification declares: the written type, or those of
+   the values; a constant specification that repeats its predecessor ("iota" groups) has its type
+   and values. *)
+fun value_types genv ids t vals : ty list =
+  (case t of
+     SOME te => replicate (length ids) (ty_of genv te)
+   | NONE => rhs_types genv (length ids) vals)
+
+fun effective_spec prev sp =
+  (case sp of
+     A.ConstSpec (ids, t, vals, _) =>
+       if is_none t andalso null vals then (ids, fst prev, snd prev) else (ids, t, vals)
+   | A.VarSpec (ids, t, vals, _) => (ids, t, vals)
+   | _ => ([], NONE, []))
+
+fun next_prev prev sp =
+  (case sp of
+     A.ConstSpec (_, t, vals, _) => if is_none t andalso null vals then prev else (t, vals)
+   | _ => prev)
+
+fun set_vtys ids tys genv = fold (fn (id, ty) => fn g => set_vty g id ty) (ids ~~ tys) genv
+
+fun register_values genv (d : pos A.gDecl) =
+  let
+    fun specs sps =
+      #1 (fold (fn sp => fn (g, prev) =>
+                  let val (ids, t, vals) = effective_spec prev sp
+                  in (set_vtys ids (value_types g ids t vals) g, next_prev prev sp) end)
+            sps (genv, (NONE, [])))
+  in
+    (case d of
+       A.DVar (sps, _, _) => specs sps
+     | A.DConst (sps, _, _) => specs sps
+     | _ => genv)
+  end
+
+(* Hyperlinks the use of a member (a field or a method) at "use_pos" to its declaration. *)
+fun report_member (name, use_pos) kind =
+  Position.report (name_range (name, use_pos))
+    (Position.entity_markup (describe_kind kind) (name, name_range (name, pos_of_kind kind)))
+
+(* "expect" is the type a composite literal without a type (an element "{...}" of a literal) is
+   given by its context. *)
+fun walk_exp senv ctx expect (e : pos A.gExpr) : acts =
   let
     val ctx' = A.Expr e :: ctx
     val here = chk senv ctx' (A.nodeInfo_of_expr e)
@@ -521,7 +1039,18 @@ fun walk_expr senv ctx (e : pos A.gExpr) : acts =
      | A.ERune _ => []
      | A.EString _ => []
      | A.EParen (e1, _) => w e1
-     | A.ESelector (e1, _, _) => w e1
+     | A.ESelector (e1, A.Ident (n, _, ini), _) =>
+         let
+           val a = w e1
+           val found =
+             (case type_of senv e1 of
+                Val t => lookup_member senv n t
+              | Ty t => (case lookup_member senv n t of
+                           SOME (m as (Meth _, _)) => SOME m | _ => NONE))
+           val _ = (case found of
+                      SOME (kind, _) => report_member (n, A.pos_of_NodeInfo ini) kind
+                    | NONE => ())
+         in a end
      | A.EIndex (e1, args, _) => w e1 @ maps w args
      | A.ESlice (e1, a, b, c, _) => w e1 @ optl w a @ optl w b @ optl w c
      | A.ETypeAssert (e1, t, _) => w e1 @ optl w t
@@ -529,7 +1058,10 @@ fun walk_expr senv ctx (e : pos A.gExpr) : acts =
      | A.EStar (e1, _) => w e1
      | A.EUnary (_, e1, _) => w e1
      | A.EBinary (_, a, b, _) => w a @ w b
-     | A.ECompLit (t, elems, _) => optl w t @ maps (walk_element senv ctx') elems
+     | A.ECompLit (t, elems, _) =>
+         let
+           val lit_ty = (case t of SOME te => ty_of senv te | NONE => deref expect)
+         in optl w t @ walk_elements senv ctx' lit_ty elems end
      | A.EFuncLit (sg, body, _) =>
          #2 (scoped senv (fn s =>
            let
@@ -547,15 +1079,40 @@ fun walk_expr senv ctx (e : pos A.gExpr) : acts =
      | A.EUnion (es, _) => maps w es)
   end
 
-(* A bare name as the key of a composite literal is a field name (or, in a map literal, a
-   variable: this pass cannot tell), and is not resolved. *)
-and walk_element senv ctx (A.Element (k, v, ni)) : acts =
-  chk senv ctx ni
-  @ (case k of
-       NONE => []
-     | SOME (e as A.EIdent _) => chk senv (A.Expr e :: ctx) (A.nodeInfo_of_expr e)
-     | SOME e => walk_expr senv ctx e)
-  @ walk_expr senv ctx v
+and walk_expr senv ctx e : acts = walk_exp senv ctx TUnknown e
+
+(* The elements of a composite literal of type "lit_ty". For a struct, a bare name as a key is a
+   field of it, and the values have the types of the fields; for a slice, an array or a map, the
+   keys and values have the element types (a map key is an expression, so a bare name is a
+   variable). When the type is not known, a bare name as a key is not resolved: it could be
+   either. *)
+and walk_elements senv ctx lit_ty elems : acts =
+  let
+    val u = under senv 20 lit_ty
+    fun key_ident_acts e = chk senv (A.Expr e :: ctx) (A.nodeInfo_of_expr e)
+    fun elem idx (A.Element (k, v, ni)) =
+      let
+        val a0 = chk senv ctx ni
+        val (ak, vty) =
+          (case (u, k) of
+             (TStruct fs, SOME (e as A.EIdent (A.Ident (n, _, kni)))) =>
+               (case List.find (fn TF (fname, _, _, _) => fname = n) fs of
+                  SOME (TF (_, fp, fty, _)) =>
+                    (report_member (n, A.pos_of_NodeInfo kni) (Fld fp);
+                     (key_ident_acts e, fty))
+                | NONE => (key_ident_acts e, TUnknown))
+           | (TStruct _, SOME e) => (walk_expr senv ctx e, TUnknown)
+           | (TStruct fs, NONE) =>
+               ([], (case try (fn i => nth fs i) idx of
+                        SOME (TF (_, _, fty, _)) => fty | NONE => TUnknown))
+           | (TSlice el, _) => (optl (walk_expr senv ctx) k, el)
+           | (TArray el, _) => (optl (walk_expr senv ctx) k, el)
+           | (TMap (kt, vt), _) => (optl (walk_exp senv ctx kt) k, vt)
+           | (_, SOME (e as A.EIdent _)) => (key_ident_acts e, TUnknown)
+           | (_, SOME e) => (walk_expr senv ctx e, TUnknown)
+           | (_, NONE) => ([], TUnknown))
+      in a0 @ ak @ walk_exp senv ctx vty v end
+  in maps (uncurry elem) (tag_list 0 elems) end
 
 (* The types of a parameter list, seen in the scope outside of the function. *)
 and walk_param_types senv ctx ps : acts =
@@ -573,7 +1130,12 @@ and walk_sig senv ctx (A.Sig (ps, rs, ni)) : genv * string list * acts =
   let
     val a1 = chk senv ctx ni @ walk_param_types senv ctx ps @ walk_param_types senv ctx rs
     val ids = maps (fn A.Param (names, _, _, _) => names) (ps @ rs)
-    val senv1 = fold (fn id => fn s => reg Param s id) ids senv
+    val senv1 =
+      fold (fn A.Param (pids, t, variadic, _) => fn s =>
+              let val t0 = ty_of senv t
+                  val ty = if variadic then TSlice t0 else t0
+              in fold (fn id => fn s1 => set_vty (reg Param s1 id) id ty) pids s end)
+        (ps @ rs) senv
     val names = filter (fn n => n <> "_") (map ident_name_of ids)
   in (senv1, names, a1) end
 
@@ -613,8 +1175,8 @@ and walk_stmts senv ctx blk stmts : genv * string list * acts =
 
 (* "a, b := ..." declares the names that are new in the current block; the others are assigned
    to, which is a use. *)
-and define senv ctx blk lhs : genv * string list * acts =
-  fold (fn e => fn (s, b, acc) =>
+and define senv ctx blk lhs tys : genv * string list * acts =
+  fold (fn (e, ty) => fn (s, b, acc) =>
           let
             val ctx' = A.Expr e :: ctx
             val here = chk s ctx' (A.nodeInfo_of_expr e)
@@ -623,10 +1185,10 @@ and define senv ctx blk lhs : genv * string list * acts =
                A.EIdent (id as A.Ident (name, _, _)) =>
                  if name = "_" then (s, b, acc @ here)
                  else if member (op =) b name then (use_name s id; (s, b, acc @ here))
-                 else (reg Var s id, name :: b, acc @ here)
+                 else (set_vty (reg Var s id) id ty, name :: b, acc @ here)
              | _ => (s, b, acc @ here @ walk_expr s ctx e))
           end)
-    lhs (senv, blk, [])
+    (lhs ~~ take (length lhs) tys) (senv, blk, [])
 
 and walk_stmt senv ctx blk (s : pos A.gStmt) : genv * string list * acts =
   let
@@ -648,7 +1210,7 @@ and walk_stmt senv ctx blk (s : pos A.gStmt) : genv * string list * acts =
      | A.SShortVar (lhs, rhs, _) =>
          let
            val a1 = maps we rhs
-           val (senv1, blk1, a2) = define senv ctx' blk lhs
+           val (senv1, blk1, a2) = define senv ctx' blk lhs (rhs_types senv (length lhs) rhs)
          in ret (senv1, blk1, a1 @ a2) end
      | A.SDecl d => ret (walk_decl senv ctx' blk d)
      | A.SLabeled (l, s1, _) =>
@@ -685,7 +1247,8 @@ and walk_stmt senv ctx blk (s : pos A.gStmt) : genv * string list * acts =
              val (s1, _, a1) = init_of s0 init
              val a2 = walk_expr s1 ctx' x
              val _ = (case bind of SOME id => decl_only Var id | NONE => ())
-             val a3 = maps (walk_case s1 ctx' bind) cases
+             val xty = val_ty s1 x
+             val a3 = maps (walk_case s1 ctx' (Option.map (fn id => (id, xty)) bind)) cases
            in (s1, a1 @ a2 @ a3) end)))
      | A.SSelect (comms, _) => plain (maps (walk_comm senv ctx') comms)
      | A.SFor (init, c, post, body, _) =>
@@ -704,8 +1267,9 @@ and walk_stmt senv ctx blk (s : pos A.gStmt) : genv * string list * acts =
              let
                val ks = (case k of SOME k1 => [k1] | NONE => [])
                         @ (case v of SOME v1 => [v1] | NONE => [])
+               val (kt, vt) = range_types senv e
                val (s1, a3) =
-                 if def then (fn (s2, _, a) => (s2, a)) (define s0 ctx' [] ks)
+                 if def then (fn (s2, _, a) => (s2, a)) (define s0 ctx' [] ks [kt, vt])
                  else (s0, maps we ks)
                val a4 = walk_block s1 ctx' body
              in (s1, a3 @ a4) end)
@@ -718,7 +1282,16 @@ and walk_case senv ctx bind (A.Case (guards, stmts, ni)) : acts =
   #2 (scoped senv (fn s0 =>
     let
       val a1 = chk s0 ctx ni @ (case guards of SOME es => maps (walk_expr s0 ctx) es | NONE => [])
-      val s1 = (case bind of SOME id => enter Var s0 id | NONE => s0)
+      val s1 =
+        (case bind of
+           SOME (id, xty) =>
+             let
+               val cty = (case guards of
+                   SOME [A.EIdent (A.Ident ("nil", _, _))] => xty
+                 | SOME [g] => ty_of s0 g
+                 | _ => xty)
+             in set_vty (enter Var s0 id) id cty end
+         | NONE => s0)
       val (_, _, a2) = walk_stmts s1 ctx [] stmts
     in (s1, a1 @ a2) end))
 
@@ -730,13 +1303,13 @@ and walk_comm senv ctx (A.Comm (g, stmts, ni)) : acts =
       val (_, _, a2) = walk_stmts s1 ctx [] stmts
     in (s1, a0 @ a1 @ a2) end))
 
-and walk_spec senv ctx blk spec : genv * string list * acts =
+and walk_spec senv ctx blk eff spec : genv * string list * acts =
   (case spec of
-     A.ConstSpec (ids, t, vals, ni) => walk_values Const senv ctx blk (ids, t, vals, ni)
-   | A.VarSpec (ids, t, vals, ni) => walk_values Var senv ctx blk (ids, t, vals, ni)
+     A.ConstSpec (ids, t, vals, ni) => walk_values Const senv ctx blk eff (ids, t, vals, ni)
+   | A.VarSpec (ids, t, vals, ni) => walk_values Var senv ctx blk eff (ids, t, vals, ni)
    | A.TypeSpec (name, tps, _, t, ni) =>
        let
-         val senv1 = reg Typ senv name
+         val senv1 = register_typespec (reg Typ senv name) spec
          val blk1 = if ident_name_of name = "_" then blk else ident_name_of name :: blk
          val (_, a) = scoped senv1 (fn s =>
            let
@@ -747,17 +1320,21 @@ and walk_spec senv ctx blk spec : genv * string list * acts =
    | A.ImportSpec (_, _, ni) => (reg_import senv spec, blk, chk senv ctx ni))
 
 (* The values are evaluated before the names are declared. *)
-and walk_values mk_kind senv ctx blk (ids, t, vals, ni) : genv * string list * acts =
+and walk_values mk_kind senv ctx blk (_, et, evals) (ids, t, vals, ni)
+    : genv * string list * acts =
   let
     val a = chk senv ctx ni @ optl (walk_expr senv ctx) t @ maps (walk_expr senv ctx) vals
-    val senv1 = fold (fn id => fn s => reg mk_kind s id) ids senv
+    (* typed in the scope of the values, before the names exist *)
+    val tys = value_types senv ids et evals
+    val senv1 = fold (fn (id, ty) => fn s => set_vty (reg mk_kind s id) id ty) (ids ~~ tys) senv
     val blk1 = filter (fn n => n <> "_") (map ident_name_of ids) @ blk
   in (senv1, blk1, a) end
 
 and walk_specs senv ctx blk specs : genv * string list * acts =
-  fold (fn sp => fn (e, b, acc) =>
-          let val (e', b', a) = walk_spec e ctx b sp in (e', b', acc @ a) end)
-    specs (senv, blk, [])
+  #1 (fold (fn sp => fn ((e, b, acc), prev) =>
+          let val (e', b', a) = walk_spec e ctx b (effective_spec prev sp) sp
+          in ((e', b', acc @ a), next_prev prev sp) end)
+    specs ((senv, blk, []), (NONE, [])))
 
 and walk_decl senv ctx blk (d : pos A.gDecl) : genv * string list * acts =
   let
@@ -772,7 +1349,7 @@ and walk_decl senv ctx blk (d : pos A.gDecl) : genv * string list * acts =
      | A.DImport (specs, _, _) => ret (walk_specs senv ctx' blk specs)
      | A.DFunc (name, tps, sg, body, _) =>
          let
-           val senv1 = reg Func senv name
+           val senv1 = register_func (reg Func senv name) d
            val (_, a) = scoped senv1 (fn s =>
              let
                val (s1, a1) = walk_tparams s ctx' tps
@@ -783,7 +1360,7 @@ and walk_decl senv ctx blk (d : pos A.gDecl) : genv * string list * acts =
      | A.DMethod (recv, name, tps, sg, body, _) =>
          let
            val _ = decl_only Meth name
-           val (_, a) = scoped senv (fn s =>
+           val (_, a) = scoped (register_method senv d) (fn s =>
              let
                (* the receiver declares the type parameters of the type *)
                val targs = maps (fn A.Param (_, t, _, _) => recv_targs t) recv
@@ -791,7 +1368,11 @@ and walk_decl senv ctx blk (d : pos A.gDecl) : genv * string list * acts =
                val a0 = maps (fn A.Param (_, t, _, ni) =>
                                 chk s0 ctx' ni @ walk_expr s0 ctx' (recv_head t)) recv
                val rids = maps (fn A.Param (names, _, _, _) => names) recv
-               val s1 = fold (fn id => fn s' => reg Param s' id) rids s0
+               val s1 =
+                 fold (fn A.Param (pids, t, _, _) => fn s' =>
+                         let val ty = ty_of s0 t
+                         in fold (fn id => fn s'' => set_vty (reg Param s'' id) id ty) pids s' end)
+                   recv s0
                val (s2, a1) = walk_tparams s1 ctx' tps
                val (s3, names, a2) = walk_sig s2 ctx' sg
                val names' = names @ filter (fn n => n <> "_") (map ident_name_of rids)
@@ -822,7 +1403,11 @@ fun predeclare senv (d : pos A.gDecl) =
 
 fun walk_top senv ctx (decls : pos A.gDecl list) : genv * acts =
   let
-    val senv1 = fold (fn d => fn s => predeclare s d) decls senv
+    val senv0 = fold (fn d => fn s => predeclare s d) decls senv
+    (* types, signatures and methods first; then the types of the variables and constants, which
+       may depend on each other, in a few rounds (an initialisation cycle is invalid Go) *)
+    val senv0' = fold (fn d => fn s => register_decl s d) decls senv0
+    val senv1 = funpow 3 (fn s => fold (fn d => fn s1 => register_values s1 d) decls s) senv0'
     val (senv2, _, acts) =
       fold (fn d => fn (e, b, acc) =>
               let val (e', b', a) = walk_decl e ctx b d in (e', b', acc @ a) end)

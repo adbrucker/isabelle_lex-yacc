@@ -73,7 +73,10 @@ text\<open>
   own (a label and a variable of the same name do not clash): they are entered under a key that
   no identifier can have. The fields of a struct and the methods of a type are declared, and the
   declaration site is reported, but they are not entered into the table: they are reached by
-  selection (\<open>x.f\<close>), which this pass does not resolve. A name that resolves nowhere is \<^emph>\<open>not\<close>
+  selection (\<open>x.f\<close>), which this pass resolves with the type information that \<open>genv\<close> also
+  holds - \<open>vtypes\<close> (the type of each name of \<open>names\<close>, scoped with it), \<open>defs\<close> (the type
+  declarations, by the position of the declared name) and \<open>meths\<close> (the methods, by type and
+  name); see the datatype \<open>ty\<close> below and the note in \<^verbatim>\<open>Go_AnaEval.thy\<close>. A name that resolves nowhere is \<^emph>\<open>not\<close>
   marked as an error (see \<^verbatim>\<open>Go_AnaEval.thy\<close>): it very often comes from the universe block
   (\<open>int\<close>, \<open>len\<close>, \<open>nil\<close>), a dot import or another file of the package.
 \<close>
@@ -106,6 +109,41 @@ fun describe_kind k = (case k of
   | Label _ => "Go label" | Tparam _ => "Go type parameter" | Fld _ => "Go field"
   | Meth _ => "Go method")
 
+(* The types of the declared things, as far as the selection pass needs them (see the note on
+   "type_of" in Go_AnaEval.thy). A named type is a *reference* to its declaration, by the
+   position key of the declared name: a type, its fields and its methods may therefore be
+   mutually recursive, in any order, without any cycle in the data. A struct type carries the
+   declaration site of each of its fields, an interface type that of each of its methods. *)
+datatype ty =
+    TUnknown                         (* nothing is known: no link is ever made on this basis *)
+  | TBasic of string                 (* a predeclared type: int, string, ... *)
+  | TNamed of string * ty list       (* declaration key, type arguments *)
+  | TVar of string                   (* a type parameter, by the key of its declaration *)
+  | TPtr of ty
+  | TSlice of ty
+  | TArray of ty
+  | TMap of ty * ty
+  | TChan of ty
+  | TFunc of tsig
+  | TStruct of tfield list
+  | TIface of tmeth list * ty list   (* its methods, and the embedded types *)
+  | TTuple of ty list                (* the results of a call with several results *)
+and tsig = TSig of ty list * ty list * bool   (* parameters, results, variadic *)
+and tfield = TF of string * pos * ty * bool   (* name, declaration site, type, embedded *)
+and tmeth = TM of string * pos * tsig
+
+(* A type declaration: its type parameters (keys), its right-hand side and whether it is an alias.
+   The constraint of a type parameter is recorded the same way, under the key of the parameter. *)
+datatype tydef = TDef of {tparams : string list, rhs : ty, alias : bool}
+
+(* A method: declaration site, signature, pointer receiver, and the type parameters (keys) its
+   receiver names for those of the type. *)
+datatype methdef = MDef of {pos : pos, sg : tsig, ptr : bool, rtvars : string list}
+
+(* The key identifying a declaration: its position. *)
+fun pos_key (p : pos) =
+  String.concatWith "," (map (fn (a, b) => a ^ "=" ^ b) (Position.properties_of p))
+
 (* The handler's result is "Context.generic -> Context.generic", not "theory ->
    theory", for the same reason as in C11_Env.thy (an "ML" antiquotation has to
    mutate the ML environment, which no theory function can express);
@@ -118,9 +156,14 @@ type 'a type_antiq_fun0 =
     -> Context.generic
 
 datatype genv = mk of {names : ident_kind Symtab.table,
+                       vtypes : ty Symtab.table,
+                       defs : tydef Symtab.table,
+                       meths : methdef Symtab.table,
                        go_antiq : (genv type_antiq_fun0) Symtab.table,
                        units : int}
-  \<comment> \<open>"units" numbers the program units internally.\<close>
+  \<comment> \<open>"vtypes" holds the types of the names in "names" (scoped exactly like them), "defs" the
+      type declarations by key, "meths" the methods by type key and name; "units" numbers the
+      program units internally.\<close>
 
 type type_antiq_fun = genv type_antiq_fun0
 
@@ -132,16 +175,19 @@ fun lift_theory_antiq
     Context.mapping (f args body) (Local_Theory.background_theory (f args body))
 
 val empty_genv =
-  mk {names = Symtab.empty, go_antiq =
-      Symtab.empty, units = 0}
+  mk {names = Symtab.empty, vtypes = Symtab.empty, defs = Symtab.empty, meths = Symtab.empty,
+      go_antiq = Symtab.empty, units = 0}
 
 (* Merging must not reset to empty (Isabelle forks and merges theory state
    routinely during live editing - see the same note on "merge_cenv" in
    C11_Env.thy); "units" takes the larger counter so a merge can never re-issue
    an already-used "Ast_Store" key. *)
-fun merge_genv (mk {names = i1, go_antiq = a1, units = u1},
-                mk {names = i2, go_antiq = a2, units = u2}) =
+fun merge_genv (mk {names = i1, vtypes = v1, defs = d1, meths = m1, go_antiq = a1, units = u1},
+                mk {names = i2, vtypes = v2, defs = d2, meths = m2, go_antiq = a2, units = u2}) =
   mk {names = Symtab.merge (K true) (i1, i2),
+      vtypes = Symtab.merge (K true) (v1, v2),
+      defs = Symtab.merge (K true) (d1, d2),
+      meths = Symtab.merge (K true) (m1, m2),
       go_antiq = Symtab.merge (K true) (a1, a2),
       units = Int.max (u1, u2)}
 
@@ -171,10 +217,11 @@ fun ast_store_key thy unit_no =
    "thy", bumping the counter. Returns the key and the updated theory. *)
 fun store_root (root : Position.T Go_Ast.root) (text : string) thy =
     let
-      val mk {names, go_antiq, units} = get (Context.Theory thy)
+      val mk {names, vtypes, defs, meths, go_antiq, units} = get (Context.Theory thy)
       val key = ast_store_key thy units
       val genv' =
-        mk {names = names, go_antiq = go_antiq, units = units + 1}
+        mk {names = names, vtypes = vtypes, defs = defs, meths = meths, go_antiq = go_antiq,
+            units = units + 1}
       val thy' = thy
         |> Context.theory_map (put genv')
         |> Context.theory_map (Ast_Store.map (Symtab.update (key, root)))
@@ -188,9 +235,9 @@ fun get_source key thy =
 
 fun store_antiq (name, antiq_fun) thy =
     let
-       val mk {names, go_antiq, units} = get (Context.Theory thy)
+       val mk {names, vtypes, defs, meths, go_antiq, units} = get (Context.Theory thy)
        val genv' =
-         mk {names = names,
+         mk {names = names, vtypes = vtypes, defs = defs, meths = meths,
              go_antiq = Symtab.update (name, antiq_fun) go_antiq,
              units = units}
     in thy |> Context.theory_map (put genv') end

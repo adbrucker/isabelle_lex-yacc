@@ -187,9 +187,41 @@ val _ = ents "a local type sees itself" "type L struct{ next *L }" 3
 val _ = ent "the fields of a struct are declared" "type T struct{ a, b int }" 3
 val _ = ent "a type sees itself" "type L struct {\n\tnext *L\n}" 3
 val _ = ent "the methods of an interface are declared" "type I interface {\n\tM() int\n}" 2
+(* the key "a" is now the field of T: the declaration of T, of its field and of f, the declaration
+   of the variable a, the key (a use of the field) and the value (a use of the variable) *)
 val _ = ent "the keys of a composite literal are field names"
-  "type T struct{ a int }\nfunc f() {\n\ta := 1\n\t_ = T{a: a}\n}" 6
+  "type T struct{ a int }\nfunc f() {\n\ta := 1\n\t_ = T{a: a}\n}" 7
 val _ = ent "constants" "const (\n\tA = iota\n\tB\n\tC\n)" 3
+(* selections *)
+val _ = ent "a field is selected" "type T struct{ a int }\nfunc f(t T) int { return t.a }" 7
+val _ = ent "a method is selected" "type T struct{}\nfunc (t T) M() {}\nfunc f(t T) { t.M() }" 9
+val _ = ent "a method with a pointer receiver is selected"
+  "type T struct{}\nfunc (t *T) M() {}\nfunc f(t *T) { t.M() }" 9
+val _ = ent "a method with a pointer receiver is selected on a value"
+  "type T struct{}\nfunc (t *T) M() {}\nfunc f(t T) { t.M() }" 9
+val _ = ent "a method declared further down is selected"
+  "type T struct{}\nfunc f(t T) { t.M() }\nfunc (t T) M() {}" 9
+val _ = ent "a pointer is dereferenced and an embedded field promoted"
+  "type B struct{ x int }\ntype D struct{ B }\nfunc f(d *D) int { return d.x }" 9
+val _ = ent "the same name at the same depth is ambiguous"
+  "type A struct{ x int }\ntype B struct{ x int }\ntype C struct{ A; B }\n\
+  \func f(c C) int { return c.x }" 11
+val _ = ent "a field of an unknown type is not resolved" "func f(p Q) { _ = p.a }" 3
+val _ = ent "a method of an interface is selected" "type I interface{ M() }\nfunc f(i I) { i.M() }" 7
+val _ = ent "the type of a short variable declaration is that of the value"
+  "type T struct{ a int }\nfunc f() int {\n\tt := T{}\n\treturn t.a\n}" 7
+val _ = ent "the type of a call is its result" 
+  "type T struct{ n int }\nfunc mk() T { return T{} }\nfunc f() int { return mk().n }" 8
+val _ = ent "a range variable has the element type"
+  "type T struct{ a int }\nfunc f(xs []T) {\n\tfor _, x := range xs {\n\t\t_ = x.a\n\t}\n}" 9
+val _ = ent "a field of an instantiated type is selected"
+  "type P[T any] struct{ v T }\nfunc f(p P[int]) int { return p.v }" 9
+val _ = ent "the variable of a type switch has the type of its clause"
+  "type T struct{ a int }\nfunc f(x any) {\n\tswitch v := x.(type) {\n\tcase T:\n\t\t_ = v.a\n\t}\n}" 9
+val _ = ent "the keys of an elided element are fields" "type T struct{ a int }\nvar xs = []T{{a: 1}}" 5
+val _ = ent "the key of a map literal is a variable" "var k = 1\nvar m = map[int]int{k: 2}" 3
+val _ = ent "a variable's type is inferred from a later declaration"
+  "var a = b.n\nvar b = T{}\ntype T struct{ n int }" 7
 (* imports *)
 val _ = ent "an import is a declaration and fmt is a use"
   "import \"fmt\"\nfunc f() { fmt.Println() }" 3

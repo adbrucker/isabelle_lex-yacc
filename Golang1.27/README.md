@@ -121,9 +121,12 @@ literal in the header of an `if`, `for` or `switch` whose type is a bare name mu
 tokens alone, so a function literal or type literal in such a header that is directly followed by a
 brace is read as a literal; `type T[P *C] ...` is an array type unless a comma follows (as in Go's
 own parser); identifiers are ASCII letters, digits and `_` plus every non-ASCII byte; the keys of a
-composite literal that are bare names are field names and are not resolved, selections `x.f` are
-not resolved, and a name that resolves nowhere is not marked; the empty statement is not kept in
-the tree; and the untyped composite literal as an argument that the development version of Go
+composite literal that are bare names are resolved only if the type of the literal is known,
+selections `x.f` are resolved by a type pass that links a field or method only when it is certain
+(same-package types, signatures and methods in any order; embedding, pointers, interfaces, aliases
+and explicitly instantiated generic types are handled, while the standard library and the
+inference of type arguments are not seen), a name that resolves nowhere is not marked; the empty
+statement is not kept in the tree; and the untyped composite literal as an argument that the development version of Go
 (after 1.27) experiments with is not Go 1.27 and is rejected.
 
 The yacc grammar has no shift/reduce and no reduce/reduce conflict. Where shifting is the reading

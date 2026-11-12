@@ -267,11 +267,27 @@ text\<open>
   \<^item> \<^bold>\<open>Imports\<close> declare the package name - the alias, or the last element of the import path
     (without a major version suffix) - at the import path; a use \<open>fmt.Println\<close> is hyperlinked
     to it. The standard library is not seen by this pass.
-  \<^item> \<^bold>\<open>Selections are not resolved.\<close> Fields and methods are declared (their declaration sites
-    are reported) but not entered into the table, since they are reached by selection and that
-    needs types. The keys of a composite literal that are bare names are field names (or, in a
-    map literal, variables - this pass cannot tell) and are not resolved; any other key is an
-    expression.
+  \<^item> \<^bold>\<open>Selections are resolved with types, and only when that is certain.\<close> Fields and methods are
+    declared (their declaration sites are reported) but not entered into the table, since they
+    are reached by selection. A selection \<open>x.f\<close> is hyperlinked to the field or method \<open>f\<close> when
+    the type of \<open>x\<close> is known well enough to tell, and left unmarked otherwise. The type of an
+    expression is computed by a pure function over the environment, which records the type of
+    each name next to the name (scoped with it), the declaration of each type, and the methods
+    of each type. A name has the type it was declared with or that of the value that defined
+    it (\<open>:=\<close>, \<open>var x = v\<close>, a range variable, the variable of a type switch in each clause); a
+    call has the result type of its callee's signature, and conversions, \<open>*p\<close>, \<open>&x\<close>, indexing,
+    slicing, type assertions, composite literals and function literals have their natural types.
+    A named type is a reference to its declaration, so that types, fields and methods may be
+    mutually recursive and declared in any order; the types, signatures and methods of a
+    package are registered before anything is walked. Lookup follows the language: automatic
+    dereferencing, promotion through embedded fields (the shallowest depth wins, a tie is
+    ambiguous and gives no link), the methods of embedded interfaces, the methods of the
+    constraint of a type parameter, aliases, and type arguments substituted in an explicitly
+    instantiated generic type. The keys of a composite literal are fields of its struct type,
+    also in elided elements (\<open>[]T{{a: 1}}\<close>); the keys of a map literal are expressions. What
+    is not known - the standard library and every imported type, the result of a generic
+    function whose type arguments would have to be inferred - gives no link, and neither does a
+    match that an embedded type of unknown content could have provided nearer.
   \<^item> \<^bold>\<open>The top level persists.\<close> After \<open>go\<close> has analysed a source file (or \<open>go_decl\<close> a declaration),
     the names it declares at the top level, imports included, stay in \<open>genv\<close> for the following
     commands, as the files of a package do for each other. Nothing else does.
@@ -725,9 +741,11 @@ text\<open>
     assignment have the same length, that a label is used, the order of \<open>case\<close> and \<open>default\<close>).
   \<^item> \<^bold>\<open>No semantics.\<close> There is no type checker, no method sets, no constant evaluation (\<open>iota\<close>
     is a name), no escape analysis. A name that resolves nowhere is silently left unmarked, a
-    selection \<open>x.f\<close> is never resolved (a package member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close>), the names
-    of a function type's parameters are declared nowhere, and the keys of a composite literal
-    that are bare names are taken for field names.
+    selection \<open>x.f\<close> is resolved only through types the pass knows (see \<open>\<section>2.2\<close>: a package
+    member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close>, and nothing is known about the standard library, nor
+    about generic functions whose type arguments are inferred), the names of a function type's
+    parameters are declared nowhere, and the keys of a composite literal are resolved only when
+    the type of the literal is known.
   \<^item> \<^bold>\<open>Contract-free.\<close> Go has no contract language, and the front-end adds none: what a
     comment means is up to its antiquotation, and what a program means is up to a semantic
     backend.
@@ -759,7 +777,9 @@ text\<open>
   \<open>\<section>6\<close> as missing is, in every case, a scoping decision rather than an accident: the natural
   next steps are a semantic backend that translates Go programs into HOL - the antiquotations of
   \<open>\<section>2.5\<close> then state and discharge the specifications in the comments next to the program, as
-  the \<open>lemma\<close> above - and the type information that would let the analysis resolve selections.
+  the \<open>lemma\<close> above - and, on the analysis side, the inference of type arguments of generic
+  calls and the loading of imported packages, which would extend the type information the
+  resolution of selections already has to the standard library.
 
   \pagebreak
 \<close>
