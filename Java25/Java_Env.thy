@@ -128,7 +128,7 @@ datatype ty =
 (* A field, a method (type parameters by key, parameters, variable arity, result) *)
 datatype fdef = FD of {pos : pos, ty : ty, static : bool}
 datatype mdef = MT of {pos : pos, tps : string list, ps : ty list, va : bool, ret : ty,
-                       static : bool}
+                       static : bool, abs : bool}
 
 (* A class: its kind (class, interface, enum, record, annotation), its type parameters (keys), its
    supertypes (the superclass first), its fields (enum constants and record components included),

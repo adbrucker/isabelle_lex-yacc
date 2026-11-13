@@ -50,6 +50,11 @@ The concepts are those of the C11 project, carried over one for one:
   **The classes of the platform are read from a JDK**: `String`, `List<String>`, `System.out`,
   `java.util.Map.Entry` are known (see *The platform* below), so `s.length()` and
   `m.get(k).intValue()` link to the declarations in the JDK sources.
+  **Lambdas, method references and `switch` expressions are typed**: the parameters of a lambda
+  get the types of the functional interface the context expects (`l.forEach(p -> p.v = 1)` links
+  `v`), the result of a lambda or of a method reference binds the type parameters of the method
+  that takes it (`l.stream().map(p -> p.name()).forEach(n -> n.length())`), a method reference is
+  linked to its method, and a `switch` expression has the type its arms agree on.
 * **Antiquotations** in `//` and `/* */` comments, `//@ tag[navi](level) \<open>body\<close>`, with the
   same navigation (`u`, `U`, `r`, `d`), evaluation levels and the eight standard antiquotations as
   in the other front-ends (`probe_jenv`, `probe_ast`, `highlight`, `term`, `ML`, `text`,
@@ -155,14 +160,17 @@ files next to the exporting theory; those are generated on every build and are g
 ## Status and limitations
 
 Everything described above builds and passes its tests; the analysis of the whole JDK (15 371
-files, 3.5 million entity markups, no crash) takes about 5 minutes with the platform (45 seconds
-without it, 2.5 million markups): the classes the files use are read once and everything they say
+files, about 3 million entity markups, no crash) takes about 2 minutes on 8 threads with the
+platform (45 seconds without it, 2.5 million markups; the count depends on which file happens to
+be the first to load a class): the classes the files use are read once and everything they say
 about types is looked up, a file that calls a method a thousand times in a row (`XKeysym`) takes
 seconds. Deliberate choices and gaps: nothing is linked
 that is inherited through a supertype that cannot be found (a library other than the JDK);
 the declarations of the program that are in other files than the unit being analysed are not seen
-(only the platform is read from a tree); lambdas, method references and `switch`
-expressions have no type; a comment `//@Name` at its start is an antiquotation tag, as in the
+(only the platform is read from a tree); a lambda or a method reference has a type
+only where the context gives one (a parameter, a declared variable, a field, a `return`, a cast),
+and a lambda whose body is more than an expression or one `return` binds no type parameter; a
+`switch` expression is typed by its arms when none of them declares locals; a comment `//@Name` at its start is an antiquotation tag, as in the
 other front-ends, so JML-like comments need a handler or a space (`// @Name`); the stream decides by tokens alone, so in the arguments of a call `f(a < b, c > d)`
 is two comparisons (as javac reads it), and a member declaration `Foo(Map<A, B> m)` in the body of
 an enum constant is read as a call if it is the first in a block; Unicode escapes (`A`) are

@@ -106,6 +106,12 @@ text\<open>
     (JLS 15.12.2, with subtyping answered yes, no or perhaps: an unknown type is always
     \<open>perhaps\<close>). Without a receiver the innermost enclosing class that has a method of that name
     is the one that counts (JLS 15.12.1), else a statically imported method.
+    \<^bold>\<open>Lambdas, method references and switch expressions\<close> are typed from their context: the
+    walk passes the type that the context expects (the parameter type of the method that a call
+    resolves to, a declared variable or field, a \<open>return\<close>, a cast, an assignment) to the very
+    next expression; a functional interface gives a lambda the types of its parameters, and the
+    result of a lambda or of a method reference binds the type parameters of the method that takes
+    it (\<open>call_info\<close>). A \<open>switch\<close> expression has the type its arms agree on.
     \<^bold>\<open>The platform\<close>: a class that the program does not declare - an imported one, one of
     \<open>java.lang\<close>, one named by its package - is read from the sources of a JDK (the theory option
     \<open>java_src\<close>: a \<open>src.zip\<close> or a directory, \<open>none\<close> for no platform; by default the
@@ -691,7 +697,9 @@ fun ty_of_type jenv (t : pos A.jType) : ty =
          fun targs ta = (case ta of
              NONE => []
            | SOME (A.TArgs (args, _)) =>
-               map (fn A.TAType x => ty_of_type jenv x | A.TAWild _ => TUnknown) args)
+               map (fn A.TAType x => ty_of_type jenv x
+                     | A.TAWild (_, SOME (_, x), _) => ty_of_type jenv x
+                     | A.TAWild (_, NONE, _) => TUnknown) args)
          fun with_args cur ta =
            (case cur of TCls (k, _) => TCls (k, targs ta) | _ => cur)
          fun member cur name =
@@ -884,21 +892,44 @@ fun param_tys (MT {ps, va, tps, ...}, mm) n : ty list list =
       else [List.nth (ps', i)])
   end
 
-fun cand_tri jenv c (arg_tys : ty list) : tri =
-  let val pts = param_tys c (length arg_tys)
+(* How well the arguments fit a candidate. In the strict phase (JLS 15.12.2.2) a primitive does
+   not meet a reference (no boxing) and a method of variable arity takes an array; the loose
+   phase allows both. *)
+fun cand_tri jenv strict c (arg_tys : ty list) : tri =
+  let
+    val MT {ps, va, ...} = #1 c
+    val n = length arg_tys
+    val pts = param_tys c n
+    val pts' =
+      if strict andalso va
+      then (if n = length ps then take (n - 1) pts @ [[List.last (List.last pts)]] else [[]])
+      else pts
+    fun fit a p =
+      if strict andalso (case (a, p) of
+                           (TPrimT _, TCls _) => true
+                         | (TPrimT _, TArr _) => true
+                         | (TCls _, TPrimT _) => true
+                         | _ => false)
+      then N
+      else is_sub jenv 8 a p
   in
-    fold (fn (a, alts) => fn r =>
-            tri_and r (fold (fn p => fn x => tri_or x (is_sub jenv 8 a p)) alts N))
-      (arg_tys ~~ pts) Y
+    if strict andalso va andalso n <> length ps then N
+    else
+      fold (fn (a, alts) => fn r =>
+              tri_and r (fold (fn p => fn x => tri_or x (fit a p)) alts N))
+        (arg_tys ~~ pts') Y
   end
 
-(* the method that the types of the arguments select, if it is certain *)
+(* the method that the types of the arguments select, if it is certain: among the candidates of
+   the strict phase if there are any, else among those of the loose phase *)
 fun pick_method jenv (cands : (mdef * (string * ty) list) list) (arg_tys : ty list)
     : (mdef * (string * ty) list) option =
   let
     val n = length arg_tys
-    val scored = map (fn c => (c, cand_tri jenv c arg_tys)) (filter (fn c => fits_arity c n) cands)
-    val live = filter (fn (_, t) => t <> N) scored
+    val fitting = filter (fn c => fits_arity c n) cands
+    fun live_of strict =
+      filter (fn (_, t) => t <> N) (map (fn c => (c, cand_tri jenv strict c arg_tys)) fitting)
+    val live = (case live_of true of [] => live_of false | l => l)
   in
     (case live of
        [] => NONE
@@ -913,18 +944,167 @@ fun pick_method jenv (cands : (mdef * (string * ty) list) list) (arg_tys : ty li
          in (case best of [c] => SOME c | _ => NONE) end)
   end
 
-(* the result of a call: type parameters of the method are bound by the arguments that are
-   exactly such a parameter, and are unknown otherwise *)
-fun result_of (MT {tps, ps, ret, va, ...}, mm) (arg_tys : ty list) : ty =
+(* --- inference ---------------------------------------------------------------------------- *)
+
+(* the box of a primitive type; the other types are their own *)
+fun box_ty t =
+  (case t of
+     TPrimT p =>
+       (case p of
+          "int" => TCls (Platform.key_of "java.lang.Integer", [])
+        | "char" => TCls (Platform.key_of "java.lang.Character", [])
+        | "boolean" => TCls (Platform.key_of "java.lang.Boolean", [])
+        | "byte" => TCls (Platform.key_of "java.lang.Byte", [])
+        | "short" => TCls (Platform.key_of "java.lang.Short", [])
+        | "long" => TCls (Platform.key_of "java.lang.Long", [])
+        | "float" => TCls (Platform.key_of "java.lang.Float", [])
+        | "double" => TCls (Platform.key_of "java.lang.Double", [])
+        | _ => TUnknown)
+   | _ => t)
+
+(* the instance of the class "kp" that the type "a" is a subtype of, if its supertypes tell *)
+fun as_super jenv fuel (a : ty) kp : ty option =
+  (case a of
+     TCls (ka, _) =>
+       if ka = kp then SOME a
+       else if fuel = 0 then NONE
+       else get_first (fn s => as_super jenv (fuel - 1) s kp) (supers_of jenv a)
+   | _ => NONE)
+
+(* what the type "a" of an argument says of the type parameters "tps" in the parameter type "p" *)
+fun unify jenv tps (p : ty) (a : ty) : (string * ty) list =
+  (case (p, a) of
+     (TTv k, _) =>
+       if member (op =) tps k andalso a <> TUnknown andalso a <> TNull
+       then (case box_ty a of TUnknown => [] | b => [(k, b)])
+       else []
+   | (TArr p1, TArr a1) => unify jenv tps p1 a1
+   | (TCls (kp, pa), TCls _) =>
+       (case as_super jenv 8 a kp of
+          SOME (TCls (_, aa)) =>
+            if length pa = length aa then maps (fn (x, y) => unify jenv tps x y) (pa ~~ aa) else []
+        | _ => [])
+   | _ => [])
+
+(* one type for each type parameter: what all the bindings agree on, else unknown *)
+fun combine_binds tps (binds : (string * ty) list) : (string * ty) list =
+  map (fn k =>
+         (k, (case map snd (filter (fn (k1, _) => k1 = k) binds) of
+                [] => TUnknown
+              | t :: ts => if forall (fn x => x = t) ts then t else TUnknown))) tps
+
+fun erase_tps tps t =
+  (case t of
+     TTv k => if member (op =) tps k then TUnknown else t
+   | TCls (k, args) => TCls (k, map (erase_tps tps) args)
+   | TArr x => TArr (erase_tps tps x)
+   | _ => t)
+
+(* The parameter type of each argument of a call of the method (a variable-arity method takes
+   the element type for the last arguments, or the array for a single array argument). *)
+fun arg_params (MT {ps, va, ...}, mm) (arg_tys : ty list) : ty list =
   let
-    val binds =
-      if va then []
-      else
-        List.mapPartial (fn (TTv k, a) => if member (op =) tps k then SOME (k, a) else NONE
-                          | _ => NONE) (map (subst mm) ps ~~ arg_tys)
-    val unbound = map (fn k => (k,
-      TUnknown)) (filter (fn k => not (AList.defined (op =) binds k)) tps)
-  in subst (binds @ unbound) (subst mm ret) end
+    val ps' = map (subst mm) ps
+    val np = length ps'
+    val n = length arg_tys
+    fun elem_of t = (case t of TArr e => e | x => x)
+  in
+    List.tabulate (n, fn i =>
+      if va andalso np > 0 andalso i >= np - 1
+      then (if n = np andalso (case List.nth (arg_tys, i) of TArr _ => true | _ => false)
+            then List.last ps' else elem_of (List.last ps'))
+      else if i < np then List.nth (ps', i) else TUnknown)
+  end
+
+(* The bindings of the type parameters of the method that the types of the arguments give; a
+   lambda or a method reference has no type here and says nothing. *)
+fun arg_binds jenv (c as (MT {tps, ...}, _)) (arg_tys : ty list) : (string * ty) list =
+  maps (fn (p, a) => unify jenv tps p a) (arg_params c arg_tys ~~ arg_tys)
+
+(* --- functional interfaces ------------------------------------------------------------------- *)
+
+(* the abstract methods of an interface type, with the substitution of its type parameters *)
+fun abstract_methods jenv fuel (t : ty) : (string * mdef * (string * ty) list) list =
+  (case t of
+     TCls (k, args) =>
+       (case def_of jenv k of
+          NONE => []
+        | SOME (CD {tps, methods, supers, ...}) =>
+            let
+              val m = inst_map tps args
+              fun sg (MT {ps, ...}, mm) = map (subst mm) ps
+              val own_sigs = map (fn (n, md) => (n, sg (md, m))) methods
+              val own = List.mapPartial (fn (n, md as MT {abs, ...}) =>
+                                           if abs then SOME (n, md, m) else NONE) methods
+              val inherited =
+                if fuel = 0 then []
+                else maps (fn s => abstract_methods jenv (fuel - 1) (subst m s)) supers
+              fun keep (n, md, mm) = not (member (op =) own_sigs (n, sg (md, mm)))
+              fun first_of _ [] = []
+                | first_of seen ((n, md, mm) :: rest) =
+                    if member (op =) seen (n, sg (md, mm)) then first_of seen rest
+                    else (n, md, mm) :: first_of ((n, sg (md, mm)) :: seen) rest
+            in own @ first_of (map (fn (n, md, mm) => (n, sg (md, mm))) own)
+                              (filter keep inherited) end)
+   | _ => [])
+
+(* The function type of a functional interface type: the parameter types and the result of its one
+   abstract method (those of Object do not count). *)
+fun sam_of jenv (t : ty) : (ty list * ty) option =
+  (case t of
+     TCls (k, _) =>
+       (case def_of jenv k of
+          SOME (CD {kind = "interface", ...}) =>
+            let
+              fun of_object (n, MT {ps, ...}, _) =
+                (n = "equals" andalso length ps = 1) orelse
+                (n = "hashCode" andalso null ps) orelse (n = "toString" andalso null ps)
+            in
+              (case filter (not o of_object) (abstract_methods jenv 8 t) of
+                 [(_, MT {ps, ret, tps = [], ...}, mm)] => SOME (map (subst mm) ps, subst mm ret)
+               | _ => NONE)
+            end
+        | _ => NONE)
+   | _ => NONE)
+
+(* whether a lambda with that many parameters can have the parameter type "pt" *)
+fun lambda_arity_ok jenv (pt : ty) (a : pos A.jExpr) : bool =
+  (case a of
+     A.ELambda (lps, _, _, _) =>
+       (case pt of
+          TCls _ =>
+            (case sam_of jenv pt of
+               SOME (pts, _) => length pts = length lps
+             | NONE => not (known_class jenv pt))
+        | TUnknown => true
+        | TTv _ => true
+        | _ => false)
+   | _ => true)
+
+fun dims_ty_ds t ds = fold (fn _ => fn x => TArr x) ds t
+
+(* a name bound to a type, as the parameters of a lambda are *)
+fun bind_var name pos ty jenv =
+  set_scope (Symtab.update (vkey name, Param pos) (names_of jenv), meths_of jenv,
+             Symtab.update (vkey name, ty) (vtypes_of jenv)) jenv
+
+(* the parameters of a lambda declared in the environment, with the types of the context for
+   those that are not typed *)
+fun bind_lparams jenv (lps : pos A.jLParam list) (ptys : ty list) : jenv =
+  let
+    val tys = if length ptys = length lps then ptys else map (K TUnknown) lps
+  in
+    fold (fn (lp, t) => fn j =>
+            (case lp of
+               A.LPInfer (A.Ident (n, _, ni)) =>
+                 if n = "_" then j else bind_var n (A.pos_of_NodeInfo ni) t j
+             | A.LPTyped (A.Param (_, ty, _, A.Ident (n, _, ni), ds, _)) =>
+                 if n = "_" then j
+                 else
+                   bind_var n (A.pos_of_NodeInfo ni)
+                     (case ty of A.TVar _ => t | _ => dims_ty_ds (ty_of_type j ty) ds) j))
+      (lps ~~ tys) jenv
+  end
 
 (* --- the type of an expression ---------------------------------------------------------------- *)
 
@@ -1087,20 +1267,101 @@ fun type_of jenv (e : pos A.jExpr) : tv =
        end
    | A.ECast (ts, _, _) => (case ts of t :: _ => Val (ty_of_type jenv t) | [] => Val TUnknown)
    | A.EInstanceof _ => Val (TPrimT "boolean")
-   | A.ESwitch _ => Val TUnknown)
+   | A.ESwitch (_, cases, _) => Val (switch_ty jenv cases))
 
 and val_ty jenv e = (case type_of jenv e of Val t => t | _ => TUnknown)
 
-(* The method that a call resolves to, and the type of the call. Without receiver, the innermost
-   enclosing class that has a method of that name (inherited ones included) is the one that
-   counts (JLS 15.12.1). *)
-and call_info jenv (recv : pos A.jExpr option) (A.Ident (name, _, _)) (args : pos A.jExpr list)
-    : (pos * ty) option =
+(* The type of a switch expression: what the results of its arms agree on (numbers by promotion).
+   An arm is typed in the scope of the pattern variables of its label; an arm whose block
+   declares locals is not typed. *)
+and switch_ty jenv (cases : pos A.jSwitchCase list) : ty =
+  let
+    fun pat_binds p =
+      (case p of
+         A.PType (_, t, SOME (A.Ident (n, _, ni)), _) =>
+           if n = "_" then [] else [(n, A.pos_of_NodeInfo ni, ty_of_type jenv t)]
+       | A.PType (_, _, NONE, _) => []
+       | A.PRecord (_, ps, _) => maps pat_binds ps
+       | A.PAny _ => [])
+    fun label_binds l =
+      (case l of
+         A.LCase (items, _, _) =>
+           maps (fn A.CIPattern p => pat_binds p | _ => []) items
+       | A.LDefault _ => [])
+    fun with_binds bs = fold (fn (n, pos, t) => fn j => bind_var n pos t j) bs jenv
+    (* the yielded expressions of statements; NONE if there are locals *)
+    fun yields ss =
+      let
+        fun one s =
+          (case s of
+             A.SYield (e, _) => SOME [e]
+           | A.SBlock (A.Block (ss1, _)) => all ss1
+           | A.SIf (_, t, e, _) =>
+               (case (one t, (case e of SOME x => one x | NONE => SOME [])) of
+                  (SOME a, SOME b) => SOME (a @ b)
+                | _ => NONE)
+           | A.SLabeled (_, s1, _) => one s1
+           | A.SLocal _ => NONE
+           | A.SClassDecl _ => NONE
+           | A.SWhile (_, b, _) => one b
+           | A.SDo (b, _, _) => one b
+           | A.SFor _ => NONE
+           | A.SForEach _ => NONE
+           | A.STry _ => NONE
+           | A.SSwitch _ => NONE
+           | A.SSync _ => NONE
+           | _ => SOME [])
+        and all ss1 =
+          fold (fn x => fn acc => (case (acc, one x) of
+                                      (SOME a, SOME b) => SOME (a @ b)
+                                    | _ => NONE)) ss1 (SOME [])
+      in all ss end
+    fun arm c : ty list option =
+      (case c of
+         A.SwRule (l, body, _) =>
+           let val env = with_binds (label_binds l)
+           in
+             (case body of
+                A.RBExpr e => SOME [val_ty env e]
+              | A.RBBlock (A.Block (ss, _)) =>
+                  Option.map (map (val_ty env)) (yields ss)
+              | A.RBThrow _ => SOME [])
+           end
+       | A.SwGroup (ls, ss, _) =>
+           let val env = with_binds (maps label_binds ls)
+           in Option.map (map (val_ty env)) (yields ss) end)
+    val arms = map arm cases
+    val tys = if exists (not o is_some) arms then NONE else SOME (maps the arms)
+    fun join ts =
+      (case filter (fn t => t <> TNull) ts of
+         [] => TUnknown
+       | t :: rest =>
+           if exists (fn x => x = TUnknown) (t :: rest) then TUnknown
+           else if forall (fn x => x = t) rest then t
+           else if forall (fn x => (case x of TPrimT p => numeric p | _ => false)) (t :: rest)
+           then (TPrimT (fold (fn x => fn acc => (case x of TPrimT p => promote acc p | _ => acc))
+                          rest (case t of TPrimT p => unary_promote p | _ => "int")))
+           else TUnknown)
+  in (case tys of SOME ts => join ts | NONE => TUnknown) end
+
+(* The method that a call resolves to, with the types of the arguments. Without receiver, the
+   innermost enclosing class that has a method of that name (inherited ones included) is the one
+   that counts (JLS 15.12.1). A lambda must fit the arity of the functional interface that a
+   candidate takes. *)
+and call_pick jenv (recv : pos A.jExpr option) (A.Ident (name, _, _)) (args : pos A.jExpr list)
+    : ((mdef * (string * ty) list) * ty list) option =
   let
     val arg_tys = map (val_ty jenv) args
+    fun lambdas_ok c =
+      let val n = length args
+      in
+        if not (fits_arity c n) then false
+        else forall (fn (alts, a) => exists (fn p => lambda_arity_ok jenv p a) alts)
+               (param_tys c n ~~ args)
+      end
     fun finish cands =
-      (case pick_method jenv cands arg_tys of
-         SOME (c as (MT {pos, ...}, _)) => SOME (pos, result_of c arg_tys)
+      (case pick_method jenv (filter lambdas_ok cands) arg_tys of
+         SOME c => SOME (c, arg_tys)
        | NONE => NONE)
   in
     (case recv of
@@ -1124,6 +1385,132 @@ and call_info jenv (recv : pos A.jExpr option) (A.Ident (name, _, _)) (args : po
           | Pk => NONE))
   end
 
+(* what a lambda argument adds to the bindings of the type parameters: its result *)
+and lambda_binds jenv (c as (MT {tps, ...}, _)) (args : pos A.jExpr list) (arg_tys : ty list)
+    (binds0 : (string * ty) list) : (string * ty) list =
+  let
+    val known = filter (fn (_, t) => t <> TUnknown) (combine_binds tps binds0)
+  in
+    maps (fn (p, a) =>
+            (case a of
+               A.ELambda (lps, _, body, _) =>
+                 (case sam_of jenv (subst known p) of
+                    SOME (pts, TTv k) =>
+                      if member (op =) tps k
+                      then [(k, box_ty (lambda_ret jenv lps (map (erase_tps tps) pts) body))]
+                      else []
+                  | _ => [])
+             | A.EMethodRef (tg, _, A.Ident (n, _, _), _) =>
+                 (case sam_of jenv (subst known p) of
+                    SOME (pts, TTv k) =>
+                      if member (op =) tps k
+                      then (case mref_info jenv tg n (map (erase_tps tps) pts) of
+                              SOME (_, t) => [(k, box_ty t)]
+                            | NONE => [])
+                      else []
+                  | _ => [])
+             | _ => []))
+      (arg_params c arg_tys ~~ args)
+  end
+
+(* the type of the result of a lambda: an expression, or a block that is one "return" *)
+and lambda_ret jenv lps ptys (body : pos A.jLBody) : ty =
+  let val env = bind_lparams jenv lps ptys
+  in
+    (case body of
+       A.LBExpr e => val_ty env e
+     | A.LBBlock (A.Block ([A.SReturn (SOME e, _)], _)) => val_ty env e
+     | _ => TUnknown)
+  end
+
+(* The method that a method reference "target::name" denotes when the functional interface has
+   the parameter types "pts": its declaration (none for a constructor of an unknown class) and
+   the type of the result. *)
+and mref_info jenv (tg : pos A.jMRTarget) name (pts : ty list) : (pos option * ty) option =
+  let
+    val tv = (case tg of
+                A.MRExpr e => type_of jenv e
+              | A.MRType t => Ty (ty_of_type jenv t))
+    fun result (c as (MT {pos, ret, tps, ...}, mm)) tys =
+      let val bs = combine_binds tps (arg_binds jenv c tys)
+      in SOME (SOME pos, subst bs (subst mm ret)) end
+    fun pick cands tys =
+      (case pick_method jenv cands tys of SOME c => result c tys | NONE => NONE)
+  in
+    (case tv of
+       Ty t =>
+         if name = "new" then
+           (case t of
+              TCls (k, args) =>
+                (case def_of jenv k of
+                   SOME (CD {tps, ctors, ...}) =>
+                     let val m = inst_map tps args
+                     in
+                       (case pick_method jenv (map (fn d => (d, m)) ctors) pts of
+                          SOME (MT {pos, ...}, _) => SOME (SOME pos, t)
+                        | NONE => SOME (NONE, t))
+                     end
+                 | NONE => SOME (NONE, t))
+            | TArr _ => SOME (NONE, t)
+            | _ => NONE)
+         else
+           let
+             val cands = collect_methods jenv 8 t name
+             val statics = filter (fn (MT {static, ...}, _) => static) cands
+             val insts = filter (fn (MT {static, ...}, _) => not static) cands
+             val a = pick statics pts
+             val b = (case pts of
+                        r :: rest => if is_sub jenv 8 r t <> N then pick insts rest else NONE
+                      | [] => NONE)
+           in (case (a, b) of (SOME x, NONE) => SOME x | (NONE, SOME y) => SOME y | _ => NONE) end
+     | Val t => pick (filter (fn (MT {static, ...}, _) => not static)
+                             (collect_methods jenv 8 t name)) pts
+     | Pk => NONE)
+  end
+
+(* The method that a call resolves to, and the type of the call: the type parameters of the method
+   are bound by the types of the arguments, and by the result of the lambdas among them. *)
+and call_info jenv recv id (args : pos A.jExpr list) : (pos * ty) option =
+  (case call_pick jenv recv id args of
+     SOME (c as (MT {pos, tps, ret, ...}, mm), arg_tys) =>
+       let
+         val b0 = arg_binds jenv c arg_tys
+         val bs = combine_binds tps (b0 @ lambda_binds jenv c args arg_tys b0)
+       in SOME (pos, subst bs (subst mm ret)) end
+   | NONE => NONE)
+
+(* The type that the context expects of each argument of a call, for the lambdas and method
+   references among them: the parameter type of the method, with the type parameters it has been
+   possible to bind. *)
+and call_expects jenv recv id (args : pos A.jExpr list) : ty list =
+  (case call_pick jenv recv id args of
+     SOME (c as (MT {tps, ...}, _), arg_tys) =>
+       let
+         val known = filter (fn (_, t) => t <> TUnknown)
+                       (combine_binds tps (arg_binds jenv c arg_tys))
+       in map (fn p => subst known p) (arg_params c arg_tys) end
+   | NONE => map (K TUnknown) args)
+
+(* the same for a constructor of a class *)
+and new_expects jenv (t : ty) (args : pos A.jExpr list) : ty list =
+  (case t of
+     TCls (k, targs) =>
+       (case def_of jenv k of
+          SOME (CD {tps, ctors, ...}) =>
+            let
+              val m = inst_map tps targs
+              val arg_tys = map (val_ty jenv) args
+              val n = length args
+              fun ok c = fits_arity c n andalso
+                forall (fn (alts, a) => exists (fn p => lambda_arity_ok jenv p a) alts)
+                  (param_tys c n ~~ args)
+            in
+              (case pick_method jenv (filter ok (map (fn d => (d, m)) ctors)) arg_tys of
+                 SOME c => arg_params c arg_tys
+               | NONE => map (K TUnknown) args)
+            end
+        | NONE => map (K TUnknown) args)
+   | _ => map (K TUnknown) args)
 fun put_name key kind jenv =
   set_scope (Symtab.update (key, kind) (names_of jenv), meths_of jenv,
              Symtab.delete_safe key (vtypes_of jenv)) jenv
@@ -1194,14 +1581,14 @@ fun class_parts (d : pos A.jDecl) =
    | _ => NONE)
 
 (* a method or a constructor, its type parameters in scope for the types of its signature *)
-fun mk_mdef jenv ms mtps (ret : jenv -> ty) ps pos : mdef =
+fun mk_mdef jenv ms mtps (ret : jenv -> ty) ps pos abs : mdef =
   let
     val s = fold (fn A.TParam (_, pid, _, _) => fn j => quiet_enter tkey Tparam j pid) mtps jenv
     val ps' = real_params ps
   in
     MT {pos = pos, tps = map tparam_key mtps, ps = map (param_ty s) ps',
         va = (case rev ps' of A.Param (_, _, v, _, _, _) :: _ => v | [] => false),
-        ret = ret s, static = mod_kw_is ms "static"}
+        ret = ret s, static = mod_kw_is ms "static", abs = abs}
   end
 
 (* The definition of a class from its body, in a scope that has the type parameters and the member
@@ -1235,7 +1622,9 @@ fun register_body s2 site key kind tp_keys supers consts comps (body : pos A.jDe
               if not (vis ms) then []
               else
                 [(ident_name_of id,
-                  mk_mdef s2 ms mtps (fn s => dims_ty (ty_of_type s res) ds) ps (ident_pos id))]
+                  mk_mdef s2 ms mtps (fn s => dims_ty (ty_of_type s res) ds) ps (ident_pos id)
+                    (in_iface andalso not (mod_kw_is ms "default" orelse mod_kw_is ms "static"
+                                           orelse mod_kw_is ms "private")))]
              | _ => []) body
     val explicit = map #1 methods
     val accessors =
@@ -1243,10 +1632,10 @@ fun register_body s2 site key kind tp_keys supers consts comps (body : pos A.jDe
               if member (op =) explicit (ident_name_of id) then []
               else [(ident_name_of id,
                      MT {pos = ident_pos id, tps = [], ps = [], va = false, ret = param_ty s2 c,
-                         static = false})]) comps
+                         static = false, abs = false})]) comps
     val ctors =
       maps (fn A.DCtor (ms, mtps, id, ps, _, _, _) =>
-              if vis ms then [mk_mdef s2 ms mtps (K self) ps (ident_pos id)] else []
+              if vis ms then [mk_mdef s2 ms mtps (K self) ps (ident_pos id) false] else []
              | _ => []) body
     val types =
       maps (fn m => (case class_parts m of
@@ -1636,6 +2025,22 @@ fun scoped jenv f =
 
 fun optl f x = (case x of NONE => [] | SOME y => f y)
 
+(* The type that the context expects of the expression about to be walked (the target type of a
+   lambda or a method reference), and the result type of the method or lambda whose body is
+   walked (for "return"). They are entries of "vtypes" (see "put_vtype"), so the expectation
+   goes to the very next expression only: "walk_e" takes it. *)
+fun with_expect t jenv = put_vtype "java:expect" t jenv
+fun expect_of jenv = the_default TUnknown (Symtab.lookup (vtypes_of jenv) "java:expect")
+fun clear_expect jenv =
+  set_scope (names_of jenv, meths_of jenv, Symtab.delete_safe "java:expect" (vtypes_of jenv)) jenv
+fun with_ret t jenv = put_vtype "java:ret" t jenv
+fun ret_of jenv = the_default TUnknown (Symtab.lookup (vtypes_of jenv) "java:ret")
+
+fun is_poly (e : pos A.jExpr) =
+  (case e of
+     A.ELambda _ => true | A.EMethodRef _ => true | A.EParen _ => true | A.ECond _ => true
+   | A.ESwitch _ => true | A.EArrayInit _ => true | _ => false)
+
 (* A compact wrapper for the antiquotations a node carries (its "nodeInfo"). *)
 fun chk jenv ctx ni = check_antiq jenv ctx ni
 
@@ -1747,12 +2152,17 @@ and walk_targs senv ctx (A.TArgs (args, ni)) : acts =
                @ (case b of SOME (_, t) => walk_type senv ctx t | NONE => [])) args
 
 (* expressions: the actions, and the pattern variables introduced when it is true / false *)
-and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
+and walk_e senv0 ctx (e : pos A.jExpr) : acts * binds * binds =
   let
+    val ex = expect_of senv0
+    val senv = clear_expect senv0
     val ctx' = A.Expr e :: ctx
     val here = chk senv ctx' (A.nodeInfo_of_expr e)
     fun plain acts = (here @ acts, [], [])
     fun seq es = maps (fn x => #1 (walk_e senv ctx' x)) es
+    (* an expression with the type that the context expects of it *)
+    fun walk_ex t x = #1 (walk_e (with_expect t senv) ctx' x)
+    fun seq_ex tys es = maps (fn (t, x) => walk_ex t x) (tys ~~ es)
   in
     (case e of
        A.ELit _ => plain []
@@ -1763,7 +2173,7 @@ and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
      | A.EQualThis (e1, _) => plain (seq [e1])
      | A.EQualSuper (e1, _) => plain (seq [e1])
      | A.EParen (e1, _) =>
-         let val (a, t, f) = walk_e senv ctx' e1 in (here @ a, t, f) end
+         let val (a, t, f) = walk_e (with_expect ex senv) ctx' e1 in (here @ a, t, f) end
      | A.EIndex (a, i, _) => plain (seq [a, i])
      | A.ECall (recv, ta, id, args, _) =>
          let
@@ -1774,26 +2184,47 @@ and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
                            then link_call senv NONE id args
                            else use_method senv id (length args));
                           []))
-         in plain (ra @ optl (walk_targs senv ctx') ta @ seq args) end
+           val aacts = if exists is_poly args
+                       then seq_ex (call_expects senv recv id args) args else seq args
+         in plain (ra @ optl (walk_targs senv ctx') ta @ aacts) end
      | A.ENew (outer, t, args, body, _) =>
-         plain (optl (fn o1 => seq [o1]) outer @ walk_type senv ctx' t @ seq args
+         plain (optl (fn o1 => seq [o1]) outer @ walk_type senv ctx' t
+                @ (if exists is_poly args
+                   then seq_ex (new_expects senv (ty_of_type senv t) args) args else seq args)
                 @ optl (walk_anon senv ctx' (pos_key (A.pos_of_expr e)) (ty_of_type senv t)) body)
      | A.ENewArray (t, des, ds, init, _) =>
          plain (walk_type senv ctx' t @ seq des @ maps (walk_dim senv ctx') ds
                 @ optl (fn i => seq [i]) init)
-     | A.EArrayInit (es, _, _) => plain (seq es)
+     | A.EArrayInit (es, _, _) =>
+         plain (case ex of
+                  TArr t => seq_ex (map (K t) es) es
+                | _ => seq es)
      | A.EClassLit (t, _) => plain (walk_type senv ctx' t)
-     | A.EMethodRef (tg, ta, _, _) =>
-         plain ((case tg of A.MRExpr e1 => seq [e1] | A.MRType t => walk_type senv ctx' t)
-                @ optl (walk_targs senv ctx') ta)
+     | A.EMethodRef (tg, ta, id, _) =>
+         let
+           val name = ident_name_of id
+           val _ = (case sam_of senv ex of
+                      SOME (pts, _) =>
+                        (case mref_info senv tg name pts of
+                           SOME (SOME p, _) =>
+                             if name = "new" then ()
+                             else report_use "Java method" name (ident_pos id) p
+                         | _ => ())
+                    | NONE => ())
+         in
+           plain ((case tg of A.MRExpr e1 => seq [e1] | A.MRType t => walk_type senv ctx' t)
+                  @ optl (walk_targs senv ctx') ta)
+         end
      | A.ELambda (ps, _, body, _) =>
          let
+           val (pts, rt) = (case sam_of senv ex of SOME (a, r) => (a, r) | NONE => ([], TUnknown))
            val (_, acts) = scoped senv (fn s =>
              let
-               val (s1, pacts) = walk_lparams s ctx' ps
+               val (s1, pacts) = walk_lparams s ctx' ps pts
+               val s1r = with_ret rt s1
                val bacts = (case body of
-                              A.LBExpr e1 => #1 (walk_e s1 ctx' e1)
-                            | A.LBBlock b => walk_block s1 ctx' b)
+                              A.LBExpr e1 => #1 (walk_e (with_expect rt s1r) ctx' e1)
+                            | A.LBBlock b => walk_block s1r ctx' b)
              in (s1, pacts @ bacts) end)
          in plain acts end
      | A.EUnary (A.UNot, e1, _) =>
@@ -1810,20 +2241,22 @@ and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
            val (b1, _, fb) = walk_e (add_binds senv fa) ctx' b
          in (here @ a1 @ b1, [], fa @ fb) end
      | A.EBinary (_, a, b, _) => plain (seq [a, b])
-     | A.EAssign (l, _, r, _) => plain (seq [l, r])
+     | A.EAssign (l, _, r, _) => plain (seq [l] @ walk_ex (val_ty senv l) r)
      | A.ECond (c, a, b, _) =>
          let
            val (c1, tc, fc) = walk_e senv ctx' c
-           val (a1, _, _) = walk_e (add_binds senv tc) ctx' a
-           val (b1, _, _) = walk_e (add_binds senv fc) ctx' b
+           val (a1, _, _) = walk_e (with_expect ex (add_binds senv tc)) ctx' a
+           val (b1, _, _) = walk_e (with_expect ex (add_binds senv fc)) ctx' b
          in plain (c1 @ a1 @ b1) end
-     | A.ECast (ts, e1, _) => plain (maps (walk_type senv ctx') ts @ seq [e1])
+     | A.ECast (ts, e1, _) =>
+         plain (maps (walk_type senv ctx') ts
+                @ (case ts of t :: _ => walk_ex (ty_of_type senv t) e1 | [] => seq [e1]))
      | A.EInstanceof (e1, p, _) =>
          let
            val (a1, _, _) = walk_e senv ctx' e1
            val (pacts, bs) = walk_pattern senv ctx' p
          in (here @ a1 @ pacts, bs, []) end
-     | A.ESwitch (e1, cases, _) => plain (seq [e1] @ walk_cases senv ctx' cases))
+     | A.ESwitch (e1, cases, _) => plain (seq [e1] @ walk_cases senv ctx' ex cases))
   end
 
 and walk_pattern senv ctx (p : pos A.jPattern) : acts * binds =
@@ -1866,7 +2299,7 @@ and walk_label senv ctx (l : pos A.jLabel) : acts * binds =
                             | NONE => ([], []))
        in (here @ maps #1 rs @ gacts, bs @ gt) end)
 
-and walk_cases senv ctx cases : acts =
+and walk_cases senv ctx ex cases : acts =
   let
     fun go _ [] = []
       | go env (c :: rest) =
@@ -1878,7 +2311,7 @@ and walk_cases senv ctx cases : acts =
                  val env_l = add_binds env bs
                  val bacts =
                    (case body of
-                      A.RBExpr e1 => #1 (walk_e env_l ctx e1)
+                      A.RBExpr e1 => #1 (walk_e (with_expect ex env_l) ctx e1)
                     | A.RBBlock b => walk_block env_l ctx b
                     | A.RBThrow s => #2 (walk_stmt env_l ctx s))
                in here @ lacts @ bacts @ go env rest end
@@ -1896,12 +2329,21 @@ and walk_cases senv ctx cases : acts =
                in here @ lacts @ sacts @ go env'' rest end)
   in #2 (scoped senv (fn s => (s, go s cases))) end
 
-and walk_lparams senv ctx ps : jenv * acts =
-  fold (fn p => fn (s, acc) =>
-          (case p of
-             A.LPInfer id => (reg_v Param s id, acc)
-           | A.LPTyped pr => let val (s1, a) = walk_param s ctx pr in (s1, acc @ a) end))
-    ps (senv, [])
+and walk_lparams senv ctx ps (ptys : ty list) : jenv * acts =
+  let val tys = if length ptys = length ps then ptys else map (K TUnknown) ps
+  in
+    fold (fn (p, t) => fn (s, acc) =>
+            (case p of
+               A.LPInfer id => (reg_vt Param t s id, acc)
+             | A.LPTyped (pr as A.Param (ms, ty, va, id, ds, ni)) =>
+                 (case ty of
+                    A.TVar _ =>
+                      (* "var": the type is the one of the context *)
+                      let val (s1, a) = walk_param s ctx pr
+                      in ((if is_receiver id then s1 else reg_vt Param t s1 id), acc @ a) end
+                  | _ => let val (s1, a) = walk_param s ctx pr in (s1, acc @ a) end)))
+      (ps ~~ tys) (senv, [])
+  end
 
 and walk_param senv ctx (p as A.Param (ms, t, _, id, ds, ni)) : jenv * acts =
   let
@@ -1934,7 +2376,11 @@ and walk_localvar senv ctx (A.LocalVar (ms, t, vds, ni)) : jenv * acts =
                         | _ => dims_ty (ty_of_type e t) ds)
               val e1 = reg_vt Var ty e id          (* in scope in its own initializer *)
               val a1 = chk e1 ctx vni @ maps (walk_dim e1 ctx) ds
-                       @ (case init of SOME x => #1 (walk_e e1 ctx x) | NONE => [])
+                       @ (case init of
+                            SOME x =>
+                              #1 (walk_e (with_expect (case t of A.TVar _ => TUnknown | _ => ty) e1)
+                                    ctx x)
+                          | NONE => [])
             in (e1, acc @ a1) end)
       vds (senv, a0)
   end
@@ -2018,7 +2464,8 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
          in ret (senv, ea @ a0 @ ba) end
      | A.SBreak (l, _) => (use_label senv l; ret (senv, []))
      | A.SContinue (l, _) => (use_label senv l; ret (senv, []))
-     | A.SReturn (e, _) => ret (senv, optl expr e)
+     | A.SReturn (e, _) =>
+         ret (senv, optl (fn x => #1 (walk_e (with_expect (ret_of senv) senv) ctx' x)) e)
      | A.SThrow (e, _) => ret (senv, expr e)
      | A.SYield (e, _) => ret (senv, expr e)
      | A.SAssert (c, m, _) => ret (senv, expr c @ optl expr m)
@@ -2041,7 +2488,7 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
                in (s1, a0 @ walk_block s1 ctx' cb) end))
            val facts = (case f of SOME fb => walk_block senv ctx' fb | NONE => [])
          in ret (senv, racts @ bacts @ maps catch_acts cs @ facts) end
-     | A.SSwitch (e, cases, _) => ret (senv, expr e @ walk_cases senv ctx' cases)
+     | A.SSwitch (e, cases, _) => ret (senv, expr e @ walk_cases senv ctx' TUnknown cases)
      | A.SCtorCall (q, ta, _, args, _) =>
          ret (senv, optl expr q @ optl (walk_targs senv ctx') ta @ maps expr args))
   end
@@ -2114,14 +2561,17 @@ and walk_decl senv ctx (d : pos A.jDecl) : acts =
        let
          val ctx' = A.Decl d :: ctx
          val here = chk senv ctx' (A.nodeInfo_of_decl d)
-         fun var_init (A.VarDecl (_, ds, init, vni)) =
+         fun var_init t (A.VarDecl (_, ds, init, vni)) =
            chk senv ctx' vni @ maps (walk_dim senv ctx') ds
-           @ (case init of SOME x => #1 (walk_e senv ctx' x) | NONE => [])
+           @ (case init of
+                SOME x =>
+                  #1 (walk_e (with_expect (dims_ty (ty_of_type senv t) ds) senv) ctx' x)
+              | NONE => [])
        in
          here @
          (case d of
             A.DField (ms, t, vds, _) =>
-              walk_mods senv ctx' ms @ walk_type senv ctx' t @ maps var_init vds
+              walk_mods senv ctx' ms @ walk_type senv ctx' t @ maps (var_init t) vds
           | A.DMethod (ms, tps, res, _, ps, ds, thr, body, dflt, _) =>
               #2 (scoped senv (fn s =>
                 let
@@ -2133,7 +2583,8 @@ and walk_decl senv ctx (d : pos A.jDecl) : acts =
                   val a5 = (case dflt of
                               SOME v => walk_elemval s2 ctx' v
                             | NONE => [])
-                  val a6 = (case body of SOME b => walk_block s2 ctx' b | NONE => [])
+                  val s2r = with_ret (dims_ty (ty_of_type s1 res) ds) s2
+                  val a6 = (case body of SOME b => walk_block s2r ctx' b | NONE => [])
                 in (s2, a0 @ a1 @ a2 @ a3 @ a4 @ a5 @ a6) end))
           | A.DCtor (ms, tps, id, ps, thr, b, _) =>
               #2 (scoped senv (fn s =>
@@ -2143,10 +2594,11 @@ and walk_decl senv ctx (d : pos A.jDecl) : acts =
                   val (s1, a1) = declare_tparams s ctx' tps
                   val (s2, a2) = walk_params s1 ctx' ps
                   val a3 = maps (walk_type s2 ctx') thr
-                in (s2, a0 @ a1 @ a2 @ a3 @ walk_block s2 ctx' b) end))
+                in (s2, a0 @ a1 @ a2 @ a3 @ walk_block (with_ret TUnknown s2) ctx' b) end))
           | A.DCompact (ms, id, b, _) =>
-              (decl_only Ctor id; walk_mods senv ctx' ms @ walk_block senv ctx' b)
-          | A.DInit (_, b, _) => walk_block senv ctx' b
+              (decl_only Ctor id;
+               walk_mods senv ctx' ms @ walk_block (with_ret TUnknown senv) ctx' b)
+          | A.DInit (_, b, _) => walk_block (with_ret TUnknown senv) ctx' b
           | A.DEmpty _ => []
           | _ => [])
        end)

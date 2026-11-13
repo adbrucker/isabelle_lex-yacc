@@ -363,6 +363,27 @@ text\<open>
   the innermost enclosing class that has a method of that name (JLS 15.12.1), else to a
   statically imported method.
 
+  \<^bold>\<open>Lambdas, method references, switch expressions.\<close> These have no type of their own;
+  they get one from their context. The context \<^emph>\<open>expects\<close> a type of the expression it is about to
+  walk: the parameter type of the method or constructor that the call resolves to (with the type
+  parameters bound so far), the declared type of a variable or field, the result type of the
+  method or lambda around a \<open>return\<close>, the type of a cast, the type of the left side of an
+  assignment; a conditional and a parenthesis pass it on. If that type is a functional
+  interface - an interface with one abstract method, not counting those of \<open>Object\<close> - the
+  parameters of a lambda get the parameter types of that method (wildcards count as their
+  bounds), so that the body is analysed with typed names, and the result of the lambda is
+  expected of its body. A call is then typed in two steps, as the specification has it in spirit:
+  the arguments that have a type bind the type parameters of the method (through their
+  supertypes, an array or a variable-arity argument included), and the results of the lambdas
+  and method references bind the rest, so that \<open>xs.stream().map(s -> s.length())\<close> is a
+  \<open>Stream<Integer>\<close> (a primitive result is boxed). A lambda is also a criterion for the
+  choice of an overload: a candidate whose functional interface takes another number of
+  parameters is not applicable. A method reference \<open>T::m\<close> is resolved with the parameter types of
+  the interface, as a static method taking all of them or as an instance method of the first;
+  \<open>e::m\<close> as an instance method; \<open>T::new\<close> gives \<open>T\<close>; the reference is hyperlinked to the method.
+  A \<open>switch\<close> expression has the type its arms agree on - each arm is typed in the scope of the
+  pattern variables of its label - with numbers promoted and \<open>null\<close> ignored.
+
   \<^bold>\<open>The platform.\<close> A class that the program does not declare - one it imports, one of
   \<open>java.lang\<close>, one named by its package (\<open>java.util.Map.Entry\<close>) - is \<^emph>\<open>read from the sources of
   a JDK\<close>. The theory option \<open>java_src\<close> says where: a \<^verbatim>\<open>src.zip\<close>, or a directory with the same
@@ -403,6 +424,42 @@ public class Uses {
 
     static boolean none(Object o) {
         return Objects.isNull(o) || o.toString().isEmpty();
+    }
+}
+\<close>
+
+text\<open>
+  Lambdas, method references and \<open>switch\<close> expressions get their types from the context. In the
+  unit below the parameter \<open>p\<close> of the first lambda is a \<open>Person\<close> (the \<open>Consumer<? super Person>\<close>
+  that \<open>forEach\<close> takes), so \<open>name\<close> and \<open>length\<close> are linked; \<open>Person::name\<close> is linked and its
+  result type binds the \<open>R\<close> of \<open>map\<close>, so \<open>n\<close> is a \<open>String\<close>; and \<open>r\<close> has the type that both arms of
+  the \<open>switch\<close> agree on:
+\<close>
+
+java\<open>
+package platform;
+
+import java.util.*;
+
+public class Lambdas {
+    record Person(String name, int age) {}
+
+    static int totalLength(List<Person> ps) {
+        int[] total = {0};
+        ps.forEach(p -> total[0] += p.name().length());
+        return total[0];
+    }
+
+    static void names(List<Person> ps) {
+        ps.stream().map(Person::name).forEach(n -> System.out.println(n.length()));
+    }
+
+    static String kind(Object o) {
+        var r = switch (o) {
+            case Person p -> p;
+            default -> new Person("?", 0);
+        };
+        return r.name();
     }
 }
 \<close>
@@ -796,8 +853,8 @@ text\<open>
   the JDK of Isabelle), navigation, the evaluation order, \<open>java_file\<close> on the examples, export
   and the backend hook.
 
-  The analysis has been run over the whole corpus as well: the 15\,371 files give 3.5 million
-  entity markups without a crash, in about five minutes with the platform (45 seconds without
+  The analysis has been run over the whole corpus as well: the 15\,371 files give about 3 million
+  entity markups without a crash, in about two minutes on 8 threads with the platform (45 seconds without
   it). The only errors are comments like \<open>//@Deprecated\<close> that begin with an \<open>@\<close>-tag no handler
   is registered for.
 \<close>
@@ -817,11 +874,12 @@ text\<open>
     ASCII letters, digits, \<open>_\<close> and \<open>$\<close> plus every non-ASCII byte. The preview features of Java 25
     are not Java 25 and are rejected.
   \<^item> \<^bold>\<open>No semantics.\<close> There is no type checker: no definite assignment, no checked exceptions, no
-    constant evaluation, no inference of the type of a lambda, of a method reference or of a
-    \<open>switch\<close> expression, which have no type for the pass. The type pass links only what is
-    certain, so a call with arguments of unknown type, a generic method whose type parameter does
-    not occur as a parameter, or a member inherited through a supertype that cannot be found is
-    left unmarked. The classes of the platform are read from a JDK; the other files of the
+    constant evaluation. The type pass links only what is certain, so a call with arguments of
+    unknown type, a generic method whose type parameters the arguments do not determine, or a
+    member inherited through a supertype that cannot be found is left unmarked. A lambda has a
+    type only where the context gives one (\<open>\<section>2.3\<close>), and its result binds a type parameter only
+    if its body is an expression or one \<open>return\<close>; a \<open>switch\<close> expression is typed by its arms
+    unless one of them declares locals, and the join of reference types is not computed. The classes of the platform are read from a JDK; the other files of the
     program's own package are not seen (only the unit being analysed is), and neither is a
     library other than the JDK.
   \<^item> \<^bold>\<open>Cost of the platform.\<close> A class of the JDK is parsed once per session; a program that uses a
@@ -857,9 +915,8 @@ text\<open>
   AST. The type pass goes one step further than the other front-ends in one respect: because the
   JDK ships with its own sources, the classes of the platform are known by reading them, and
   \<open>s.length()\<close> is linked to the code of \<open>String\<close>. What is documented in \<open>\<section>6\<close> as missing is, in
-  every case, a scoping decision rather than an accident: the natural next steps are the typing
-  of lambdas, method references and \<open>switch\<close> expressions with the inference of the type
-  arguments they need, a faster lookup of members, a semantic backend that translates Java
+  every case, a scoping decision rather than an accident: the natural next steps are the
+  inference of the type arguments of a call from the target type, a faster lookup of members, a semantic backend that translates Java
   programs into HOL - the antiquotations of \<open>\<section>2.4\<close> then state and discharge the
   specifications in the comments next to the program, as the \<open>lemma\<close> above - and the reading of
   the other files of a program from a source path.

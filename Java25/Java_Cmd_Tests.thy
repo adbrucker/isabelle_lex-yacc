@@ -267,6 +267,13 @@ val _ = ent "an anonymous class inherits"
 val _ = ent "the type argument of a generic method is inferred"
   "class A { <T> T id(T x) { return x; } int v; int f(A a) { return id(a).v; } }" 14
 
+val _ = ent "the type of a switch expression"
+  ("class A { int x; int f(Object o) { var r = switch (o) { case A a -> a; default -> null; }; "
+   ^ "return r.x; } }") 11
+val _ = ent "the type of a switch expression with yields"
+  ("class A { int x; int f(Object o) { var r = switch (o) { case A a -> { yield a; } "
+   ^ "default -> { yield new A(); } }; return r.x; } }") 12
+
 val _ = entu "an imported type" "import java.util.List; class A { List l; }" 4
 val _ = entu "a static import"
   "import static java.lang.Math.max; class A { int f() { return max(1, 2); } }" 4
@@ -300,8 +307,22 @@ val fake_tree =
     ^ "{ public final int ordinal() { return 0; } }"),
    ("java/util/Collection.java",
     "package java.util; public interface Collection<E> { int size(); }"),
+   ("java/lang/Integer.java",
+    "package java.lang; public final class Integer { public int intValue() { return 0; } }"),
    ("java/util/List.java",
-    "package java.util; public interface List<E> extends Collection<E> { E get(int i); }"),
+    "package java.util; public interface List<E> extends Collection<E> { E get(int i); "
+    ^ "java.util.stream.Stream<E> stream(); "
+    ^ "void forEach(java.util.function.Consumer<? super E> c); }"),
+   ("java/util/function/Function.java",
+    "package java.util.function; public interface Function<T,R> { R apply(T t); }"),
+   ("java/util/function/Consumer.java",
+    "package java.util.function; public interface Consumer<T> { void accept(T t); }"),
+   ("java/util/function/Predicate.java",
+    "package java.util.function; public interface Predicate<T> { boolean test(T t); }"),
+   ("java/util/stream/Stream.java",
+    "package java.util.stream; import java.util.function.*; public interface Stream<T> { "
+    ^ "<R> Stream<R> map(Function<? super T, ? extends R> f); "
+    ^ "Stream<T> filter(Predicate<? super T> p); void forEach(Consumer<? super T> c); }"),
    ("java/util/Map.java",
     "package java.util; public interface Map<K,V> { Entry<K,V> firstEntry(); "
     ^ "interface Entry<K,V> { K getKey(); V getValue(); } }"),
@@ -340,7 +361,25 @@ fun platform_tests thy =
     dec "a qualified type" "int f(java.util.List<String> l) { return l.size(); }" 5;
     dec "a qualified name in an expression"
       "boolean f(Object o) { return java.util.Objects.isNull(o); }" 5;
-    unit "a class that is not in the tree" "import foo.Bar; class A { int f(Bar b) { return b.x; } }" 6
+    unit "a class that is not in the tree" "import foo.Bar; class A { int f(Bar b) { return b.x; } }" 6;
+    (* lambdas, method references *)
+    unit "the parameter of a lambda has the type of the functional interface"
+      "import java.util.List; class P { int v; void f(List<P> l) { l.forEach(p -> p.v = 1); } }" 12;
+    unit "the result of a lambda binds a type parameter"
+      ("import java.util.List; class P { int v; void f(List<P> l) "
+       ^ "{ l.stream().map(p -> p).forEach(q -> q.v = 1); } }") 16;
+    unit "a method reference binds a type parameter and is linked"
+      ("import java.util.List; class P { int get() { return 0; } void f(List<P> l) "
+       ^ "{ l.stream().map(P::get).forEach(x -> x.intValue()); } }") 16;
+    unit "a lambda in an initializer"
+      ("import java.util.function.Consumer; class P { int v; "
+       ^ "void f() { Consumer<P> c = p -> p.v = 1; } }") 10;
+    unit "a lambda in a return"
+      ("import java.util.function.Function; class P { int v; "
+       ^ "Function<P,Integer> g() { return p -> p.v; } }") 10;
+    unit "a lambda of the wrong arity is not a candidate"
+      ("import java.util.List; class P { int v; void f(List<P> l) "
+       ^ "{ l.forEach((p, q) -> p.v = 1); } }") 11
   end
 
 val _ = Isabelle_System.with_tmp_dir "java_tree" (fn dir =>
@@ -359,6 +398,17 @@ val _ =
       dec "the JDK: System.out.println" "void f() { System.out.println(\"x\"); }" 4;
       unit "the JDK: a list of strings"
         "import java.util.*; class A { int f(List<String> l) { return l.get(0).length(); } }" 8;
+      dec "the JDK: an overload without boxing" "void f() { System.out.println(1); }" 4;
+      dec "the JDK: an overload with boxing"
+        "void f(java.util.List<Integer> l) { l.add(1); }" 5;
+      dec "the JDK: a lambda over a list"
+        "void f(java.util.List<String> l) { l.forEach(s -> s.length()); }" 8;
+      dec "the JDK: a stream with a lambda"
+        ("void f(java.util.List<String> l) "
+         ^ "{ l.stream().map(s -> s.length()).forEach(n -> n.intValue()); }") 13;
+      dec "the JDK: a stream with a method reference"
+        ("void f(java.util.List<String> l) "
+         ^ "{ l.stream().map(String::length).forEach(n -> n.intValue()); }") 12;
       dec "the JDK: a qualified generic type"
         "int f(java.util.Map<String,Integer> m) { return m.get(\"a\").intValue(); }" 7
     end
