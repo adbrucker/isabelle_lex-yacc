@@ -29,3 +29,8 @@ output
 # which are genuine fixtures
 /Golang1.27/*.go
 /Golang1.27/manual/*.go
+
+# java_export output of Java25/Java_Cmd_Tests.thy (regenerated on every build) - not
+# Java25/examples/*.java, which are genuine fixtures
+/Java25/*.java
+/Java25/manual/*.java
