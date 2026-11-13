@@ -133,7 +133,7 @@ datatype mdef = MT of {pos : pos, tps : string list, ps : ty list, va : bool, re
 (* A class: its kind (class, interface, enum, record, annotation), its type parameters (keys), its
    supertypes (the superclass first), its fields (enum constants and record components included),
    methods (the accessors of a record included), constructors and member types (by key and site). *)
-datatype cdef = CD of {kind : string, tps : string list, supers : ty list,
+datatype cdef = CD of {site : pos, kind : string, tps : string list, supers : ty list,
                        fields : (string * fdef) list, methods : (string * mdef) list,
                        ctors : mdef list, types : (string * (string * pos)) list}
 

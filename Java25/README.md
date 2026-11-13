@@ -42,11 +42,14 @@ The concepts are those of the C11 project, carried over one for one:
   markup (hover, click-through), with Java's several name spaces (variables, types, methods,
   packages, labels), the scope of the members of a class throughout its body, block scoping, the
   *flow scoping* of pattern variables (`if (!(o instanceof String s)) return; ... s ...`), imports
-  and type parameters; names that resolve nowhere (an on-demand import, the platform) are not
-  marked. **Selections and calls are resolved with types**, when that is certain: `x.f`, `x.m(a)`,
+  and type parameters; names that resolve nowhere are not marked. **Selections and calls are
+  resolved with types**, when that is certain: `x.f`, `x.m(a)`,
   `this.f`, `Color.RED`, `self().next().x`, a field or method inherited from a declared class, an
   overloaded method selected by the types of its arguments (the most specific one), type arguments
   substituted (`Box<U> b; b.get().f()`), the type of a `var`, of a pattern variable, of a cast.
+  **The classes of the platform are read from a JDK**: `String`, `List<String>`, `System.out`,
+  `java.util.Map.Entry` are known (see *The platform* below), so `s.length()` and
+  `m.get(k).intValue()` link to the declarations in the JDK sources.
 * **Antiquotations** in `//` and `/* */` comments, `//@ tag[navi](level) \<open>body\<close>`, with the
   same navigation (`u`, `U`, `r`, `d`), evaluation levels and the eight standard antiquotations as
   in the other front-ends (`probe_jenv`, `probe_ast`, `highlight`, `term`, `ML`, `text`,
@@ -102,6 +105,28 @@ isabelle build -d Java25 Java25      # all theories and tests
 
 To work interactively, open a theory importing `Java` with `isabelle jedit -d Java25 -l Java25`.
 
+## The platform
+
+The classes that a program does not declare - those it imports, those of `java.lang`, those it
+names by their package (`java.util.List<String>`) - are read from the sources of a JDK. The theory
+option `java_src` names where: a `src.zip` or a directory with the same layout (the packages below
+a directory per module, or directly below it); `none` switches the platform off. By default it is
+the `lib/src.zip` of the JDK of Isabelle (`$ISABELLE_JDK_HOME`), else of `$JAVA_HOME`:
+
+```isabelle
+declare [[java_src = "/usr/lib/jvm/java-25-openjdk/lib/src.zip"]]
+```
+
+A class is parsed the first time it is needed (a file out of the archive is extracted to
+`$ISABELLE_TMP_PREFIX`, which is what a hyperlink opens) and its definitions are kept for the
+session, shared by all theories, so the cost is paid once: `java.lang.String` or `java.util.List`
+take a second or less. Of a class of the platform the members that a program can see (public,
+protected, those of an interface) are known; `Object`'s public methods belong to every class, the
+`Enum` and `Record` of an enum and a record are the real ones, member classes
+(`Map.Entry`) are found, and a static import brings in the static methods of its class. Without a
+JDK, or with `none`, nothing is known of the platform and nothing is linked on that basis, as
+before.
+
 ## Tests
 
 `Java_Tests.thy` has round-trip tests for every construct, tests of the tokens the layout stream
@@ -114,18 +139,22 @@ unzip $ISABELLE_JDK_HOME/lib/src.zip -d /tmp/jdksrc
 JAVA_SRC=/tmp/jdksrc isabelle build -d Java25 Java25
 ```
 
-`Java_Cmd_Tests.thy` counts the entity markups for each scoping rule and exercises navigation,
-levels, `java_file` on `examples/`, export and the backend hook. `java_export` writes `.java`
+`Java_Cmd_Tests.thy` counts the entity markups for each scoping rule (without the platform, so
+that the counts do not depend on a JDK; the platform has its own tests, on a small tree written to
+a temporary directory and on the JDK of Isabelle) and exercises navigation, levels, `java_file` on `examples/`, export and the backend hook. `java_export` writes `.java`
 files next to the exporting theory; those are generated on every build and are git-ignored
 (`examples/` holds the real sources, which `javac --release 25` compiles).
 
 ## Status and limitations
 
 Everything described above builds and passes its tests; the analysis of the whole JDK (15 371
-files, 2.5 million entity markups) takes 45 seconds. Deliberate choices and gaps: the types of the
-platform are not known, so `s.length()` on a `String` is not linked, and neither is anything
-inherited through a supertype that is not declared in the units seen so far (the loading of
-classes from a JDK source tree is the next step); lambdas, method references and `switch`
+files, 3.5 million entity markups, no crash) takes about 5 minutes with the platform (45 seconds
+without it, 2.5 million markups): the classes the files use are read once and everything they say
+about types is looked up, a file that calls a method a thousand times in a row (`XKeysym`) takes
+seconds. Deliberate choices and gaps: nothing is linked
+that is inherited through a supertype that cannot be found (a library other than the JDK);
+the declarations of the program that are in other files than the unit being analysed are not seen
+(only the platform is read from a tree); lambdas, method references and `switch`
 expressions have no type; a comment `//@Name` at its start is an antiquotation tag, as in the
 other front-ends, so JML-like comments need a handler or a space (`// @Name`); the stream decides by tokens alone, so in the arguments of a call `f(a < b, c > d)`
 is two comparisons (as javac reads it), and a member declaration `Foo(Map<A, B> m)` in the body of

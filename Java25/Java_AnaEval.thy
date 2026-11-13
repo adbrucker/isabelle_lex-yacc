@@ -99,15 +99,21 @@ text\<open>
     and declared in any order: the classes of a unit - member classes, local classes and
     anonymous classes too - are registered before anything is walked. A field is found in the
     class, else in its superclass and interfaces provided they are all declared (a supertype that
-    comes from the platform could have the same name) and exactly one of them has it; the methods
-    of a name are those of the class and of its supertypes, an inherited method of the same
-    signature being hidden. A call is linked if the types of the arguments leave exactly one
-    applicable method, or one that is more specific than all the others (JLS 15.12.2, with
-    subtyping answered yes, no or perhaps: an unknown type is always \<open>perhaps\<close>). Without a
-    receiver the innermost enclosing class that has a method of that name is the one that
-    counts (JLS 15.12.1). Everything else - an imported type - is unknown, and nothing is ever
-    linked on that basis. A name that resolves nowhere is \<^emph>\<open>not\<close> marked: in Java it very often comes
-    from an inherited member, an on-demand import or the platform, and underlining it would
+    comes from nowhere that is known could have the same name) and exactly one of them has it; the
+    methods of a name are those of the class and of its supertypes and of \<open>Object\<close>, an inherited
+    method of the same signature being hidden. A call is linked if the types of the arguments
+    leave exactly one applicable method, or one that is more specific than all the others
+    (JLS 15.12.2, with subtyping answered yes, no or perhaps: an unknown type is always
+    \<open>perhaps\<close>). Without a receiver the innermost enclosing class that has a method of that name
+    is the one that counts (JLS 15.12.1), else a statically imported method.
+    \<^bold>\<open>The platform\<close>: a class that the program does not declare - an imported one, one of
+    \<open>java.lang\<close>, one named by its package - is read from the sources of a JDK (the theory option
+    \<open>java_src\<close>: a \<open>src.zip\<close> or a directory, \<open>none\<close> for no platform; by default the
+    \<open>src.zip\<close> of the JDK of Isabelle or of \<open>$JAVA_HOME\<close>). It is parsed the first time it is
+    needed and its definitions, of the members that a program can see, are kept for the session
+    in a store shared by all theories, under the key \<open>qn:<qualified name>\<close>; its declarations are
+    the ones that uses are linked to. A name that resolves nowhere is \<^emph>\<open>not\<close> marked: in Java it
+    very often comes from an inherited member or an on-demand import, and underlining it would
     drown the useful markup.
   \<^item> \<^bold>\<open>Imports\<close> declare the simple name of an imported type - the last element of the path - at
     that element (\<open>import java.util.List;\<close>), and a static import declares the name of a variable
@@ -537,7 +543,11 @@ fun use_method jenv (A.Ident (name, _, ni)) nargs =
    Nothing is linked unless it is certain: an overloaded method is linked if the types of the
    arguments leave exactly one candidate, or one candidate that is more specific than all others;
    a field of a class is found in the class, else in its superclasses and interfaces provided all
-   of them are known and just one of them has it. *)
+   of them are known and just one of them has it.
+
+   The classes of the platform are read from the sources of a JDK (see "Platform" below): a class
+   whose key starts with "qn:" is looked up there, by its qualified name, and parsed the first time
+   it is needed. *)
 
 fun vtypes_of (mk {vtypes, ...} : jenv) = vtypes
 fun defs_of (mk {defs, ...} : jenv) = defs
@@ -555,17 +565,110 @@ fun set_defs defs' (mk {names, meths, vtypes, defs = _, cur, java_antiq, units})
   mk {names = names, meths = meths, vtypes = vtypes, defs = defs', cur = cur,
       java_antiq = java_antiq, units = units}
 
-fun def_of jenv key = Symtab.lookup (defs_of jenv) key
+(* --- the platform ------------------------------------------------------------------------ *)
 
-val string_ty = TCls ("String", [])
-val object_ty = TCls ("Object", [])
+(* The classes of the platform live in a store shared by all theories, keyed by the source they are
+   read from (the "src" of an environment) and by their key "qn:<qualified name>"; the loader that
+   fills it is defined with the registration of classes (see "load_hook" there). *)
+structure Platform = struct
+  val defs = Synchronized.var "Java_Platform.defs" (Symtab.empty : cdef Symtab.table)
+  fun k src key = src ^ "|" ^ key
+  fun is_qn key = String.isPrefix "qn:" key
+  fun key_of qn = "qn:" ^ qn
+  (* a class by its key; the top-level class of a package by name; whether a package exists *)
+  val load_hook : (string -> string -> cdef option) Unsynchronized.ref =
+    Unsynchronized.ref (fn _ => fn _ => NONE)
+  val type_hook : (string -> string -> string -> string option) Unsynchronized.ref =
+    Unsynchronized.ref (fn _ => fn _ => fn _ => NONE)
+  val pkg_hook : (string -> string -> bool) Unsynchronized.ref =
+    Unsynchronized.ref (fn _ => fn _ => false)
+  fun def src key =
+    if src = "" then NONE
+    else
+      (case Symtab.lookup (Synchronized.value defs) (k src key) of
+         SOME d => SOME d
+       | NONE => !load_hook src key)
+end
+
+(* The facts about the platform that an environment carries are entries of "vtypes" whose keys
+   cannot be identifiers (they contain a colon): the source ("java:src"), the single-type imports
+   ("java:imp:<name>"), the packages of the compilation unit and the on-demand imports, static
+   imports, and the mark of a unit that is read from the platform ("java:platform"). A list of names
+   is a type "TCls ("", [TCls (name, []), ...])". *)
+fun put_vtype key t (mk {names, meths, vtypes, defs, cur, java_antiq, units}) =
+  mk {names = names, meths = meths, vtypes = Symtab.update (key, t) vtypes, defs = defs,
+      cur = cur, java_antiq = java_antiq, units = units}
+
+fun src_of jenv =
+  (case Symtab.lookup (vtypes_of jenv) "java:src" of SOME (TCls (s, _)) => s | _ => "")
+fun set_src s jenv = put_vtype "java:src" (TCls (s, [])) jenv
+fun in_platform_unit jenv = Symtab.defined (vtypes_of jenv) "java:platform"
+
+fun names_at jenv key =
+  (case Symtab.lookup (vtypes_of jenv) key of
+     SOME (TCls (_, ts)) => List.mapPartial (fn TCls (n, _) => SOME n | _ => NONE) ts
+   | _ => [])
+fun add_name_at key n jenv =
+  put_vtype key (TCls ("", map (fn x => TCls (x, [])) (names_at jenv key @ [n]))) jenv
+
+fun def_of jenv key =
+  (case Symtab.lookup (defs_of jenv) key of
+     SOME d => SOME d
+   | NONE => if Platform.is_qn key then Platform.def (src_of jenv) key else NONE)
+
+val string_key = Platform.key_of "java.lang.String"
+val object_key = Platform.key_of "java.lang.Object"
+val string_ty = TCls (string_key, [])
+val object_ty = TCls (object_key, [])
+
+(* the key of a class declared at the position: its position, but for the classes read from the
+   platform, whose registered position stands for the qualified name *)
+fun class_key jenv p =
+  (case Symtab.lookup (vtypes_of jenv) ("java:qn:" ^ pos_key p) of
+     SOME (TCls (k, _)) => k
+   | _ => pos_key p)
+
+(* The class that a simple name denotes by an import or by the platform: a single-type import, a
+   class of the package of the unit, a class of an on-demand import (a package or a class) or of
+   java.lang. *)
+fun import_ty jenv name : ty option =
+  let
+    val src = src_of jenv
+    fun in_pkg p =
+      if !Platform.pkg_hook src p
+      then Option.map (fn qn => TCls (Platform.key_of qn, [])) (!Platform.type_hook src p name)
+      else
+        (case def_of jenv (Platform.key_of p) of
+           SOME (CD {types, ...}) =>
+             Option.map (fn (key, _) => TCls (key, [])) (AList.lookup (op =) types name)
+         | NONE => NONE)
+  in
+    (case Symtab.lookup (vtypes_of jenv) ("java:imp:" ^ name) of
+       SOME t => SOME t
+     | NONE =>
+         if src = "" then NONE
+         else
+           get_first in_pkg (names_at jenv "java:pkg" @ names_at jenv "java:demand" @ ["java.lang"]))
+  end
+
+(* a class of the platform by its qualified name *)
+fun platform_class jenv qn : ty option =
+  if src_of jenv = "" then NONE
+  else
+    (case def_of jenv (Platform.key_of qn) of
+       SOME _ => SOME (TCls (Platform.key_of qn, []))
+     | NONE => NONE)
 
 fun lookup_type_name jenv name : ty =
   (case Symtab.lookup (names_of jenv) (tkey name) of
-     SOME (Typ p) => TCls (pos_key p, [])
+     SOME (Typ p) => TCls (class_key jenv p, [])
    | SOME (Tparam p) => TTv (pos_key p)
+   | SOME (Imp _) => the_default TUnknown (import_ty jenv name)
    | SOME _ => TUnknown
-   | NONE => (case name of "String" => string_ty | "Object" => object_ty | _ => TUnknown))
+   | NONE =>
+       (case import_ty jenv name of
+          SOME t => t
+        | NONE => (case name of "String" => string_ty | "Object" => object_ty | _ => TUnknown)))
 
 fun subst (m : (string * ty) list) (t : ty) : ty =
   (case t of
@@ -599,14 +702,35 @@ fun ty_of_type jenv (t : pos A.jType) : ty =
                      (case AList.lookup (op =) types name of
                         SOME (key, _) => TCls (key, [])
                       | NONE => TUnknown)
-                 | NONE => TUnknown)
+                 | NONE =>
+                     if in_platform_unit jenv andalso Platform.is_qn k
+                     then TCls (k ^ "." ^ name, []) else TUnknown)
             | _ => TUnknown)
        in
          (case segs of
             [] => TUnknown
           | A.TSeg (A.Ident (n, _, _), ta) :: rest =>
-              fold (fn A.TSeg (A.Ident (n1, _, _), ta1) => fn cur => with_args (member cur n1) ta1)
-                rest (with_args (lookup_type_name jenv n) ta))
+              let
+                fun walk_members more cur =
+                  fold (fn A.TSeg (A.Ident (n1, _, _), ta1) => fn c =>
+                          with_args (member c n1) ta1) more cur
+                (* a package name in front: the first prefix that is a class of the platform *)
+                fun qualified acc more =
+                  (case more of
+                     [] => TUnknown
+                   | A.TSeg (A.Ident (n1, _, _), ta1) :: more' =>
+                       let val qn = acc ^ "." ^ n1
+                       in
+                         (case platform_class jenv qn of
+                            SOME t => walk_members more' (with_args t ta1)
+                          | NONE => qualified qn more')
+                       end)
+                val first = lookup_type_name jenv n
+              in
+                if first = TUnknown andalso src_of jenv <> "" andalso not (null rest)
+                then qualified n rest
+                else walk_members rest (with_args first ta)
+              end)
        end)
 
 fun supers_of jenv t =
@@ -643,9 +767,16 @@ fun prim_widens a b =
      else idx a >= 0 andalso idx b >= 0 andalso idx a <= idx b)
   end
 
+(* Whether a class is certainly not a primitive type's box or supertype of one: only a class of
+   the program and String are; the wrappers of the platform (Integer, Number, ...) may be. *)
+fun not_boxable jenv k = k = string_key orelse (is_some (def_of jenv k) andalso not (Platform.is_qn k))
+
+fun is_object t = (case t of TCls (k, _) => k = object_key | _ => false)
+
 fun is_sub jenv fuel (a : ty) (b : ty) : tri =
   if a = b then Y
   else if fuel = 0 then M
+  else if is_object b andalso (case a of TCls _ => true | TTv _ => true | _ => false) then Y
   else
     (case (a, b) of
        (TUnknown, _) => M
@@ -653,7 +784,7 @@ fun is_sub jenv fuel (a : ty) (b : ty) : tri =
      | (TPrimT x, TPrimT y) => if prim_widens x y then Y else N
      | (TNull, TPrimT _) => N
      | (TNull, _) => Y
-     | (TPrimT _, TCls (k, _)) => if k = "String" orelse is_some (def_of jenv k) then N else M
+     | (TPrimT _, TCls (k, _)) => if not_boxable jenv k then N else M
      | (TPrimT _, TArr _) => N
      | (TPrimT _, _) => M
      | (TArr x, TArr y) =>
@@ -661,19 +792,20 @@ fun is_sub jenv fuel (a : ty) (b : ty) : tri =
             (TPrimT _, _) => N
           | (_, TPrimT _) => N
           | _ => is_sub jenv (fuel - 1) x y)
-     | (TArr _, TCls (k, _)) => if k = "Object" then Y else if is_some (def_of jenv k) then N else M
+     | (TArr _, TCls (k, _)) =>
+         if member (op =) [object_key, Platform.key_of "java.lang.Cloneable",
+                           Platform.key_of "java.io.Serializable"] k then Y
+         else if is_some (def_of jenv k) then N else M
      | (TArr _, TPrimT _) => N
      | (TArr _, _) => M
-     | (TCls _, TCls ("Object", _)) => Y
      | (TCls (ka, aa), TCls (kb, ab)) =>
          if ka = kb then (if aa = ab orelse null aa orelse null ab then Y else M)
          else if not (is_some (def_of jenv ka)) then M
          else
            let val ss = supers_of jenv a
            in fold (fn s => fn r => tri_or r (is_sub jenv (fuel - 1) s b)) ss N end
-     | (TCls (ka, _), TPrimT _) => if ka = "String" orelse is_some (def_of jenv ka) then N else M
+     | (TCls (ka, _), TPrimT _) => if not_boxable jenv ka then N else M
      | (TCls _, TArr _) => N
-     | (TTv _, TCls ("Object", _)) => Y
      | (_, _) => M)
 
 (* --- members ------------------------------------------------------------------------------- *)
@@ -717,13 +849,19 @@ fun collect_methods jenv fuel (t : ty) name : (mdef * (string * ty) list) list =
             let
               val m = inst_map tps args
               val own = map (fn (_, md) => (md, m)) (filter (fn (n, _) => n = name) methods)
+              (* every class and interface has the public methods of Object *)
               val inherited =
                 if fuel = 0 then []
-                else maps (fn s => collect_methods jenv (fuel - 1) (subst m s) name) supers
+                else
+                  maps (fn s => collect_methods jenv (fuel - 1) (subst m s) name) supers
+                  @ (if k = object_key then [] else collect_methods jenv (fuel - 1) object_ty name)
               fun sg (MT {ps, ...}, mm) = map (subst mm) ps
               val own_sigs = map sg own
-              val inherited' = filter (fn c => not (member (op =) own_sigs (sg c))) inherited
-            in own @ inherited' end)
+              fun first_of _ [] = []
+                | first_of seen (c :: cs) =
+                    if member (op =) seen (sg c) then first_of seen cs
+                    else c :: first_of (sg c :: seen) cs
+            in own @ first_of own_sigs inherited end)
    | _ => [])
 
 fun fits_arity (MT {ps, va, ...}, _) n =
@@ -821,6 +959,22 @@ fun inherited_field jenv name : (pos * ty) option =
            | NONE => go rest)
   in go (cur_of jenv) end
 
+(* the dotted name that an expression is, if it is one *)
+fun dotted (e : pos A.jExpr) : string option =
+  (case e of
+     A.EName (A.Ident (n, _, _)) => SOME n
+   | A.EField (e1, A.Ident (n, _, _), _) => Option.map (fn p => p ^ "." ^ n) (dotted e1)
+   | _ => NONE)
+
+(* the methods named "name" that static imports bring in *)
+fun static_import_methods jenv name =
+  let val classes = names_at jenv ("java:sti:" ^ name) @ names_at jenv "java:stid"
+  in
+    maps (fn c =>
+            filter (fn (MT {static, ...}, _) => static)
+              (collect_methods jenv 8 (TCls (Platform.key_of c, [])) name)) classes
+  end
+
 fun type_of jenv (e : pos A.jExpr) : tv =
   (case e of
      A.ELit (l, _) => Val (lit_type l)
@@ -833,10 +987,13 @@ fun type_of jenv (e : pos A.jExpr) : tv =
           | NONE =>
               (case Symtab.lookup (names_of jenv) (tkey name) of
                  SOME _ => Ty (lookup_type_name jenv name)
-               | NONE => (case name of
-                            "String" => Ty string_ty
-                          | "Object" => Ty object_ty
-                          | _ => Pk)))
+               | NONE =>
+                   (case import_ty jenv name of
+                      SOME t => Ty t
+                    | NONE => (case name of
+                                 "String" => Ty string_ty
+                               | "Object" => Ty object_ty
+                               | _ => Pk))))
    | A.EThis _ =>
        (case cur_of jenv of k :: _ => Val (class_self jenv k) | [] => Val TUnknown)
    | A.ESuper _ =>
@@ -867,7 +1024,9 @@ fun type_of jenv (e : pos A.jExpr) : tv =
                             | NONE => Val TUnknown)
                        | NONE => Val TUnknown)
                   | _ => Val TUnknown))
-        | Pk => Pk)
+        | Pk => (case Option.mapPartial (platform_class jenv) (dotted e) of
+                   SOME t => Ty t
+                 | NONE => Pk))
    | A.EIndex (a, _, _) =>
        (case type_of jenv a of Val (TArr t) => Val t | _ => Val TUnknown)
    | A.ECall (recv, _, id, args, _) =>
@@ -952,7 +1111,11 @@ and call_info jenv (recv : pos A.jExpr option) (A.Ident (name, _, _)) (args : po
                  (case collect_methods jenv 8 (class_self jenv k) name of
                     [] => go rest
                   | cs => SOME cs)
-         in (case go (cur_of jenv) of SOME cs => finish cs | NONE => NONE) end
+         in
+           (case go (cur_of jenv) of
+              SOME cs => finish cs
+            | NONE => finish (static_import_methods jenv name))
+         end
      | SOME r =>
          (case type_of jenv r of
             Val (TArr _) => NONE
@@ -1043,26 +1206,36 @@ fun mk_mdef jenv ms mtps (ret : jenv -> ty) ps pos : mdef =
 
 (* The definition of a class from its body, in a scope that has the type parameters and the member
    types; then the member classes. The result is the scope with the definitions added. *)
-fun register_body s2 key kind tp_keys supers consts comps (body : pos A.jDecl list) : jenv =
+fun register_body s2 site key kind tp_keys supers consts comps (body : pos A.jDecl list) : jenv =
   let
     val self = TCls (key, map TTv tp_keys)
     val in_iface = (kind = "interface" orelse kind = "annotation")
+    (* of a class of the platform only the members that a program can see are kept *)
+    val platform = in_platform_unit s2
+    fun vis ms =
+      not platform orelse in_iface orelse mod_kw_is ms "public" orelse mod_kw_is ms "protected"
     val fields =
       maps (fn A.DField (ms, t, vds, _) =>
-              map (fn A.VarDecl (id, ds, _, _) =>
-                     (ident_name_of id,
-                      FD {pos = ident_pos id, ty = dims_ty (ty_of_type s2 t) ds,
-                          static = in_iface orelse mod_kw_is ms "static"})) vds
+              if not (vis ms) then []
+              else
+                map (fn A.VarDecl (id, ds, _, _) =>
+                       (ident_name_of id,
+                        FD {pos = ident_pos id, ty = dims_ty (ty_of_type s2 t) ds,
+                            static = in_iface orelse mod_kw_is ms "static"})) vds
              | _ => []) body
       @ map (fn A.EnumConst (_, id, _, _, _) =>
                (ident_name_of id, FD {pos = ident_pos id, ty = self, static = true})) consts
-      @ map (fn c as A.Param (_, _, _, id, _, _) =>
-               (ident_name_of id, FD {pos = ident_pos id, ty = param_ty s2 c, static = false}))
-          comps
+      @ (if platform then []
+         else
+           map (fn c as A.Param (_, _, _, id, _, _) =>
+                  (ident_name_of id,
+                   FD {pos = ident_pos id, ty = param_ty s2 c, static = false})) comps)
     val methods =
       maps (fn A.DMethod (ms, mtps, res, id, ps, ds, _, _, _, _) =>
-              [(ident_name_of id,
-                mk_mdef s2 ms mtps (fn s => dims_ty (ty_of_type s res) ds) ps (ident_pos id))]
+              if not (vis ms) then []
+              else
+                [(ident_name_of id,
+                  mk_mdef s2 ms mtps (fn s => dims_ty (ty_of_type s res) ds) ps (ident_pos id))]
              | _ => []) body
     val explicit = map #1 methods
     val accessors =
@@ -1073,15 +1246,18 @@ fun register_body s2 key kind tp_keys supers consts comps (body : pos A.jDecl li
                          static = false})]) comps
     val ctors =
       maps (fn A.DCtor (ms, mtps, id, ps, _, _, _) =>
-              [mk_mdef s2 ms mtps (K self) ps (ident_pos id)]
+              if vis ms then [mk_mdef s2 ms mtps (K self) ps (ident_pos id)] else []
              | _ => []) body
     val types =
       maps (fn m => (case class_parts m of
-                       SOME (_, mid, _, _, _, _, _, _, _) =>
-                         [(ident_name_of mid, (pos_key (ident_pos mid), ident_pos mid))]
+                       SOME (_, mid, ms, _, _, _, _, _, _) =>
+                         if vis ms
+                         then [(ident_name_of mid, (class_key s2 (ident_pos mid), ident_pos mid))]
+                         else []
                      | NONE => [])) body
-    val s3 = add_def key (CD {kind = kind, tps = tp_keys, supers = supers, fields = fields,
-                              methods = methods @ accessors, ctors = ctors, types = types}) s2
+    val s3 = add_def key (CD {site = site, kind = kind, tps = tp_keys, supers = supers,
+                              fields = fields, methods = methods @ accessors, ctors = ctors,
+                              types = types}) s2
   in fold (fn m => fn s => register_class s m) body s3 end
 
 and register_class scope (d : pos A.jDecl) : jenv =
@@ -1095,9 +1271,16 @@ and register_class scope (d : pos A.jDecl) : jenv =
                           (case class_parts m of
                              SOME (_, mid, _, _, _, _, _, _, _) => quiet_enter tkey Typ s mid
                            | NONE => s)) body s1
+         val key = class_key s2 (ident_pos id)
+         (* Enum<E> and Record are known if the platform is *)
+         val platform_super =
+           if src_of s2 = "" then TUnknown
+           else if kind = "enum" then
+             TCls (Platform.key_of "java.lang.Enum", [TCls (key, [])])
+           else TCls (Platform.key_of "java.lang.Record", [])
          val supers = map (ty_of_type s2) sup_types
-                      @ (if kind = "enum" orelse kind = "record" then [TUnknown] else [])
-         val res = register_body s2 (pos_key (ident_pos id)) kind (map tparam_key tps) supers
+                      @ (if kind = "enum" orelse kind = "record" then [platform_super] else [])
+         val res = register_body s2 (ident_pos id) key kind (map tparam_key tps) supers
                      consts comps body
        in set_defs (defs_of res) scope end)
 
@@ -1108,8 +1291,261 @@ fun register_anon scope key (sup : ty) (body : pos A.jDecl list) : jenv =
                      (case class_parts m of
                         SOME (_, mid, _, _, _, _, _, _, _) => quiet_enter tkey Typ s mid
                       | NONE => s)) body scope
-    val res = register_body s2 key "class" [] [sup] [] [] body
+    val res = register_body s2 Position.none key "class" [] [sup] [] [] body
   in set_defs (defs_of res) scope end
+
+(* --- imports, and the classes of the platform ----------------------------------------------------- *)
+
+(* The imports of a unit as facts about the platform in the environment (see "put_vtype"): the
+   package of the unit and the packages and classes imported on demand, the classes imported by
+   name, and the classes whose static members are imported. *)
+fun add_imports pkg (imports : pos A.jImport list) jenv : jenv =
+  let
+    fun qn_of ids = space_implode "." (map ident_name_of ids)
+    fun one (A.Import (kind, ids, _)) s =
+      (case (kind, rev ids) of
+         (A.ImSingle, last :: _) =>
+           put_vtype ("java:imp:" ^ ident_name_of last) (TCls (Platform.key_of (qn_of ids), [])) s
+       | (A.ImDemand, _) => add_name_at "java:demand" (qn_of ids) s
+       | (A.ImStaticSingle, last :: cls) =>
+           add_name_at ("java:sti:" ^ ident_name_of last) (qn_of (rev cls)) s
+       | (A.ImStaticDemand, _) => add_name_at "java:stid" (qn_of ids) s
+       | _ => s)
+    val s0 = if pkg = "" then jenv else add_name_at "java:pkg" pkg jenv
+  in fold one imports s0 end
+
+(* The sources of the platform: a "src.zip" of a JDK, or a directory with the same layout (the
+   packages below a directory per module, or directly below it), as a tree of packages. *)
+datatype tree = Tree of {root : string, zip : bool, modules : bool,
+                         pkgs : (string * string list) Symtab.table}
+  \<comment> \<open>"pkgs": the module of each package ("" if there are none) and its top-level classes\<close>
+
+fun list_entries root zip : string list =
+  let
+    val cmd =
+      if zip then "unzip -Z1 " ^ Bash.string root ^ " '*.java'"
+      else "cd " ^ Bash.string root ^ " && find . -name '*.java' -print | sed 's|^\\./||'"
+    val (out, rc) = Isabelle_System.bash_output cmd
+  in if rc = 0 then split_lines out else [] end
+
+fun build_tree root : tree option =
+  let
+    val zip = File.is_file (Path.explode root)
+    val entries = list_entries root zip
+    val modules = not (member (op =) entries "java/lang/Object.java")
+    fun add e tab =
+      let
+        val comps = String.fields (fn c => c = #"/") e
+        val (m, rest) = if modules then (hd comps, tl comps) else ("", comps)
+      in
+        if length rest < 2 then tab
+        else
+          let
+            val pkg = space_implode "." (take (length rest - 1) rest)
+            val file = List.last rest
+            val base = String.substring (file, 0, size file - 5)
+          in
+            if base = "package-info" orelse base = "module-info" then tab
+            else Symtab.map_default (pkg, (m, [])) (fn (m', ns) => (m', base :: ns)) tab
+          end
+      end
+  in
+    if null entries then NONE
+    else SOME (Tree {root = root, zip = zip, modules = modules, pkgs = fold add entries Symtab.empty})
+  end
+
+val trees = Synchronized.var "Java_Platform.trees" (Symtab.empty : tree option Symtab.table)
+
+(* a lock that its owner may take again, around the loading of classes: classes are read on demand
+   by whichever theory first needs them, and what is read must be complete for all *)
+val load_lock = Synchronized.var "Java_Platform.lock" (NONE : (Isabelle_Thread.T * int) option)
+
+fun with_load_lock f =
+  let
+    val me = Isabelle_Thread.self ()
+    val _ =
+      Synchronized.guarded_access load_lock (fn st =>
+        (case st of
+           NONE => SOME ((), SOME (me, 1))
+         | SOME (t, n) => if Isabelle_Thread.equal (t, me) then SOME ((), SOME (t, n + 1)) else NONE))
+    val res = Exn.capture f ()
+    val _ =
+      Synchronized.change load_lock (fn st =>
+        (case st of
+           SOME (t, n) => if n > 1 then SOME (t, n - 1) else NONE
+         | NONE => NONE))
+  in Exn.release res end
+
+fun tree_of src : tree option =
+  if src = "" then NONE
+  else
+    (case Symtab.lookup (Synchronized.value trees) src of
+       SOME t => t
+     | NONE =>
+         with_load_lock (fn () =>
+           (case Symtab.lookup (Synchronized.value trees) src of
+              SOME t => t
+            | NONE =>
+                let val t = Option.join (try build_tree src)
+                    val _ = Synchronized.change trees (Symtab.update (src, t))
+                in t end)))
+
+(* the top-level class "name" of the package "pkg" *)
+fun tree_type src pkg name : string option =
+  (case tree_of src of
+     SOME (Tree {pkgs, ...}) =>
+       (case Symtab.lookup pkgs pkg of
+          SOME (_, names) => if member (op =) names name then SOME (pkg ^ "." ^ name) else NONE
+        | NONE => NONE)
+   | NONE => NONE)
+
+fun tree_pkg src pkg : bool =
+  (case tree_of src of SOME (Tree {pkgs, ...}) => Symtab.defined pkgs pkg | NONE => false)
+
+(* the package and the top-level class of the qualified name of a class *)
+fun split_qn (Tree {pkgs, ...}) qn : (string * string) option =
+  let
+    val comps = String.fields (fn c => c = #".") qn
+    fun try_at i =
+      if i < 1 then NONE
+      else
+        let
+          val pkg = space_implode "." (take i comps)
+          val top = List.nth (comps, i)
+        in
+          (case Symtab.lookup pkgs pkg of
+             SOME (_, names) => if member (op =) names top then SOME (pkg, top) else try_at (i - 1)
+           | NONE => try_at (i - 1))
+        end
+  in try_at (length comps - 1) end
+
+(* The source file of a class of the tree, extracted from the archive if there is one; the file
+   is what the positions of the declarations of the class refer to. *)
+fun class_file (Tree {root, zip, modules, pkgs}) pkg top : Path.T option =
+  (case Symtab.lookup pkgs pkg of
+     NONE => NONE
+   | SOME (m, _) =>
+       let
+         val rel = space_implode "/" (String.fields (fn c => c = #".") pkg @ [top ^ ".java"])
+         val full = if modules then m ^ "/" ^ rel else rel
+       in
+         if not zip then SOME (Path.append (Path.explode root) (Path.explode full))
+         else
+           let
+             val cache = Path.explode ("$ISABELLE_TMP_PREFIX/java_src_" ^ Message_Digest.rep_short (SHA1.digest root))
+             val target = Path.append cache (Path.explode full)
+           in
+             if File.is_file target then SOME target
+             else
+               let
+                 val _ = Isabelle_System.make_directory (Path.dir target)
+                 val (_, rc) =
+                   Isabelle_System.bash_output
+                     ("unzip -o -q " ^ Bash.string root ^ " " ^ Bash.string full ^ " -d "
+                      ^ Bash.string (File.platform_path cache))
+               in if rc = 0 andalso File.is_file target then SOME target else NONE end
+           end
+       end)
+
+val platform_ctxt = Proof_Context.init_global \<^theory>
+
+(* the qualified names of the classes of a declaration, as the keys of their positions *)
+fun enter_aliases prefix (d : pos A.jDecl) jenv : jenv =
+  (case class_parts d of
+     NONE => jenv
+   | SOME (_, id, _, _, _, _, _, _, body) =>
+       let
+         val qn = prefix ^ ident_name_of id
+         val s1 = put_vtype ("java:qn:" ^ pos_key (ident_pos id)) (TCls (Platform.key_of qn, [])) jenv
+       in fold (fn m => fn s => enter_aliases (qn ^ ".") m s) body s1 end)
+
+(* Reads the unit of the top-level class "top" of "pkg" and publishes the definitions of its
+   classes. *)
+fun load_unit src tree pkg top : unit =
+  (case class_file tree pkg top of
+     NONE => ()
+   | SOME file =>
+       let
+         val text = File.read file
+         val pos = Position.line_file 1 (File.platform_path file)
+         val source = Input.source false text (pos, pos)
+       in
+         (case Java_Parse.parse_quiet Java_Parse.Entry_Unit platform_ctxt source of
+            SOME (A.Source (A.Unit (_, imports, A.Types ds, _))) =>
+              let
+                val prefix = pkg ^ "."
+                val s0 = put_vtype "java:platform" TUnknown (set_src src empty_jenv)
+                val s1 = add_imports pkg imports s0
+                val s2 = fold (enter_aliases prefix) ds s1
+                val s3 = fold (fn d => fn s =>
+                                 (case class_parts d of
+                                    SOME (_, id, _, _, _, _, _, _, _) => quiet_enter tkey Typ s id
+                                  | NONE => s)) ds s2
+                val s4 = fold (fn d => fn s => register_class s d) ds s3
+              in
+                Synchronized.change Platform.defs
+                  (fold (fn (key, d) => Symtab.update (Platform.k src key, d))
+                     (Symtab.dest (defs_of s4)))
+              end
+          | _ => ())
+       end)
+
+val loaded_units = Synchronized.var "Java_Platform.units" (Symtab.empty : unit Symtab.table)
+
+fun load_class src key : cdef option =
+  with_load_lock (fn () =>
+    (case tree_of src of
+       NONE => NONE
+     | SOME tree =>
+         (case split_qn tree (String.extract (key, 3, NONE)) of
+            NONE => NONE
+          | SOME (pkg, top) =>
+              let
+                val unit_key = Platform.k src (pkg ^ "." ^ top)
+                val fresh = not (Symtab.defined (Synchronized.value loaded_units) unit_key)
+                val _ =
+                  if fresh
+                  then (Synchronized.change loaded_units (Symtab.update (unit_key, ()));
+                        ignore (try (load_unit src tree pkg) top))
+                  else ()
+              in Symtab.lookup (Synchronized.value Platform.defs) (Platform.k src key) end)))
+
+val _ = Platform.load_hook := load_class
+val _ = Platform.type_hook := tree_type
+val _ = Platform.pkg_hook := tree_pkg
+
+(* Where the platform is read from: the theory option "java_src" (a "src.zip" or a directory;
+   "none" for no platform), else the "src.zip" of the JDK of Isabelle or of $JAVA_HOME. *)
+val java_src = Attrib.setup_config_string \<^binding>\<open>java_src\<close> (K "")
+
+fun platform_source thy : string =
+  let
+    fun usable p = p <> "" andalso (File.is_file (Path.explode p) orelse File.is_dir (Path.explode p))
+    val cfg = Config.get_global thy java_src
+    val candidates =
+      map (fn h => if h = "" then "" else h ^ "/lib/src.zip")
+        [getenv "ISABELLE_JDK_HOME", getenv "JAVA_HOME"]
+  in
+    if cfg = "none" then ""
+    else if cfg <> "" then (if usable cfg then File.platform_path (Path.explode cfg) else "")
+    else
+      (case find_first usable candidates of
+         SOME p => File.platform_path (Path.explode p)
+       | NONE => "")
+  end
+
+(* A name that no declaration of the program or import resolves, as a class of the platform
+   (java.lang, the package of the unit, an on-demand import): linked to its declaration there. *)
+fun use_platform_class jenv (A.Ident (name, _, ni)) : bool =
+  (case (if Symtab.defined (names_of jenv) (tkey name) then NONE else import_ty jenv name) of
+     SOME (TCls (k, _)) =>
+       (case def_of jenv k of
+          SOME (CD {site, ...}) => (report_use "Java type" name (A.pos_of_NodeInfo ni) site; true)
+        | NONE => false)
+   | _ => false)
+
+fun use_type_name_or_platform jenv id =
+  if use_platform_class jenv id then () else use_type_name jenv id
 
 (* a simple name in an expression: a variable, else a field inherited from an enclosing class, else
    a type, else a package *)
@@ -1122,7 +1558,7 @@ fun use_simple_name jenv (id as A.Ident (name, _, ni)) =
       else
         (case inherited_field jenv name of
            SOME (p, _) => report_use "Java field" name (A.pos_of_NodeInfo ni) p
-         | NONE => use_expr_name jenv id)
+         | NONE => if use_platform_class jenv id then () else use_expr_name jenv id)
     end
 
 fun link_select jenv e1 (A.Ident (name, _, ni)) =
@@ -1262,7 +1698,7 @@ fun can_complete (s : pos A.jStmt) : bool =
 fun walk_annot senv ctx (A.Annot (name, args, ni)) : acts =
   let
     val here = chk senv ctx ni
-    val _ = (case name of id :: _ => use_type_name senv id | [] => ())
+    val _ = (case name of id :: _ => use_type_name_or_platform senv id | [] => ())
   in
     here @
     (case args of
@@ -1292,7 +1728,7 @@ and walk_type senv ctx (t : pos A.jType) : acts =
        A.TPrim (al, _, _) => walk_annots senv ctx' al
      | A.TClass (al, segs, _) =>
          let
-           val _ = (case segs of A.TSeg (id, _) :: _ => use_type_name senv id | [] => ())
+           val _ = (case segs of A.TSeg (id, _) :: _ => use_type_name_or_platform senv id | [] => ())
          in
            walk_annots senv ctx' al
            @ maps (fn A.TSeg (_, ta) => optl (walk_targs senv ctx') ta) segs
@@ -1743,7 +2179,7 @@ fun walk_top senv ctx (decls : pos A.jDecl list) : jenv * acts =
 
 fun analyse_and_eval0 (root : pos A.root) thy =
   let
-    val jenv0 = get (Context.Theory thy)
+    val jenv0 = set_src (platform_source thy) (get (Context.Theory thy))
     (* The bottom frame is always the top-level root itself, so "ctx" is never empty. *)
     val ctx0 = [root]
     fun drop acts = (thy, acts)
@@ -1764,7 +2200,10 @@ fun analyse_and_eval0 (root : pos A.root) thy =
         let
           val here = check_antiq jenv0 ctx0 ni
           val pacts = (case pkg of SOME (al, _) => walk_annots jenv0 ctx0 al | NONE => [])
+          val pkg_name =
+            (case pkg of SOME (_, ids) => space_implode "." (map ident_name_of ids) | NONE => "")
           val jenv1 = fold (fn i => fn s => walk_import s i) imports jenv0
+                      |> add_imports pkg_name imports
           val iacts = maps (fn A.Import (_, _, ini) => chk jenv1 ctx0 ini) imports
         in
           (case body of

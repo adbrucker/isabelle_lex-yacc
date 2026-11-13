@@ -152,7 +152,8 @@ fun count sub s =
                    else go (size s - Substring.size rest + size sub) (n + 1)
   in go 0 0 end
 
-val fresh = JEnv.reset_jenv @{theory}
+(* the counts below are those of a program alone; the platform has its own tests (see the end) *)
+val fresh = Config.put_global AnaEval.java_src "none" (JEnv.reset_jenv @{theory})
 
 (* the number of entity markups: declarations plus resolved uses *)
 fun entities_in entry text = count "entity" (reports_in entry fresh text)
@@ -271,6 +272,96 @@ val _ = entu "a static import"
   "import static java.lang.Math.max; class A { int f() { return max(1, 2); } }" 4
 val _ = entu "an on-demand import declares nothing" "import java.util.*; class A { List l; }" 2
 val _ = entu "a compact source file" "void main() { greet(); } void greet() {}" 3
+\<close>
+
+subsection\<open>The platform\<close>
+
+text\<open>
+  The classes of the platform are read from the sources of a JDK. The first part of the tests uses a
+  small tree written to a temporary directory (so they do not depend on a JDK), the second the JDK
+  of Isabelle if there is one. A member of a platform class is linked to its declaration, a private
+  one is not seen, and a name that is not in the tree changes nothing.\<close>
+
+ML\<open>
+fun write_tree dir files =
+  List.app (fn (name, text) =>
+              let val path = Path.append dir (Path.explode name)
+              in (Isabelle_System.make_directory (Path.dir path); File.write path text) end) files
+
+val fake_tree =
+  [("java/lang/Object.java",
+    "package java.lang; public class Object { public String toString() { return null; } "
+    ^ "public boolean equals(Object o) { return false; } private int secret; }"),
+   ("java/lang/String.java",
+    "package java.lang; public final class String { public int length() { return 0; } "
+    ^ "int hidden() { return 0; } }"),
+   ("java/lang/Enum.java",
+    "package java.lang; public abstract class Enum<E extends Enum<E>> "
+    ^ "{ public final int ordinal() { return 0; } }"),
+   ("java/util/Collection.java",
+    "package java.util; public interface Collection<E> { int size(); }"),
+   ("java/util/List.java",
+    "package java.util; public interface List<E> extends Collection<E> { E get(int i); }"),
+   ("java/util/Map.java",
+    "package java.util; public interface Map<K,V> { Entry<K,V> firstEntry(); "
+    ^ "interface Entry<K,V> { K getKey(); V getValue(); } }"),
+   ("java/util/Objects.java",
+    "package java.util; public final class Objects "
+    ^ "{ public static boolean isNull(Object o) { return o == null; } }")]
+
+fun ent_in thy entry name text n =
+  let val got = count "entity" (reports_in entry thy text)
+  in if got = n then writeln ("OK: " ^ name)
+     else fail ("FAILED: " ^ name ^ ": expected " ^ Int.toString n ^ ", got " ^ Int.toString got)
+  end
+
+fun platform_tests thy =
+  let
+    val dec = ent_in thy Java_Parse.Entry_Decls
+    val unit = ent_in thy Java_Parse.Entry_Unit
+  in
+    dec "a method of a platform class" "int f(String s) { return s.length(); }" 5;
+    dec "a member that is not public is not seen"
+      "int f(String s) { return s.hidden() + s.secret; }" 5;
+    unit "a method of a supertype"
+      "import java.util.List; class A { int f(List<String> l) { return l.size(); } }" 8;
+    unit "the type arguments are substituted"
+      ("import java.util.List; class A { String f(List<A> l) { return l.get(0).toString(); } }")
+      10;
+    dec "every class has the methods of Object" "class A { String f() { return toString(); } }" 4;
+    dec "an enum has the methods of Enum" "enum E { X; int f() { return ordinal(); } }" 4;
+    unit "a static method through its class"
+      "import java.util.Objects; class A { boolean f(A a) { return Objects.isNull(a); } }" 8;
+    unit "an on-demand import"
+      "import java.util.*; class A { int f(List<A> l) { return l.size(); } }" 7;
+    unit "a member class"
+      ("import java.util.Map; class A { Object f(Map<A,A> m) "
+       ^ "{ return m.firstEntry().getKey(); } }") 11;
+    dec "a qualified type" "int f(java.util.List<String> l) { return l.size(); }" 5;
+    dec "a qualified name in an expression"
+      "boolean f(Object o) { return java.util.Objects.isNull(o); }" 5;
+    unit "a class that is not in the tree" "import foo.Bar; class A { int f(Bar b) { return b.x; } }" 6
+  end
+
+val _ = Isabelle_System.with_tmp_dir "java_tree" (fn dir =>
+  let val _ = write_tree dir fake_tree
+  in platform_tests (Config.put_global AnaEval.java_src (File.platform_path dir) fresh) end)
+
+val _ =
+  if AnaEval.platform_source @{theory} = "" then writeln "no JDK sources: the JDK tests are skipped"
+  else
+    let
+      val thy = Config.put_global AnaEval.java_src "" fresh
+      val dec = ent_in thy Java_Parse.Entry_Decls
+      val unit = ent_in thy Java_Parse.Entry_Unit
+    in
+      dec "the JDK: a method of String" "int f(String s) { return s.length(); }" 5;
+      dec "the JDK: System.out.println" "void f() { System.out.println(\"x\"); }" 4;
+      unit "the JDK: a list of strings"
+        "import java.util.*; class A { int f(List<String> l) { return l.get(0).length(); } }" 8;
+      dec "the JDK: a qualified generic type"
+        "int f(java.util.Map<String,Integer> m) { return m.get(\"a\").intValue(); }" 7
+    end
 \<close>
 
 subsection\<open>Antiquotations and navigation\<close>
