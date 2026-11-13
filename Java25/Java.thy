@@ -83,7 +83,8 @@ text\<open>
      \<^item> \<^bold>\<open>Binding.\<close> Every declaration site and every use of a name that resolves is reported
        with Isabelle's entity markup: hover and click-through from a use to its declaration,
        with Java's several name spaces, its block scoping, the scope of the members of a class,
-       the flow scoping of pattern variables, imports and generics. A name that resolves
+       the flow scoping of pattern variables, imports and generics, and with the types of
+       expressions to link selections and overloaded calls. A name that resolves
        nowhere is not marked, as in Java it routinely comes from an inherited member, an
        on-demand import or the platform. See \<^verbatim>\<open>Java_AnaEval.thy\<close>.
      \<^item> \<^bold>\<open>Navigation.\<close> \<^verbatim>\<open>@tag[u|U|r|d...]\<close> re-targets an antiquotation from the node a comment is

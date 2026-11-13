@@ -85,12 +85,30 @@ text\<open>
     complete normally (\<open>if (!(o instanceof T t)) return; ... t ...\<close>); likewise for the loops and
     for the labels of a \<open>switch\<close> with patterns, whose variables are in scope in the guard and the
     rule or group.
-  \<^item> \<^bold>\<open>Methods are linked when the choice is certain.\<close> A call \<open>m(a, b)\<close> without a receiver is
-    hyperlinked to the method \<open>m\<close> of the innermost class that has a method of that name if the
-    arity leaves just one candidate (a variable-arity method takes what it can); with several
-    candidates, which only the types of the arguments can tell, nothing is linked. A name that
-    resolves nowhere is \<^emph>\<open>not\<close> marked: in Java it very often comes from an inherited member, an
-    on-demand import or the platform, and underlining it would drown the useful markup.
+  \<^item> \<^bold>\<open>Selections and calls are resolved with types, and only when that is certain.\<close> \<open>x.f\<close> and
+    \<open>x.m(a)\<close> are hyperlinked to the field or method they denote if the type of \<open>x\<close> is known well
+    enough to tell, and left unmarked otherwise. The types are computed by a pure function
+    \<open>type_of\<close> over the expression: the type of a name is the one it was declared with (a local
+    variable, a parameter, a field, a pattern variable, a catch parameter; for \<open>var\<close> and an
+    enhanced \<open>for\<close> the one of the initializer or of the array), a literal, \<open>new\<close>, a cast, \<open>this\<close>
+    and an array access have their natural types, an operator the type that the numeric
+    promotion gives, and a call the result type of the method it resolves to, with the type
+    arguments of the receiver substituted and the type parameters of the method bound by the
+    arguments that are exactly such a parameter. A class is a \<^emph>\<open>reference\<close> to its declaration (the
+    position of its name), so classes, their fields and their methods may be mutually recursive
+    and declared in any order: the classes of a unit - member classes, local classes and
+    anonymous classes too - are registered before anything is walked. A field is found in the
+    class, else in its superclass and interfaces provided they are all declared (a supertype that
+    comes from the platform could have the same name) and exactly one of them has it; the methods
+    of a name are those of the class and of its supertypes, an inherited method of the same
+    signature being hidden. A call is linked if the types of the arguments leave exactly one
+    applicable method, or one that is more specific than all the others (JLS 15.12.2, with
+    subtyping answered yes, no or perhaps: an unknown type is always \<open>perhaps\<close>). Without a
+    receiver the innermost enclosing class that has a method of that name is the one that
+    counts (JLS 15.12.1). Everything else - an imported type - is unknown, and nothing is ever
+    linked on that basis. A name that resolves nowhere is \<^emph>\<open>not\<close> marked: in Java it very often comes
+    from an inherited member, an on-demand import or the platform, and underlining it would
+    drown the useful markup.
   \<^item> \<^bold>\<open>Imports\<close> declare the simple name of an imported type - the last element of the path - at
     that element (\<open>import java.util.List;\<close>), and a static import declares the name of a variable
     and of a method; a use is hyperlinked to the import. On-demand imports declare nothing.
@@ -116,8 +134,11 @@ fun names_of (mk {names, ...} : jenv) = names
 fun meths_of (mk {meths, ...} : jenv) = meths
 
 (* The scope of a name: the two tables are always set together. *)
-fun set_scope (names', meths') (mk {names = _, meths = _, java_antiq, units}) =
-  mk {names = names', meths = meths', java_antiq = java_antiq, units = units}
+fun set_scope (names', meths', vtypes') (mk {names = _, meths = _, vtypes = _, defs, cur,
+  java_antiq,
+                                             units}) =
+  mk {names = names', meths = meths', vtypes = vtypes', defs = defs, cur = cur,
+      java_antiq = java_antiq, units = units}
 
 (* The position a "root" itself spans: what a "type_antiq_fun" sees as its own "current term". A
    compilation unit has no single span. *)
@@ -505,21 +526,462 @@ fun use_method jenv (A.Ident (name, _, ni)) nargs =
           | _ => ())
        end)
 
-fun put_name key kind jenv = set_scope (Symtab.update (key, kind) (names_of jenv),
-  meths_of jenv) jenv
+(* --- types -------------------------------------------------------------------------------- *)
+
+(* The type pass is the one of Go_AnaEval.thy, for Java: pure functions over the environment that
+   say what a type name denotes ("ty_of_type"), what the type of an expression is ("type_of"),
+   which member a selection denotes ("find_field", "collect_methods") and which method a call
+   resolves to ("call_info"). A class is a reference to its declaration (the position key of its
+   name), the classes of the units seen so far are in "defs"; a type that is not declared there -
+   everything that comes from the platform - is "TUnknown", on which nothing is ever linked.
+   Nothing is linked unless it is certain: an overloaded method is linked if the types of the
+   arguments leave exactly one candidate, or one candidate that is more specific than all others;
+   a field of a class is found in the class, else in its superclasses and interfaces provided all
+   of them are known and just one of them has it. *)
+
+fun vtypes_of (mk {vtypes, ...} : jenv) = vtypes
+fun defs_of (mk {defs, ...} : jenv) = defs
+fun cur_of (mk {cur, ...} : jenv) = cur
+
+fun set_cur cur' (mk {names, meths, vtypes, defs, cur = _, java_antiq, units}) =
+  mk {names = names, meths = meths, vtypes = vtypes, defs = defs, cur = cur',
+      java_antiq = java_antiq, units = units}
+
+fun add_def key d (mk {names, meths, vtypes, defs, cur, java_antiq, units}) =
+  mk {names = names, meths = meths, vtypes = vtypes, defs = Symtab.update (key, d) defs, cur = cur,
+      java_antiq = java_antiq, units = units}
+
+fun set_defs defs' (mk {names, meths, vtypes, defs = _, cur, java_antiq, units}) =
+  mk {names = names, meths = meths, vtypes = vtypes, defs = defs', cur = cur,
+      java_antiq = java_antiq, units = units}
+
+fun def_of jenv key = Symtab.lookup (defs_of jenv) key
+
+val string_ty = TCls ("String", [])
+val object_ty = TCls ("Object", [])
+
+fun lookup_type_name jenv name : ty =
+  (case Symtab.lookup (names_of jenv) (tkey name) of
+     SOME (Typ p) => TCls (pos_key p, [])
+   | SOME (Tparam p) => TTv (pos_key p)
+   | SOME _ => TUnknown
+   | NONE => (case name of "String" => string_ty | "Object" => object_ty | _ => TUnknown))
+
+fun subst (m : (string * ty) list) (t : ty) : ty =
+  (case t of
+     TTv k => (case AList.lookup (op =) m k of SOME t1 => t1 | NONE => t)
+   | TCls (k, args) => TCls (k, map (subst m) args)
+   | TArr t1 => TArr (subst m t1)
+   | _ => t)
+
+(* a raw use of a generic class has unknown type arguments *)
+fun inst_map tps args =
+  if length tps = length args then tps ~~ args else map (fn k => (k, TUnknown)) tps
+
+fun ty_of_type jenv (t : pos A.jType) : ty =
+  (case t of
+     A.TPrim (_, n, _) => TPrimT n
+   | A.TVar _ => TUnknown
+   | A.TArray (e, ds, _) => fold (fn _ => fn x => TArr x) ds (ty_of_type jenv e)
+   | A.TClass (_, segs, _) =>
+       let
+         fun targs ta = (case ta of
+             NONE => []
+           | SOME (A.TArgs (args, _)) =>
+               map (fn A.TAType x => ty_of_type jenv x | A.TAWild _ => TUnknown) args)
+         fun with_args cur ta =
+           (case cur of TCls (k, _) => TCls (k, targs ta) | _ => cur)
+         fun member cur name =
+           (case cur of
+              TCls (k, _) =>
+                (case def_of jenv k of
+                   SOME (CD {types, ...}) =>
+                     (case AList.lookup (op =) types name of
+                        SOME (key, _) => TCls (key, [])
+                      | NONE => TUnknown)
+                 | NONE => TUnknown)
+            | _ => TUnknown)
+       in
+         (case segs of
+            [] => TUnknown
+          | A.TSeg (A.Ident (n, _, _), ta) :: rest =>
+              fold (fn A.TSeg (A.Ident (n1, _, _), ta1) => fn cur => with_args (member cur n1) ta1)
+                rest (with_args (lookup_type_name jenv n) ta))
+       end)
+
+fun supers_of jenv t =
+  (case t of
+     TCls (k, args) =>
+       (case def_of jenv k of
+          SOME (CD {tps, supers, ...}) => map (subst (inst_map tps args)) supers
+        | NONE => [])
+   | _ => [])
+
+fun known_class jenv t = (case t of TCls (k, _) => is_some (def_of jenv k) | _ => false)
+
+fun class_self jenv key =
+  (case def_of jenv key of
+     SOME (CD {tps, ...}) => TCls (key, map TTv tps)
+   | NONE => TUnknown)
+
+(* --- subtyping, three-valued: yes, no, perhaps ------------------------------------------------ *)
+
+datatype tri = Y | N | M
+
+fun tri_and a b =
+  (case (a, b) of (N, _) => N | (_, N) => N | (M, _) => M | (_, M) => M | _ => Y)
+fun tri_or a b =
+  (case (a, b) of (Y, _) => Y | (_, Y) => Y | (M, _) => M | (_, M) => M | _ => N)
+
+fun prim_widens a b =
+  let
+    val ranks = ["byte", "short", "int", "long", "float", "double"]
+    fun idx x = find_index (fn y => y = x) ranks
+  in
+    a = b orelse
+    (if a = "char" then member (op =) ["int", "long", "float", "double"] b
+     else idx a >= 0 andalso idx b >= 0 andalso idx a <= idx b)
+  end
+
+fun is_sub jenv fuel (a : ty) (b : ty) : tri =
+  if a = b then Y
+  else if fuel = 0 then M
+  else
+    (case (a, b) of
+       (TUnknown, _) => M
+     | (_, TUnknown) => M
+     | (TPrimT x, TPrimT y) => if prim_widens x y then Y else N
+     | (TNull, TPrimT _) => N
+     | (TNull, _) => Y
+     | (TPrimT _, TCls (k, _)) => if k = "String" orelse is_some (def_of jenv k) then N else M
+     | (TPrimT _, TArr _) => N
+     | (TPrimT _, _) => M
+     | (TArr x, TArr y) =>
+         (case (x, y) of
+            (TPrimT _, _) => N
+          | (_, TPrimT _) => N
+          | _ => is_sub jenv (fuel - 1) x y)
+     | (TArr _, TCls (k, _)) => if k = "Object" then Y else if is_some (def_of jenv k) then N else M
+     | (TArr _, TPrimT _) => N
+     | (TArr _, _) => M
+     | (TCls _, TCls ("Object", _)) => Y
+     | (TCls (ka, aa), TCls (kb, ab)) =>
+         if ka = kb then (if aa = ab orelse null aa orelse null ab then Y else M)
+         else if not (is_some (def_of jenv ka)) then M
+         else
+           let val ss = supers_of jenv a
+           in fold (fn s => fn r => tri_or r (is_sub jenv (fuel - 1) s b)) ss N end
+     | (TCls (ka, _), TPrimT _) => if ka = "String" orelse is_some (def_of jenv ka) then N else M
+     | (TCls _, TArr _) => N
+     | (TTv _, TCls ("Object", _)) => Y
+     | (_, _) => M)
+
+(* --- members ------------------------------------------------------------------------------- *)
+
+(* The field "name" of the type "t": in the class, else in its supertypes provided they are all
+   known and exactly one has it. The declaration site and the type, as seen from "t". *)
+fun find_field jenv fuel (t : ty) name : (pos * ty) option =
+  (case t of
+     TCls (k, args) =>
+       (case def_of jenv k of
+          NONE => NONE
+        | SOME (CD {tps, fields, supers, ...}) =>
+            let val m = inst_map tps args
+            in
+              (case AList.lookup (op =) fields name of
+                 SOME (FD {pos, ty, ...}) => SOME (pos, subst m ty)
+               | NONE =>
+                   if fuel = 0 then NONE
+                   else
+                     let
+                       val ss = map (subst m) supers
+                       val rs = map_filter (fn s => find_field jenv (fuel - 1) s name) ss
+                       val unknown = exists (fn s => not (known_class jenv s)) ss
+                     in
+                       if unknown then NONE
+                       else (case distinct (fn ((p1, _), (p2, _)) => p1 = p2) rs of
+                               [x] => SOME x
+                             | _ => NONE)
+                     end)
+            end)
+   | _ => NONE)
+
+(* The methods called "name" of the type "t", with the substitution of the type parameters of the
+   class that declares them; a method of a subtype hides an inherited one of the same signature. *)
+fun collect_methods jenv fuel (t : ty) name : (mdef * (string * ty) list) list =
+  (case t of
+     TCls (k, args) =>
+       (case def_of jenv k of
+          NONE => []
+        | SOME (CD {tps, methods, supers, ...}) =>
+            let
+              val m = inst_map tps args
+              val own = map (fn (_, md) => (md, m)) (filter (fn (n, _) => n = name) methods)
+              val inherited =
+                if fuel = 0 then []
+                else maps (fn s => collect_methods jenv (fuel - 1) (subst m s) name) supers
+              fun sg (MT {ps, ...}, mm) = map (subst mm) ps
+              val own_sigs = map sg own
+              val inherited' = filter (fn c => not (member (op =) own_sigs (sg c))) inherited
+            in own @ inherited' end)
+   | _ => [])
+
+fun fits_arity (MT {ps, va, ...}, _) n =
+  if va then n >= length ps - 1 else n = length ps
+
+(* the type a method expects for its i-th argument (variable arity: element type or array) *)
+fun param_tys (MT {ps, va, tps, ...}, mm) n : ty list list =
+  let
+    fun erase t = (case t of
+        TTv k => if member (op =) tps k then TUnknown else t
+      | TCls (k, args) => TCls (k, map erase args)
+      | TArr x => TArr (erase x)
+      | _ => t)
+    val ps' = map (erase o subst mm) ps
+    val np = length ps'
+  in
+    List.tabulate (n, fn i =>
+      if va andalso i >= np - 1
+      then (case List.last ps' of TArr e => [e, TArr e] | x => [x])
+      else [List.nth (ps', i)])
+  end
+
+fun cand_tri jenv c (arg_tys : ty list) : tri =
+  let val pts = param_tys c (length arg_tys)
+  in
+    fold (fn (a, alts) => fn r =>
+            tri_and r (fold (fn p => fn x => tri_or x (is_sub jenv 8 a p)) alts N))
+      (arg_tys ~~ pts) Y
+  end
+
+(* the method that the types of the arguments select, if it is certain *)
+fun pick_method jenv (cands : (mdef * (string * ty) list) list) (arg_tys : ty list)
+    : (mdef * (string * ty) list) option =
+  let
+    val n = length arg_tys
+    val scored = map (fn c => (c, cand_tri jenv c arg_tys)) (filter (fn c => fits_arity c n) cands)
+    val live = filter (fn (_, t) => t <> N) scored
+  in
+    (case live of
+       [] => NONE
+     | [(c, _)] => SOME c
+     | _ =>
+         let
+           val sure = map #1 (filter (fn (_, t) => t = Y) live)
+           fun dominates (MT {ps = p1, ...}, m1) (MT {ps = p2, ...}, m2) =
+             length p1 = length p2 andalso
+             forall (fn (a, b) => is_sub jenv 8 (subst m1 a) (subst m2 b) = Y) (p1 ~~ p2)
+           val best = filter (fn c => forall (fn (o1, _) => o1 = c orelse dominates c o1) live) sure
+         in (case best of [c] => SOME c | _ => NONE) end)
+  end
+
+(* the result of a call: type parameters of the method are bound by the arguments that are
+   exactly such a parameter, and are unknown otherwise *)
+fun result_of (MT {tps, ps, ret, va, ...}, mm) (arg_tys : ty list) : ty =
+  let
+    val binds =
+      if va then []
+      else
+        List.mapPartial (fn (TTv k, a) => if member (op =) tps k then SOME (k, a) else NONE
+                          | _ => NONE) (map (subst mm) ps ~~ arg_tys)
+    val unbound = map (fn k => (k,
+      TUnknown)) (filter (fn k => not (AList.defined (op =) binds k)) tps)
+  in subst (binds @ unbound) (subst mm ret) end
+
+(* --- the type of an expression ---------------------------------------------------------------- *)
+
+datatype tv = Val of ty | Ty of ty | Pk
+
+fun numeric x = member (op =) ["byte", "short", "char", "int", "long", "float", "double"] x
+fun promote a b =
+  if a = "double" orelse b = "double" then "double"
+  else if a = "float" orelse b = "float" then "float"
+  else if a = "long" orelse b = "long" then "long" else "int"
+fun unary_promote a = if member (op =) ["byte", "short", "char"] a then "int" else a
+fun unary_ty t = (case t of TPrimT x => TPrimT (unary_promote x) | _ => TUnknown)
+
+fun lit_type l = (case l of
+    A.LInt s =>
+      TPrimT (if String.isSuffix "l" s orelse String.isSuffix "L" s then "long" else "int")
+  | A.LFloat s =>
+      TPrimT (if String.isSuffix "f" s orelse String.isSuffix "F" s then "float" else "double")
+  | A.LChar _ => TPrimT "char"
+  | A.LString _ => string_ty
+  | A.LTextBlock _ => string_ty
+  | A.LBool _ => TPrimT "boolean"
+  | A.LNull => TNull)
+
+(* the field of an enclosing class's supertypes that a simple name denotes *)
+fun inherited_field jenv name : (pos * ty) option =
+  let
+    fun go [] = NONE
+      | go (k :: rest) =
+          (case find_field jenv 8 (class_self jenv k) name of
+             SOME r => SOME r
+           | NONE => go rest)
+  in go (cur_of jenv) end
+
+fun type_of jenv (e : pos A.jExpr) : tv =
+  (case e of
+     A.ELit (l, _) => Val (lit_type l)
+   | A.EName (A.Ident (name, _, _)) =>
+       if Symtab.defined (names_of jenv) (vkey name)
+       then Val (the_default TUnknown (Symtab.lookup (vtypes_of jenv) (vkey name)))
+       else
+         (case inherited_field jenv name of
+            SOME (_, t) => Val t
+          | NONE =>
+              (case Symtab.lookup (names_of jenv) (tkey name) of
+                 SOME _ => Ty (lookup_type_name jenv name)
+               | NONE => (case name of
+                            "String" => Ty string_ty
+                          | "Object" => Ty object_ty
+                          | _ => Pk)))
+   | A.EThis _ =>
+       (case cur_of jenv of k :: _ => Val (class_self jenv k) | [] => Val TUnknown)
+   | A.ESuper _ =>
+       (case cur_of jenv of
+          k :: _ =>
+            (case supers_of jenv (class_self jenv k) of s :: _ => Val s | [] => Val TUnknown)
+        | [] => Val TUnknown)
+   | A.EQualThis (e1, _) => (case type_of jenv e1 of Ty t => Val t | _ => Val TUnknown)
+   | A.EQualSuper (e1, _) =>
+       (case type_of jenv e1 of
+          Ty t => (case supers_of jenv t of s :: _ => Val s | [] => Val TUnknown)
+        | _ => Val TUnknown)
+   | A.EParen (e1, _) => type_of jenv e1
+   | A.EField (e1, A.Ident (name, _, _), _) =>
+       (case type_of jenv e1 of
+          Val (TArr _) => if name = "length" then Val (TPrimT "int") else Val TUnknown
+        | Val t => (case find_field jenv 8 t name of SOME (_, ft) => Val ft | NONE => Val TUnknown)
+        | Ty t =>
+            (case find_field jenv 8 t name of
+               SOME (_, ft) => Val ft
+             | NONE =>
+                 (case t of
+                    TCls (k, _) =>
+                      (case def_of jenv k of
+                         SOME (CD {types, ...}) =>
+                           (case AList.lookup (op =) types name of
+                              SOME (key, _) => Ty (TCls (key, []))
+                            | NONE => Val TUnknown)
+                       | NONE => Val TUnknown)
+                  | _ => Val TUnknown))
+        | Pk => Pk)
+   | A.EIndex (a, _, _) =>
+       (case type_of jenv a of Val (TArr t) => Val t | _ => Val TUnknown)
+   | A.ECall (recv, _, id, args, _) =>
+       (case call_info jenv recv id args of SOME (_, t) => Val t | NONE => Val TUnknown)
+   | A.ENew (_, t, _, _, _) => Val (ty_of_type jenv t)
+   | A.ENewArray (t, des, ds, _, _) =>
+       Val (fold (fn _ => fn x => TArr x) (des @ map (fn _ => e) ds) (ty_of_type jenv t))
+   | A.EArrayInit _ => Val TUnknown
+   | A.EClassLit _ => Val TUnknown
+   | A.EMethodRef _ => Val TUnknown
+   | A.ELambda _ => Val TUnknown
+   | A.EUnary (u, e1, _) =>
+       (case u of
+          A.UNot => Val (TPrimT "boolean")
+        | A.UCompl => Val (unary_ty (val_ty jenv e1))
+        | A.UPlus => Val (unary_ty (val_ty jenv e1))
+        | A.UMinus => Val (unary_ty (val_ty jenv e1))
+        | _ => Val (val_ty jenv e1))
+   | A.EBinary (b, l, r, _) =>
+       let
+         val tl = val_ty jenv l
+         val tr = val_ty jenv r
+       in
+         (case b of
+            A.LOr => Val (TPrimT "boolean") | A.LAnd => Val (TPrimT "boolean")
+          | A.Eq => Val (TPrimT "boolean") | A.Ne => Val (TPrimT "boolean")
+          | A.Lt => Val (TPrimT "boolean") | A.Gt => Val (TPrimT "boolean")
+          | A.Le => Val (TPrimT "boolean") | A.Ge => Val (TPrimT "boolean")
+          | A.Add =>
+              if tl = string_ty orelse tr = string_ty then Val string_ty
+              else (case (tl, tr) of
+                      (TPrimT x, TPrimT y) => if numeric x andalso numeric y
+                                              then Val (TPrimT (promote x y)) else Val TUnknown
+                    | _ => Val TUnknown)
+          | A.Shl => (case tl of TPrimT x => Val (TPrimT (unary_promote x)) | _ => Val TUnknown)
+          | A.Shr => (case tl of TPrimT x => Val (TPrimT (unary_promote x)) | _ => Val TUnknown)
+          | A.UShr => (case tl of TPrimT x => Val (TPrimT (unary_promote x)) | _ => Val TUnknown)
+          | _ =>
+              (case (tl, tr) of
+                 (TPrimT "boolean", TPrimT "boolean") => Val (TPrimT "boolean")
+               | (TPrimT x, TPrimT y) =>
+                   if numeric x andalso numeric y then Val (TPrimT (promote x y)) else Val TUnknown
+               | _ => Val TUnknown))
+       end
+   | A.EAssign (l, _, _, _) => Val (val_ty jenv l)
+   | A.ECond (_, a, b, _) =>
+       let
+         val ta = val_ty jenv a
+         val tb = val_ty jenv b
+       in
+         if ta = tb then Val ta
+         else (case (ta, tb) of
+                 (TPrimT x, TPrimT y) => if numeric x andalso numeric y
+                                         then Val (TPrimT (promote x y)) else Val TUnknown
+               | (TNull, t) => Val t
+               | (t, TNull) => Val t
+               | _ => Val TUnknown)
+       end
+   | A.ECast (ts, _, _) => (case ts of t :: _ => Val (ty_of_type jenv t) | [] => Val TUnknown)
+   | A.EInstanceof _ => Val (TPrimT "boolean")
+   | A.ESwitch _ => Val TUnknown)
+
+and val_ty jenv e = (case type_of jenv e of Val t => t | _ => TUnknown)
+
+(* The method that a call resolves to, and the type of the call. Without receiver, the innermost
+   enclosing class that has a method of that name (inherited ones included) is the one that
+   counts (JLS 15.12.1). *)
+and call_info jenv (recv : pos A.jExpr option) (A.Ident (name, _, _)) (args : pos A.jExpr list)
+    : (pos * ty) option =
+  let
+    val arg_tys = map (val_ty jenv) args
+    fun finish cands =
+      (case pick_method jenv cands arg_tys of
+         SOME (c as (MT {pos, ...}, _)) => SOME (pos, result_of c arg_tys)
+       | NONE => NONE)
+  in
+    (case recv of
+       NONE =>
+         let
+           fun go [] = NONE
+             | go (k :: rest) =
+                 (case collect_methods jenv 8 (class_self jenv k) name of
+                    [] => go rest
+                  | cs => SOME cs)
+         in (case go (cur_of jenv) of SOME cs => finish cs | NONE => NONE) end
+     | SOME r =>
+         (case type_of jenv r of
+            Val (TArr _) => NONE
+          | Val t => finish (collect_methods jenv 8 t name)
+          | Ty t => finish (collect_methods jenv 8 t name)
+          | Pk => NONE))
+  end
+
+fun put_name key kind jenv =
+  set_scope (Symtab.update (key, kind) (names_of jenv), meths_of jenv,
+             Symtab.delete_safe key (vtypes_of jenv)) jenv
+
+fun put_name_t key kind ty jenv =
+  set_scope (Symtab.update (key, kind) (names_of jenv), meths_of jenv,
+             Symtab.update (key, ty) (vtypes_of jenv)) jenv
 
 (* Declares a name, reporting its declaration site. The blank identifier declares nothing. *)
-fun reg_with keyf mk_kind jenv (A.Ident (name, _, ni)) =
+fun reg_with keyf mk_kind ty jenv (A.Ident (name, _, ni)) =
   if name = "_" then jenv
   else
     let
       val pos = A.pos_of_NodeInfo ni
       val kind = mk_kind pos
       val _ = report_decl (describe_kind kind) name pos
-    in put_name (keyf name) kind jenv end
+    in put_name_t (keyf name) kind ty jenv end
 
-fun reg_v mk_kind jenv id = reg_with vkey mk_kind jenv id
-fun reg_t mk_kind jenv id = reg_with tkey mk_kind jenv id
+fun reg_v mk_kind jenv id = reg_with vkey mk_kind TUnknown jenv id
+fun reg_vt mk_kind ty jenv id = reg_with vkey mk_kind ty jenv id
+fun reg_t mk_kind jenv id = reg_with tkey mk_kind TUnknown jenv id
 
 (* A declaration whose site is only reported, not entered (a constructor, a label of a pattern). *)
 fun decl_only mk_kind (A.Ident (name, _, ni)) =
@@ -534,14 +996,207 @@ fun add_meths jenv (ms : (string * mdecl) list) =
     val ns = distinct (op =) (map #1 ms)
     val meths' =
       fold (fn n => Symtab.update (n, map #2 (filter (fn (m, _) => m = n) ms))) ns (meths_of jenv)
-  in set_scope (names_of jenv, meths') jenv end
+  in set_scope (names_of jenv, meths', vtypes_of jenv) jenv end
+
+fun mod_kw_is ms kw = exists (fn A.MKw (s, _) => s = kw | A.MAnnot _ => false) ms
+
+fun is_receiver (A.Ident (n, _, _)) = n = "this" orelse String.isSuffix ".this" n
+
+fun dims_ty t ds = fold (fn _ => fn x => TArr x) ds t
+
+fun param_ty jenv (A.Param (_, t, va, _, ds, _)) =
+  let val b = dims_ty (ty_of_type jenv t) ds in if va then TArr b else b end
+
+fun real_params ps = filter (fn A.Param (_, _, _, pid, _, _) => not (is_receiver pid)) ps
+
+fun quiet_enter keyf mk_kind jenv (A.Ident (name, _, ni)) =
+  if name = "_" then jenv else put_name (keyf name) (mk_kind (A.pos_of_NodeInfo ni)) jenv
+
+fun tparam_key (A.TParam (_, pid, _, _)) = pos_key (ident_pos pid)
+
+(* the parts of a class-like declaration: kind, name, modifiers, type parameters, supertypes, the
+   permitted subtypes, enum constants, record components, body *)
+fun class_parts (d : pos A.jDecl) =
+  (case d of
+     A.DClass (ms, id, tps, ext, impl, perm, body, _) =>
+       SOME ("class", id, ms, tps, (case ext of SOME t => [t] | NONE => []) @ impl, perm, [], [],
+             body)
+   | A.DInterface (ms, id, tps, ext, perm, body, _) =>
+       SOME ("interface", id, ms, tps, ext, perm, [], [], body)
+   | A.DEnum (ms, id, impl, consts, _, body, _) =>
+       SOME ("enum", id, ms, [], impl, [], consts, [], body)
+   | A.DRecord (ms, id, tps, comps, impl, body, _) =>
+       SOME ("record", id, ms, tps, impl, [], [], comps, body)
+   | A.DAnnotType (ms, id, body, _) => SOME ("annotation", id, ms, [], [], [], [], [], body)
+   | _ => NONE)
+
+(* a method or a constructor, its type parameters in scope for the types of its signature *)
+fun mk_mdef jenv ms mtps (ret : jenv -> ty) ps pos : mdef =
+  let
+    val s = fold (fn A.TParam (_, pid, _, _) => fn j => quiet_enter tkey Tparam j pid) mtps jenv
+    val ps' = real_params ps
+  in
+    MT {pos = pos, tps = map tparam_key mtps, ps = map (param_ty s) ps',
+        va = (case rev ps' of A.Param (_, _, v, _, _, _) :: _ => v | [] => false),
+        ret = ret s, static = mod_kw_is ms "static"}
+  end
+
+(* The definition of a class from its body, in a scope that has the type parameters and the member
+   types; then the member classes. The result is the scope with the definitions added. *)
+fun register_body s2 key kind tp_keys supers consts comps (body : pos A.jDecl list) : jenv =
+  let
+    val self = TCls (key, map TTv tp_keys)
+    val in_iface = (kind = "interface" orelse kind = "annotation")
+    val fields =
+      maps (fn A.DField (ms, t, vds, _) =>
+              map (fn A.VarDecl (id, ds, _, _) =>
+                     (ident_name_of id,
+                      FD {pos = ident_pos id, ty = dims_ty (ty_of_type s2 t) ds,
+                          static = in_iface orelse mod_kw_is ms "static"})) vds
+             | _ => []) body
+      @ map (fn A.EnumConst (_, id, _, _, _) =>
+               (ident_name_of id, FD {pos = ident_pos id, ty = self, static = true})) consts
+      @ map (fn c as A.Param (_, _, _, id, _, _) =>
+               (ident_name_of id, FD {pos = ident_pos id, ty = param_ty s2 c, static = false}))
+          comps
+    val methods =
+      maps (fn A.DMethod (ms, mtps, res, id, ps, ds, _, _, _, _) =>
+              [(ident_name_of id,
+                mk_mdef s2 ms mtps (fn s => dims_ty (ty_of_type s res) ds) ps (ident_pos id))]
+             | _ => []) body
+    val explicit = map #1 methods
+    val accessors =
+      maps (fn c as A.Param (_, _, _, id, _, _) =>
+              if member (op =) explicit (ident_name_of id) then []
+              else [(ident_name_of id,
+                     MT {pos = ident_pos id, tps = [], ps = [], va = false, ret = param_ty s2 c,
+                         static = false})]) comps
+    val ctors =
+      maps (fn A.DCtor (ms, mtps, id, ps, _, _, _) =>
+              [mk_mdef s2 ms mtps (K self) ps (ident_pos id)]
+             | _ => []) body
+    val types =
+      maps (fn m => (case class_parts m of
+                       SOME (_, mid, _, _, _, _, _, _, _) =>
+                         [(ident_name_of mid, (pos_key (ident_pos mid), ident_pos mid))]
+                     | NONE => [])) body
+    val s3 = add_def key (CD {kind = kind, tps = tp_keys, supers = supers, fields = fields,
+                              methods = methods @ accessors, ctors = ctors, types = types}) s2
+  in fold (fn m => fn s => register_class s m) body s3 end
+
+and register_class scope (d : pos A.jDecl) : jenv =
+  (case class_parts d of
+     NONE => scope
+   | SOME (kind, id, _, tps, sup_types, _, consts, comps, body) =>
+       let
+         val s1 = fold (fn A.TParam (_, pid, _,
+           _) => fn s => quiet_enter tkey Tparam s pid) tps scope
+         val s2 = fold (fn m => fn s =>
+                          (case class_parts m of
+                             SOME (_, mid, _, _, _, _, _, _, _) => quiet_enter tkey Typ s mid
+                           | NONE => s)) body s1
+         val supers = map (ty_of_type s2) sup_types
+                      @ (if kind = "enum" orelse kind = "record" then [TUnknown] else [])
+         val res = register_body s2 (pos_key (ident_pos id)) kind (map tparam_key tps) supers
+                     consts comps body
+       in set_defs (defs_of res) scope end)
+
+(* an anonymous class (or the body of an enum constant) of the given supertype *)
+fun register_anon scope key (sup : ty) (body : pos A.jDecl list) : jenv =
+  let
+    val s2 = fold (fn m => fn s =>
+                     (case class_parts m of
+                        SOME (_, mid, _, _, _, _, _, _, _) => quiet_enter tkey Typ s mid
+                      | NONE => s)) body scope
+    val res = register_body s2 key "class" [] [sup] [] [] body
+  in set_defs (defs_of res) scope end
+
+(* a simple name in an expression: a variable, else a field inherited from an enclosing class, else
+   a type, else a package *)
+fun use_simple_name jenv (id as A.Ident (name, _, ni)) =
+  if name = "_" then ()
+  else
+    let val tab = names_of jenv
+    in
+      if Symtab.defined tab (vkey name) then use_key jenv (vkey name) name (A.pos_of_NodeInfo ni)
+      else
+        (case inherited_field jenv name of
+           SOME (p, _) => report_use "Java field" name (A.pos_of_NodeInfo ni) p
+         | NONE => use_expr_name jenv id)
+    end
+
+fun link_select jenv e1 (A.Ident (name, _, ni)) =
+  let val pos = A.pos_of_NodeInfo ni
+  in
+    (case type_of jenv e1 of
+       Val (TArr _) => ()
+     | Val t =>
+         (case find_field jenv 8 t name of
+            SOME (p, _) => report_use "Java field" name pos p
+          | NONE => ())
+     | Ty t =>
+         (case find_field jenv 8 t name of
+            SOME (p, _) => report_use "Java field" name pos p
+          | NONE =>
+              (case t of
+                 TCls (k, _) =>
+                   (case def_of jenv k of
+                      SOME (CD {types, ...}) =>
+                        (case AList.lookup (op =) types name of
+                           SOME (_, p) => report_use "Java type" name pos p
+                         | NONE => ())
+                    | NONE => ())
+               | _ => ()))
+     | Pk => ())
+  end
+
+fun link_call jenv recv (id as A.Ident (name, _, ni)) args =
+  (case call_info jenv recv id args of
+     SOME (p, _) => report_use "Java method" name (A.pos_of_NodeInfo ni) p
+   | NONE => ())
+
+fun has_method_named jenv name =
+  exists (fn k => not (null (collect_methods jenv 8 (class_self jenv k) name))) (cur_of jenv)
+
+(* the fields, types, enum constants and components that a class body declares are in scope in the
+   whole body, and so are its methods *)
+fun predeclare_members senv self (members : pos A.jDecl list) consts comps : jenv =
+  let
+    val s1 = fold (fn m => fn s => (case class_parts m of
+                                      SOME (_, id, _, _, _, _, _, _, _) => reg_t Typ s id
+                                    | NONE => s)) members senv
+    val s2 = fold (fn A.EnumConst (_, id, _, _, _) => fn s => reg_vt EnumC self s id) consts s1
+    val s3 = fold (fn c as A.Param (_, _, _, id, _, _) => fn s => reg_vt Fld (param_ty s1 c) s id)
+               comps s2
+    val s4 = fold (fn m => fn s =>
+                     (case m of
+                        A.DField (_, t, vds, _) =>
+                          fold (fn A.VarDecl (id, ds, _, _) => fn s' =>
+                                  reg_vt Fld (dims_ty (ty_of_type s1 t) ds) s' id) vds s
+                      | _ => s)) members s3
+    fun method_of m = (case m of
+        A.DMethod (_, _, _, id, ps, _, _, _, _, _) =>
+          let
+            val ps' = real_params ps
+            val va = (case rev ps' of A.Param (_, _, v, _, _, _) :: _ => v | [] => false)
+            val _ = decl_only Meth id
+          in [(ident_name_of id, MD {pos = ident_pos id, arity = length ps', varargs = va})] end
+      | _ => [])
+    (* the accessor methods of the components of a record *)
+    val accessors =
+      map (fn A.Param (_, _, _, id, _, _) =>
+             (ident_name_of id, MD {pos = ident_pos id, arity = 0, varargs = false})) comps
+    val explicit = maps method_of members
+    val ms = explicit @ filter (fn (n, _) => not (exists (fn (m, _) => m = n) explicit)) accessors
+  in add_meths s4 ms end
 
 (* Runs "f" in a nested scope: the tables are restored on exit. *)
 fun scoped jenv f =
   let
-    val scope = (names_of jenv, meths_of jenv)
+    val scope = (names_of jenv, meths_of jenv, vtypes_of jenv)
+    val cur = cur_of jenv
     val (jenv1, acts) = f jenv
-  in (set_scope scope jenv1, acts) end
+  in (set_cur cur (set_scope scope jenv1), acts) end
 
 fun optl f x = (case x of NONE => [] | SOME y => f y)
 
@@ -549,20 +1204,21 @@ fun optl f x = (case x of NONE => [] | SOME y => f y)
 fun chk jenv ctx ni = check_antiq jenv ctx ni
 
 (* The pattern variables a condition introduces when it is true / false. *)
-type binds = (string * ident_kind) list
+type binds = (string * ident_kind * ty) list
 
-fun add_binds jenv (bs : binds) = fold (fn (n, k) => fn g => put_name (vkey n) k g) bs jenv
+fun add_binds jenv (bs : binds) = fold (fn (n, k, t) => fn g => put_name_t (vkey n) k t g) bs jenv
 
 (* a name that a pattern introduced leaves the scope again *)
 fun remove_binds old jenv (bs : binds) =
-  fold (fn (n, _) => fn g =>
+  fold (fn (n, _, _) => fn g =>
           let
             val key = vkey n
-            val tab = names_of g
-            val tab' = (case Symtab.lookup (names_of old) key of
-                          SOME k => Symtab.update (key, k) tab
-                        | NONE => Symtab.delete_safe key tab)
-          in set_scope (tab', meths_of g) g end) bs jenv
+            fun restore tab_old tab =
+              (case Symtab.lookup tab_old key of
+                 SOME k => Symtab.update (key, k) tab
+               | NONE => Symtab.delete_safe key tab)
+          in set_scope (restore (names_of old) (names_of g), meths_of g,
+                        restore (vtypes_of old) (vtypes_of g)) g end) bs jenv
 
 (* --- can a statement complete normally? (JLS 14.22, in the cases that matter here) ------- *)
 
@@ -602,9 +1258,6 @@ fun can_complete (s : pos A.jStmt) : bool =
 
 (* --- the walk --------------------------------------------------------------------------------- *)
 
-fun mod_kw_is ms kw = exists (fn A.MKw (s, _) => s = kw | A.MAnnot _ => false) ms
-
-fun is_receiver (A.Ident (n, _, _)) = n = "this" orelse String.isSuffix ".this" n
 
 fun walk_annot senv ctx (A.Annot (name, args, ni)) : acts =
   let
@@ -667,8 +1320,8 @@ and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
   in
     (case e of
        A.ELit _ => plain []
-     | A.EName id => (use_expr_name senv id; plain [])
-     | A.EField (e1, _, _) => plain (seq [e1])
+     | A.EName id => (use_simple_name senv id; plain [])
+     | A.EField (e1, id, _) => (link_select senv e1 id; plain (seq [e1]))
      | A.EThis _ => plain []
      | A.ESuper _ => plain []
      | A.EQualThis (e1, _) => plain (seq [e1])
@@ -679,12 +1332,16 @@ and walk_e senv ctx (e : pos A.jExpr) : acts * binds * binds =
      | A.ECall (recv, ta, id, args, _) =>
          let
            val ra = (case recv of
-                       SOME r => seq [r]
-                     | NONE => (use_method senv id (length args); []))
+                       SOME r => (link_call senv recv id args; seq [r])
+                     | NONE =>
+                         ((if has_method_named senv (ident_name_of id)
+                           then link_call senv NONE id args
+                           else use_method senv id (length args));
+                          []))
          in plain (ra @ optl (walk_targs senv ctx') ta @ seq args) end
      | A.ENew (outer, t, args, body, _) =>
          plain (optl (fn o1 => seq [o1]) outer @ walk_type senv ctx' t @ seq args
-                @ optl (walk_members senv ctx') body)
+                @ optl (walk_anon senv ctx' (pos_key (A.pos_of_expr e)) (ty_of_type senv t)) body)
      | A.ENewArray (t, des, ds, init, _) =>
          plain (walk_type senv ctx' t @ seq des @ maps (walk_dim senv ctx') ds
                 @ optl (fn i => seq [i]) init)
@@ -745,7 +1402,7 @@ and walk_pattern senv ctx (p : pos A.jPattern) : acts * binds =
                          if name = "_" then []
                          else
                            let val pos = A.pos_of_NodeInfo ni
-                           in (decl_only Var id; [(name, Var pos)]) end
+                           in (decl_only Var id; [(name, Var pos, ty_of_type senv t)]) end
                      | NONE => [])
          in (here @ acts, bs) end
      | A.PRecord (t, ps, _) =>
@@ -810,11 +1467,11 @@ and walk_lparams senv ctx ps : jenv * acts =
            | A.LPTyped pr => let val (s1, a) = walk_param s ctx pr in (s1, acc @ a) end))
     ps (senv, [])
 
-and walk_param senv ctx (A.Param (ms, t, _, id, ds, ni)) : jenv * acts =
+and walk_param senv ctx (p as A.Param (ms, t, _, id, ds, ni)) : jenv * acts =
   let
     val acts = chk senv ctx ni @ walk_mods senv ctx ms @ walk_type senv ctx t
                @ maps (walk_dim senv ctx) ds
-    val senv' = if is_receiver id then senv else reg_v Param senv id
+    val senv' = if is_receiver id then senv else reg_vt Param (param_ty senv p) senv id
   in (senv', acts) end
 
 and walk_params senv ctx ps : jenv * acts =
@@ -836,7 +1493,10 @@ and walk_localvar senv ctx (A.LocalVar (ms, t, vds, ni)) : jenv * acts =
   in
     fold (fn A.VarDecl (id, ds, init, vni) => fn (e, acc) =>
             let
-              val e1 = reg_v Var e id          (* in scope in its own initializer *)
+              val ty = (case t of
+                          A.TVar _ => (case init of SOME x => val_ty e x | NONE => TUnknown)
+                        | _ => dims_ty (ty_of_type e t) ds)
+              val e1 = reg_vt Var ty e id          (* in scope in its own initializer *)
               val a1 = chk e1 ctx vni @ maps (walk_dim e1 ctx) ds
                        @ (case init of SOME x => #1 (walk_e e1 ctx x) | NONE => [])
             in (e1, acc @ a1) end)
@@ -868,13 +1528,13 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
      | A.SExpr (e, _) => ret (senv, expr e)
      | A.SLabeled (id, s1, _) =>
          let
-           val senv1 = reg_with lkey Label senv id
+           val senv1 = reg_with lkey Label TUnknown senv id
            val (e1, a) = walk_stmt senv1 ctx' s1
            val key = lkey (ident_name_of id)
            val tab = (case Symtab.lookup (names_of senv) key of
                         SOME k => Symtab.update (key, k) (names_of e1)
                       | NONE => Symtab.delete_safe key (names_of e1))
-         in ret (set_scope (tab, meths_of e1) e1, a) end
+         in ret (set_scope (tab, meths_of e1, vtypes_of e1) e1, a) end
      | A.SIf (c, t, e, _) =>
          let
            val (ca, tc, fc) = walk_e senv ctx' c
@@ -914,7 +1574,10 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
          let
            val ea = expr e
            val a0 = walk_mods senv ctx' ms @ walk_type senv ctx' t
-           val senv1 = reg_v Var senv id
+           val ety = (case t of
+                        A.TVar _ => (case val_ty senv e of TArr x => x | _ => TUnknown)
+                      | _ => ty_of_type senv t)
+           val senv1 = reg_vt Var ety senv id
            val (_, ba) = walk_stmt senv1 ctx' b
          in ret (senv, ea @ a0 @ ba) end
      | A.SBreak (l, _) => (use_label senv l; ret (senv, []))
@@ -938,7 +1601,7 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
              #2 (scoped senv (fn s =>
                let
                  val a0 = chk s ctx' ni @ walk_mods s ctx' ms @ maps (walk_type s ctx') ts
-                 val s1 = reg_v Var s id
+                 val s1 = reg_vt Var (case ts of [t] => ty_of_type s t | _ => TUnknown) s id
                in (s1, a0 @ walk_block s1 ctx' cb) end))
            val facts = (case f of SOME fb => walk_block senv ctx' fb | NONE => [])
          in ret (senv, racts @ bacts @ maps catch_acts cs @ facts) end
@@ -950,7 +1613,7 @@ and walk_stmt senv ctx (s : pos A.jStmt) : jenv * acts =
 (* a local class: its name is in scope in the class and in the rest of the block *)
 and walk_local_class senv ctx d id : jenv * acts =
   let
-    val senv1 = reg_t Typ senv id
+    val senv1 = register_class (reg_t Typ senv id) d
   in (senv1, walk_class senv1 ctx d) end
 
 (* --- declarations ----------------------------------------------------------------------------- *)
@@ -964,49 +1627,17 @@ and declare_tparams senv ctx tps : jenv * acts =
                  tps
   in (senv1, acts) end
 
-(* the methods, fields, types, enum constants and components that a class body declares are in
-   scope in the whole body *)
-and predeclare_members senv members consts comps : jenv =
+and walk_anon senv ctx key sup members : acts =
   let
-    val senv1 =
-      fold (fn A.EnumConst (_, id, _, _, _) => fn s => reg_v EnumC s id) consts senv
-    val senv2 =
-      fold (fn A.Param (_, _, _, id, _, _) => fn s => reg_v Fld s id) comps senv1
-    val senv3 =
-      fold (fn m => fn s =>
-              (case m of
-                 A.DField (_, _, vds, _) =>
-                   fold (fn A.VarDecl (id, _, _, _) => fn s1 => reg_v Fld s1 id) vds s
-               | A.DClass (_, id, _, _, _, _, _, _) => reg_t Typ s id
-               | A.DInterface (_, id, _, _, _, _, _) => reg_t Typ s id
-               | A.DEnum (_, id, _, _, _, _, _) => reg_t Typ s id
-               | A.DRecord (_, id, _, _, _, _, _) => reg_t Typ s id
-               | A.DAnnotType (_, id, _, _) => reg_t Typ s id
-               | _ => s))
-        members senv2
-    fun method_of m = (case m of
-        A.DMethod (_, _, _, id, ps, _, _, _, _, _) =>
-          let
-            val ps' = filter (fn A.Param (_, _, _, pid, _, _) => not (is_receiver pid)) ps
-            val va = (case rev ps' of A.Param (_, _, v, _, _, _) :: _ => v | [] => false)
-            val _ = decl_only Meth id
-          in [(ident_name_of id, MD {pos = ident_pos id, arity = length ps', varargs = va})] end
-      | _ => [])
-    (* the accessor methods of the components of a record *)
-    val accessors =
-      map (fn A.Param (_, _, _, id, _, _) =>
-             (ident_name_of id, MD {pos = ident_pos id, arity = 0, varargs = false})) comps
-    val explicit = maps method_of members
-    val ms = explicit @ filter (fn (n, _) => not (exists (fn (m, _) => m = n) explicit)) accessors
-  in add_meths senv3 ms end
+    val s0 = register_anon senv key sup members
+    val s1 = set_cur (key :: cur_of s0) s0
+    val s2 = predeclare_members s1 (TCls (key, [])) members [] []
+  in #2 (scoped s2 (fn s => (s, maps (walk_decl s ctx) members))) end
 
-and walk_members senv ctx (members : pos A.jDecl list) : acts =
-  let val senv1 = predeclare_members senv members [] []
-  in #2 (scoped senv1 (fn s => (s, maps (walk_decl s ctx) members))) end
-
-and walk_enum_const senv ctx (A.EnumConst (al, _, args, body, ni)) : acts =
+and walk_enum_const senv ctx self (A.EnumConst (al, id, args, body, ni)) : acts =
   chk senv ctx ni @ walk_annots senv ctx al
-  @ optl (maps (fn x => #1 (walk_e senv ctx x))) args @ optl (walk_members senv ctx) body
+  @ optl (maps (fn x => #1 (walk_e senv ctx x))) args
+  @ optl (walk_anon senv ctx (pos_key (ident_pos id)) self) body
 
 (* a class, an interface, an enum, a record or an annotation interface; its name is entered by
    the caller *)
@@ -1014,27 +1645,23 @@ and walk_class senv ctx (d : pos A.jDecl) : acts =
   let
     val ctx' = A.Decl d :: ctx
     val here = chk senv ctx' (A.nodeInfo_of_decl d)
-    val (mods, tps, htypes, consts, comps, body) =
-      (case d of
-         A.DClass (ms, _, tps, ext, impl, perm, body, _) =>
-           (ms, tps, (case ext of SOME t => [t] | NONE => []) @ impl @ perm, [], [], body)
-       | A.DInterface (ms, _, tps, ext, perm, body, _) => (ms, tps, ext @ perm, [], [], body)
-       | A.DEnum (ms, _, impl, consts, _, body, _) => (ms, [], impl, consts, [], body)
-       | A.DRecord (ms, _, tps, comps, impl, body, _) => (ms, tps, impl, [], comps, body)
-       | A.DAnnotType (ms, _, body, _) => (ms, [], [], [], [], body)
-       | _ => raise Fail "walk_class: not a class")
+    val (_, id, mods, tps, supers, permits, consts, comps, body) = the (class_parts d)
+    val key = pos_key (ident_pos id)
+    val htypes = supers @ permits
     val macts = walk_mods senv ctx' mods
   in
     here @ macts @
     #2 (scoped senv (fn s =>
       let
-        val (s1, tpacts) = declare_tparams s ctx' tps
+        val s0 = set_cur (key :: cur_of s) s
+        val (s1, tpacts) = declare_tparams s0 ctx' tps
         val hacts = maps (walk_type s1 ctx') htypes
-        val s2 = predeclare_members s1 body consts comps
+        val self = TCls (key, map (TTv o tparam_key) tps)
+        val s2 = predeclare_members s1 self body consts comps
         val compacts =
           maps (fn A.Param (ms, t, _, _, _, pni) =>
                   chk s2 ctx' pni @ walk_mods s2 ctx' ms @ walk_type s2 ctx' t) comps
-        val cacts = maps (walk_enum_const s2 ctx') consts
+        val cacts = maps (walk_enum_const s2 ctx' self) consts
         val bacts = maps (walk_decl s2 ctx') body
       in (s2, tpacts @ hacts @ compacts @ cacts @ bacts) end))
   end
@@ -1109,7 +1736,9 @@ fun walk_moddir senv ctx d : acts =
    | A.Provides (_, _, ni) => chk senv ctx ni)
 
 fun walk_top senv ctx (decls : pos A.jDecl list) : jenv * acts =
-  let val senv1 = predeclare_members senv decls [] []
+  let
+    val senv0 = predeclare_members senv TUnknown decls [] []
+    val senv1 = fold (fn d => fn s => register_class s d) decls senv0
   in (senv1, maps (walk_decl senv1 ctx) decls) end
 
 fun analyse_and_eval0 (root : pos A.root) thy =
@@ -1123,7 +1752,7 @@ fun analyse_and_eval0 (root : pos A.root) thy =
     case root of
       A.Id (id as A.Ident (_, _, ni)) =>
         let val here = check_antiq jenv0 ctx0 ni
-            val _ = use_expr_name jenv0 id
+            val _ = use_simple_name jenv0 id
         in (thy, here) end
     | A.Expr e => drop (#1 (walk_e jenv0 ctx0 e))
     | A.Type t => drop (walk_type jenv0 ctx0 t)

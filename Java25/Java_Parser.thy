@@ -463,10 +463,14 @@ fun antiq_tag_and_string_seen st (yypos, yytext) =
             (body_text, body_pos)}
     end
 
+(* The form with a quoted body is an antiquotation only directly after the comment opener
+   ("//@ term \"x\""): the inline tags of Javadoc, "{@code \"abc\"}" for instance, are text. *)
 fun tag_with_body st (yypos, yytext) =
-    (report st (yypos, String.size yytext, Markup.antiquote,
-                "Java antiquotation tag+body", "");
-     antiq_tag_and_string_seen st (yypos, yytext))
+    if yypos = !(comment_start st)
+    then (report st (yypos, String.size yytext, Markup.antiquote,
+                     "Java antiquotation tag+body", "");
+          antiq_tag_and_string_seen st (yypos, yytext))
+    else push_raw_fragment st (yypos, yytext)
 
 fun tag_only st (yypos, yytext) =
     (antiq_tag_seen st (yypos, yytext);

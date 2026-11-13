@@ -4,7 +4,7 @@ A front-end for **Java** (language version 25) inside Isabelle/HOL: the Java mem
 verification front-ends (`../C11`, `../occam2`, `../scala3`, `../MicroRust`, `../AdaSpark`,
 `../Golang1.27`). Java source text lives inside an Isabelle theory, is parsed by a real grammar and
 is checked incrementally under Isabelle/PIDE. It is not a compiler and has no semantics (no type
-checker, no overload resolution beyond the arity, no definite assignment); it is the front-end
+checker, no definite assignment, no inference of lambdas); it is the front-end
 layer on which a semantic backend can be built (see `setup_backend` below).
 
 ## Why Java, and where the grammar comes from
@@ -41,9 +41,12 @@ The concepts are those of the C11 project, carried over one for one:
 * **Binding**: every declaration and every resolved name use is reported with Isabelle's entity
   markup (hover, click-through), with Java's several name spaces (variables, types, methods,
   packages, labels), the scope of the members of a class throughout its body, block scoping, the
-  *flow scoping* of pattern variables (`if (!(o instanceof String s)) return; ... s ...`), imports,
-  type parameters and overloading by arity; names that resolve nowhere (an inherited member, an
-  on-demand import, the platform) are not marked.
+  *flow scoping* of pattern variables (`if (!(o instanceof String s)) return; ... s ...`), imports
+  and type parameters; names that resolve nowhere (an on-demand import, the platform) are not
+  marked. **Selections and calls are resolved with types**, when that is certain: `x.f`, `x.m(a)`,
+  `this.f`, `Color.RED`, `self().next().x`, a field or method inherited from a declared class, an
+  overloaded method selected by the types of its arguments (the most specific one), type arguments
+  substituted (`Box<U> b; b.get().f()`), the type of a `var`, of a pattern variable, of a cast.
 * **Antiquotations** in `//` and `/* */` comments, `//@ tag[navi](level) \<open>body\<close>`, with the
   same navigation (`u`, `U`, `r`, `d`), evaluation levels and the eight standard antiquotations as
   in the other front-ends (`probe_jenv`, `probe_ast`, `highlight`, `term`, `ML`, `text`,
@@ -118,10 +121,13 @@ files next to the exporting theory; those are generated on every build and are g
 
 ## Status and limitations
 
-Everything described above builds and passes its tests. Deliberate choices and gaps: the front-end
-does not know types, so `x.f` and `x.m()` are not resolved (only a call without receiver is linked,
-and only if the arity leaves one candidate), and a simple name that is inherited from a super class
-is not found; the stream decides by tokens alone, so in the arguments of a call `f(a < b, c > d)`
+Everything described above builds and passes its tests; the analysis of the whole JDK (15 371
+files, 2.5 million entity markups) takes 45 seconds. Deliberate choices and gaps: the types of the
+platform are not known, so `s.length()` on a `String` is not linked, and neither is anything
+inherited through a supertype that is not declared in the units seen so far (the loading of
+classes from a JDK source tree is the next step); lambdas, method references and `switch`
+expressions have no type; a comment `//@Name` at its start is an antiquotation tag, as in the
+other front-ends, so JML-like comments need a handler or a space (`// @Name`); the stream decides by tokens alone, so in the arguments of a call `f(a < b, c > d)`
 is two comparisons (as javac reads it), and a member declaration `Foo(Map<A, B> m)` in the body of
 an enum constant is read as a call if it is the first in a block; Unicode escapes (`A`) are
 translated by the specification before lexing, here they are recognised inside literals and

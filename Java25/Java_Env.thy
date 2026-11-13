@@ -113,6 +113,34 @@ fun describe_kind k = (case k of
    last one is variable ("T... x"). *)
 datatype mdecl = MD of {pos : pos, arity : int, varargs : bool}
 
+(* The types of the declared things, as far as the selection pass needs them (see the note on
+   "type_of" in Java_AnaEval.thy). A class is a *reference* to its declaration, by the position key
+   of the declared name: classes, their fields and their methods may therefore be mutually
+   recursive, in any order, without any cycle in the data. *)
+datatype ty =
+    TUnknown                         (* nothing is known: no link is ever made on this basis *)
+  | TPrimT of string                 (* int, boolean, ..., void *)
+  | TNull                            (* the type of null *)
+  | TCls of string * ty list         (* declaration key (or "String", "Object"), type arguments *)
+  | TTv of string                    (* a type variable, by the key of its declaration *)
+  | TArr of ty
+
+(* A field, a method (type parameters by key, parameters, variable arity, result) *)
+datatype fdef = FD of {pos : pos, ty : ty, static : bool}
+datatype mdef = MT of {pos : pos, tps : string list, ps : ty list, va : bool, ret : ty,
+                       static : bool}
+
+(* A class: its kind (class, interface, enum, record, annotation), its type parameters (keys), its
+   supertypes (the superclass first), its fields (enum constants and record components included),
+   methods (the accessors of a record included), constructors and member types (by key and site). *)
+datatype cdef = CD of {kind : string, tps : string list, supers : ty list,
+                       fields : (string * fdef) list, methods : (string * mdef) list,
+                       ctors : mdef list, types : (string * (string * pos)) list}
+
+(* The key identifying a declaration: its position. *)
+fun pos_key (p : pos) =
+  String.concatWith "," (map (fn (a, b) => a ^ "=" ^ b) (Position.properties_of p))
+
 (* The handler's result is "Context.generic -> Context.generic", not "theory -> theory", for the
    same reason as in C11_Env.thy (an "ML" antiquotation has to mutate the ML environment, which
    no theory function can express); "lift_theory_antiq" recaptures the simpler kind. The "root" a
@@ -123,10 +151,17 @@ type 'a type_antiq_fun0 =
 
 datatype jenv = mk of {names : ident_kind Symtab.table,
                        meths : mdecl list Symtab.table,
+                       vtypes : ty Symtab.table,
+                       defs : cdef Symtab.table,
+                       cur : string list,
                        java_antiq : (jenv type_antiq_fun0) Symtab.table,
                        units : int}
   \<comment> \<open>"names" holds the declared names of all name spaces but methods (see the prefixes above),
-      "meths" the visible methods by name; "units" numbers the program units internally.\<close>
+      "meths" the visible methods by name (those of the top level of a compact unit, and static
+      imports: the methods of classes are in "defs"); "vtypes" the types of the variables in
+      "names" (scoped with them), "defs" the classes by key, "cur" the keys of the classes that
+      enclose the point of analysis, the innermost first; "units" numbers the program units
+      internally.\<close>
 
 type type_antiq_fun = jenv type_antiq_fun0
 
@@ -137,15 +172,21 @@ fun lift_theory_antiq
     Context.mapping (f args body) (Local_Theory.background_theory (f args body))
 
 val empty_jenv =
-  mk {names = Symtab.empty, meths = Symtab.empty, java_antiq = Symtab.empty, units = 0}
+  mk {names = Symtab.empty, meths = Symtab.empty, vtypes = Symtab.empty, defs = Symtab.empty,
+      cur = [], java_antiq = Symtab.empty, units = 0}
 
 (* Merging must not reset to empty (Isabelle forks and merges theory state routinely during live
    editing - see the same note on "merge_cenv" in C11_Env.thy); "units" takes the larger counter
    so a merge can never re-issue an already-used "Ast_Store" key. *)
-fun merge_jenv (mk {names = i1, meths = m1, java_antiq = a1, units = u1},
-                mk {names = i2, meths = m2, java_antiq = a2, units = u2}) =
+fun merge_jenv (mk {names = i1, meths = m1, vtypes = v1, defs = d1, cur = c1, java_antiq = a1,
+                    units = u1},
+                mk {names = i2, meths = m2, vtypes = v2, defs = d2, cur = _, java_antiq = a2,
+                    units = u2}) =
   mk {names = Symtab.merge (K true) (i1, i2),
       meths = Symtab.merge (K true) (m1, m2),
+      vtypes = Symtab.merge (K true) (v1, v2),
+      defs = Symtab.merge (K true) (d1, d2),
+      cur = c1,
       java_antiq = Symtab.merge (K true) (a1, a2),
       units = Int.max (u1, u2)}
 
@@ -175,9 +216,10 @@ fun ast_store_key thy unit_no =
    counter. Returns the key and the updated theory. *)
 fun store_root (root : Position.T Java_Ast.root) (text : string) thy =
     let
-      val mk {names, meths, java_antiq, units} = get (Context.Theory thy)
+      val mk {names, meths, vtypes, defs, cur, java_antiq, units} = get (Context.Theory thy)
       val key = ast_store_key thy units
-      val jenv' = mk {names = names, meths = meths, java_antiq = java_antiq, units = units + 1}
+      val jenv' = mk {names = names, meths = meths, vtypes = vtypes, defs = defs, cur = cur,
+                      java_antiq = java_antiq, units = units + 1}
       val thy' = thy
         |> Context.theory_map (put jenv')
         |> Context.theory_map (Ast_Store.map (Symtab.update (key, root)))
@@ -190,8 +232,8 @@ fun get_source key thy = Symtab.lookup (Source_Store.get (Context.Theory thy)) k
 
 fun store_antiq (name, antiq_fun) thy =
     let
-       val mk {names, meths, java_antiq, units} = get (Context.Theory thy)
-       val jenv' = mk {names = names, meths = meths,
+       val mk {names, meths, vtypes, defs, cur, java_antiq, units} = get (Context.Theory thy)
+       val jenv' = mk {names = names, meths = meths, vtypes = vtypes, defs = defs, cur = cur,
                        java_antiq = Symtab.update (name, antiq_fun) java_antiq, units = units}
     in thy |> Context.theory_map (put jenv') end
 

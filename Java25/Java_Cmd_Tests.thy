@@ -226,9 +226,46 @@ val _ = ent "an enum" "enum E { A, B; E next() { return A; } }" 6
 val _ = ent "an enum constant with a body" "enum E { A { void f() {} } }" 3
 val _ = ent "a record sees its components"
   "record P(int x, int y) { int sum() { return x + y; } }" 6
-val _ = ent "a constructor" "class A { A(int x) { this.y = x; } int y; }" 5
+val _ = ent "a constructor" "class A { A(int x) { this.y = x; } int y; }" 6
 val _ = ent "an interface" "interface I { int C = 1; default int f() { return C; } }" 4
 (* imports *)
+(* selections and calls are resolved with types, when that is certain *)
+val _ = ent "a field of a parameter" "class A { int x; void f(A a) { a.x = 1; } }" 7
+val _ = ent "a method of a parameter" "class A { void m() {} void t(A a) { a.m(); } }" 7
+val _ = ent "the types of the arguments select the overload"
+  "class A { void m(int a) {} void m(String s) {} void t() { m(1); } }" 7
+val _ = ent "the most specific overload"
+  ("class P {} class Q extends P {} "
+   ^ "class U { void m(P p) {} void m(Q q) {} void t(Q q) { m(q); } }") 15
+val _ = ent "a static field through its class" "class A { static int C; int f() { return A.C; } }" 5
+val _ = ent "an enum constant through its enum"
+  "enum E { X, Y } class U { E e = E.X; }" 8
+val _ = ent "an inherited method"
+  "class B { void m() {} } class C extends B { void t() { m(); } }" 6
+val _ = ent "an inherited field" "class B { int v; } class C extends B { int t() { return v; } }" 6
+val _ = ent "a field of the class itself, whatever the superclass"
+  "class C extends Unknown { int v; int t() { return this.v; } }" 4
+val _ = ent "a member that no known class has is not linked"
+  "class C extends Unknown { int t(C c) { return c.w; } }" 5
+val _ = ent "an inherited member is not linked if another supertype is unknown"
+  "class B { int v; } class C extends B implements Unk { int t(C c) { return c.v; } }" 8
+val _ = ent "type arguments are substituted"
+  ("class Box<T> { T v; T get() { return v; } } "
+   ^ "class U { int f(Box<U> b) { return b.get().f(null); } }") 15
+val _ = ent "the length of an array is not a field" "int f(int[] a) { return a.length; }" 3
+val _ = ent "the type of a var" "class A { int x; void f() { var a = new A(); a.x = 1; } }" 7
+val _ = ent "the variable of an enhanced for"
+  "class A { int x; void f(A[] as) { for (A a : as) { a.x = 1; } } }" 10
+val _ = ent "the type of a pattern variable"
+  "class A { int x; boolean f(Object o) { return o instanceof A a && a.x > 0; } }" 9
+val _ = ent "a cast" "class A { int x; int f(Object o) { return ((A) o).x; } }" 7
+val _ = ent "a chain of calls"
+  "class A { A self() { return this; } int x; int f() { return self().self().x; } }" 8
+val _ = ent "an anonymous class inherits"
+  "class B { int v; } class U { Object o = new B() { int w() { return v; } }; }" 7
+val _ = ent "the type argument of a generic method is inferred"
+  "class A { <T> T id(T x) { return x; } int v; int f(A a) { return id(a).v; } }" 14
+
 val _ = entu "an imported type" "import java.util.List; class A { List l; }" 4
 val _ = entu "a static import"
   "import static java.lang.Math.max; class A { int f() { return max(1, 2); } }" 4
@@ -435,7 +472,8 @@ val exported =
 val exported_v =
   File.read (Path.append (Resources.master_directory thy_x) (Path.explode "Java_Cmd_Tests_v.java"))
 val _ = check "the exported text is the pretty-printed unit"
-  (exported = "class Exported {\n    int x = 1;\n    int f() {\n        return x + 1;\n    }\n}\n\n")
+  (exported =
+     "class Exported {\n    int x = 1;\n    int f() {\n        return x + 1;\n    }\n}\n\n")
 val _ = check "the verbatim export is the text as written"
   (String.isSubstring "int f() { return x + 1; }" exported_v)
 val _ = check "the pretty-printed text of the section"
