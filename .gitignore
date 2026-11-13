@@ -34,3 +34,8 @@ output
 # Java25/examples/*.java, which are genuine fixtures
 /Java25/*.java
 /Java25/manual/*.java
+
+# arm_export output of ARM_CortexM7/ARM_Cmd_Tests.thy and the manual (regenerated on every build) - not
+# ARM_CortexM7/examples/*.s, which are genuine fixtures
+/ARM_CortexM7/*.s
+/ARM_CortexM7/manual/*.s
