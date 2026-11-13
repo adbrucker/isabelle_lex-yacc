@@ -284,11 +284,13 @@ text\<open>
     dereferencing, promotion through embedded fields (the shallowest depth wins, a tie is
     ambiguous and gives no link), the methods of embedded interfaces, the methods of the
     constraint of a type parameter, aliases, and type arguments substituted in an explicitly
-    instantiated generic type. The keys of a composite literal are fields of its struct type,
-    also in elided elements (\<open>[]T{{a: 1}}\<close>); the keys of a map literal are expressions. What
-    is not known - the standard library and every imported type, the result of a generic
-    function whose type arguments would have to be inferred - gives no link, and neither does a
-    match that an embedded type of unknown content could have provided nearer.
+    instantiated generic type, and the inference of the type arguments of a call of a generic
+    function or method (from the typed arguments, from the core types of the constraints, and
+    from untyped constants by their default type; whatever is doubtful stays unknown). The keys
+    of a composite literal are fields of its struct type, also in elided elements
+    (\<open>[]T{{a: 1}}\<close>); the keys of a map literal are expressions. What is not known - the standard
+    library and every imported type - gives no link, and neither does a match that an embedded
+    type of unknown content could have provided nearer.
   \<^item> \<^bold>\<open>The top level persists.\<close> After \<open>go\<close> has analysed a source file (or \<open>go_decl\<close> a declaration),
     the names it declares at the top level, imports included, stay in \<open>genv\<close> for the following
     commands, as the files of a package do for each other. Nothing else does.
@@ -743,8 +745,7 @@ text\<open>
   \<^item> \<^bold>\<open>No semantics.\<close> There is no type checker, no method sets, no constant evaluation (\<open>iota\<close>
     is a name), no escape analysis. A name that resolves nowhere is silently left unmarked, a
     selection \<open>x.f\<close> is resolved only through types the pass knows (see \<open>\<section>2.2\<close>: a package
-    member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close>, and nothing is known about the standard library, nor
-    about generic functions whose type arguments are inferred), the names of a function type's
+    member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close>, and nothing is known about the standard library), the names of a function type's
     parameters are declared nowhere, and the keys of a composite literal are resolved only when
     the type of the literal is known.
   \<^item> \<^bold>\<open>Contract-free.\<close> Go has no contract language, and the front-end adds none: what a
@@ -778,9 +779,9 @@ text\<open>
   \<open>\<section>6\<close> as missing is, in every case, a scoping decision rather than an accident: the natural
   next steps are a semantic backend that translates Go programs into HOL - the antiquotations of
   \<open>\<section>2.5\<close> then state and discharge the specifications in the comments next to the program, as
-  the \<open>lemma\<close> above - and, on the analysis side, the inference of type arguments of generic
-  calls and the loading of imported packages, which would extend the type information the
-  resolution of selections already has to the standard library.
+  the \<open>lemma\<close> above - and, on the analysis side, the loading of imported packages, which would
+  extend the type information the resolution of selections already has to the standard
+  library.
 
   \pagebreak
 \<close>

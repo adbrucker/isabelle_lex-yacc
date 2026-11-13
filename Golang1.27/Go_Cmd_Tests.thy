@@ -222,6 +222,40 @@ val _ = ent "the keys of an elided element are fields" "type T struct{ a int }\n
 val _ = ent "the key of a map literal is a variable" "var k = 1\nvar m = map[int]int{k: 2}" 3
 val _ = ent "a variable's type is inferred from a later declaration"
   "var a = b.n\nvar b = T{}\ntype T struct{ n int }" 7
+(* inference of type arguments *)
+val _ = ent "the type argument is inferred from an argument"
+  "type S struct{ n int }\nfunc Id[T any](x T) T { return x }\nfunc f(s S) int { return Id(s).n }" 14
+val _ = ent "the type argument is inferred from the element type"
+  "type S struct{ n int }\nfunc First[T any](xs []T) T { return xs[0] }\n\
+  \func f(xs []S) int { return First(xs).n }" 14
+val _ = ent "a named slice type meets a slice parameter"
+  "type S struct{ n int }\ntype SS []S\nfunc First[T any](xs []T) T { return xs[0] }\n\
+  \func f(xs SS) int { return First(xs).n }" 16
+val _ = ent "an explicit type argument and an inferred one"
+  "type S struct{ n int }\nfunc Conv[B, A any](a A) B { var b B; return b }\n\
+  \func f() int { return Conv[S](1).n }" 15
+val _ = ent "nil tells nothing about the type argument"
+  "type S struct{ n int }\nfunc Pair[T any](a, b T) T { return a }\n\
+  \func f(p *S) int { return Pair(p, nil).n }" 15
+val _ = ent "the core type of a constraint gives the element type"
+  "type S struct{ n int }\nfunc Last[L ~[]E, E any](l L) E { var z E; return z }\n\
+  \func f(xs []S) int { return Last(xs).n }" 18
+val _ = ent "the argument of an instantiated generic type is inferred"
+  "type S struct{ n int }\ntype Box[T any] struct{ v T }\n\
+  \func Unbox[T any](b Box[T]) T { return b.v }\nfunc f(b Box[S]) int { return Unbox(b).n }" 21
+val _ = ent "an unknown argument type leaves the type argument unknown"
+  "type S struct{ n int }\nfunc Id[T any](x T) T { return x }\nfunc f(q Q) int { return Id(q).n }" 12
+val _ = ent "a function argument gives the type arguments"
+  "type S struct{ n int }\nfunc Ap[T, U any](x T, f func(T) U) U { return f(x) }\n\
+  \func mk(i int) S { return S{} }\nfunc g() int { return Ap(1, mk).n }" 21
+val _ = ent "the inferred type of a generic method's result"
+  "type S struct{ n int }\ntype Box[T any] struct{ v T }\n\
+  \func (b Box[T]) Apply[U any](f func(T) U) U { return f(b.v) }\n\
+  \func mk(i int) S { return S{} }\nfunc g(b Box[int]) int { return b.Apply(mk).n }" 29
+val _ = ent "the generic method itself is linked"
+  "type S struct{ n int }\ntype Box[T any] struct{ v T }\n\
+  \func (b Box[T]) Apply[U any](f func(T) U) U { return f(b.v) }\n\
+  \func mk(i int) S { return S{} }\nfunc g(b Box[int]) { b.Apply(mk) }" 28
 (* imports *)
 val _ = ent "an import is a declaration and fmt is a use"
   "import \"fmt\"\nfunc f() { fmt.Println() }" 3

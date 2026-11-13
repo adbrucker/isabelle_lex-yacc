@@ -128,6 +128,9 @@ datatype ty =
   | TStruct of tfield list
   | TIface of tmeth list * ty list   (* its methods, and the embedded types *)
   | TTuple of ty list                (* the results of a call with several results *)
+  | TGeneric of string list * tsig   (* a generic function: its type parameters (keys), signature *)
+  | TTilde of ty                     (* ~T, a term of a constraint *)
+  | TUnion of ty list                (* a union of terms, in a constraint *)
 and tsig = TSig of ty list * ty list * bool   (* parameters, results, variadic *)
 and tfield = TF of string * pos * ty * bool   (* name, declaration site, type, embedded *)
 and tmeth = TM of string * pos * tsig
@@ -137,8 +140,10 @@ and tmeth = TM of string * pos * tsig
 datatype tydef = TDef of {tparams : string list, rhs : ty, alias : bool}
 
 (* A method: declaration site, signature, pointer receiver, and the type parameters (keys) its
-   receiver names for those of the type. *)
-datatype methdef = MDef of {pos : pos, sg : tsig, ptr : bool, rtvars : string list}
+   receiver names for those of the type, and the type parameters (keys) of the method itself (Go
+   1.27: generic methods). *)
+datatype methdef =
+  MDef of {pos : pos, sg : tsig, ptr : bool, rtvars : string list, mtvars : string list}
 
 (* The key identifying a declaration: its position. *)
 fun pos_key (p : pos) =

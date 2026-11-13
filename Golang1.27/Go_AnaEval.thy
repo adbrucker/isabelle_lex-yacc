@@ -92,9 +92,12 @@ text\<open>
     clause); a call has the result type of the signature of its callee, a conversion the type
     converted to, \<open>*p\<close>, \<open>&x\<close>, \<open><-c\<close>, \<open>a[i]\<close>, \<open>a[i:j]\<close>, \<open>x.(T)\<close>, a composite literal and a
     function literal their natural types, and the builtins \<open>len\<close>, \<open>new\<close>, \<open>make\<close>, \<open>append\<close>... what
-    they are known to return. Everything else - the standard library, an imported type, a
-    result of a generic function whose type arguments would have to be inferred - is
-    \<open>TUnknown\<close>, on which nothing is ever linked. A named type is a \<^emph>\<open>reference\<close> to its declaration
+    they are known to return. The type arguments of a call of a generic function (or of a generic
+    method) are inferred: from the typed arguments by unification (a type literal meeting the
+    structure of a defined type), from the core types of the constraints (\<open>S ~[]E\<close>: E is the
+    element type of S), and from untyped constants by their default type; a type parameter about
+    which anything is doubtful stays \<open>TUnknown\<close>. Everything else - the standard library, an
+    imported type - is \<open>TUnknown\<close>, on which nothing is ever linked. A named type is a \<^emph>\<open>reference\<close> to its declaration
     (the position of its name), so types, fields and methods may be mutually recursive and
     declared in any order: the types, signatures and methods of a package are registered
     before anything is walked, and the types of package-level variables that are inferred are
@@ -584,6 +587,8 @@ fun lookup_ident genv name : tv =
    | SOME _ => Val TUnknown
    | NONE =>
        if name = "any" then Ty (TIface ([], []))
+       else if name = "byte" then Ty (TBasic "uint8")
+       else if name = "rune" then Ty (TBasic "int32")
        else if member (op =) basic_type_names name then Ty (TBasic name)
        else if name = "true" orelse name = "false" then Val bool_ty
        else if name = "iota" then Val int_ty
@@ -606,13 +611,15 @@ fun subst (m : (string * ty) list) (t : ty) : ty =
       | TStruct fs => TStruct (map (fn TF (n, p, t1, e) => TF (n, p, s t1, e)) fs)
       | TIface (ms, es) => TIface (map (fn TM (n, p, sg) => TM (n, p, ssig sg)) ms, map s es)
       | TTuple ts => TTuple (map s ts)
+      | TGeneric (ks, sg) => TGeneric (ks, ssig sg)
+      | TTilde t1 => TTilde (s t1)
+      | TUnion ts => TUnion (map s ts)
       | _ => t)
     and ssig (TSig (ps, rs, v)) = TSig (map s ps, map s rs, v)
   in if null m then t else s t end
 
 (* The type parameters of a declaration instantiated by "args"; with the wrong number of
-   arguments (an uninstantiated mention, or an inference this pass does not do) they are
-   unknown. *)
+   arguments (an uninstantiated mention) they are unknown. *)
 fun inst_map (tparams, args) =
   if length tparams = length args then tparams ~~ args else map (fn k => (k, TUnknown)) tparams
 
@@ -656,6 +663,14 @@ fun ty_of genv (e : pos A.gExpr) : ty =
    | A.EMapType (k, v, _) => TMap (ty_of genv k, ty_of genv v)
    | A.EChanType (_, t, _) => TChan (ty_of genv t)
    | A.EFuncType (sg, _) => TFunc (ty_of_sig genv sg)
+   | A.ETilde (t, _) => TTilde (ty_of genv t)
+   | A.EBinary (A.Or, _, _, _) =>
+       let
+         fun terms t = (case t of
+             A.EBinary (A.Or, a, b, _) => terms a @ terms b
+           | A.EParen (a, _) => terms a
+           | _ => [ty_of genv t])
+       in TUnion (terms e) end
    | A.EStructType (fields, _) => TStruct (maps (ty_of_field genv) fields)
    | A.EInterfaceType (elems, _) =>
        TIface (List.mapPartial
@@ -692,8 +707,11 @@ fun direct genv fuel name (t : ty) : (ident_kind * ty) list * ty list =
          let
            val own =
              (case Symtab.lookup (meths_of genv) (meth_key k name) of
-                SOME (MDef {pos, sg, rtvars, ...}) =>
-                  [(Meth pos, subst (inst_map (rtvars, args)) (TFunc sg))]
+                SOME (MDef {pos, sg, rtvars, mtvars, ...}) =>
+                  [(Meth pos,
+                    (case subst (inst_map (rtvars, args)) (TFunc sg) of
+                       TFunc g => if null mtvars then TFunc g else TGeneric (mtvars, g)
+                     | t => t))]
               | NONE => [])
            val (ms, es) =
              (case Symtab.lookup (defs_of genv) k of
@@ -764,7 +782,7 @@ fun elem_of genv t =
    | TArray e => e
    | TMap (_, v) => v
    | TPtr p => (case under genv 20 p of TArray e => e | _ => TUnknown)
-   | TBasic "string" => TBasic "byte"
+   | TBasic "string" => TBasic "uint8"
    | _ => TUnknown)
 
 fun slice_of genv t =
@@ -774,6 +792,170 @@ fun slice_of genv t =
    | TArray e => TSlice e
    | TPtr p => (case under genv 20 p of TArray e => TSlice e | _ => TUnknown)
    | _ => TUnknown)
+
+(* ---- Inference of the type arguments of a call ---------------------------------------------
+   "ks" are the type parameters (keys) of the generic function called. The pass unifies the
+   parameter types with the types of the typed arguments, uses the core types of the constraints
+   (S ~[]E: E is what S is a slice of), then gives the type parameters that only untyped constants
+   reach their default type, and uses the constraints again. It is conservative like all of the
+   type pass: a type parameter about which anything is doubtful is bound to "TUnknown" (poisoned),
+   and a poisoned parameter is never replaced by a default. *)
+
+datatype acls =
+    ATyped of ty      (* a typed argument *)
+  | AUntyped of ty    (* an untyped constant, by its default type *)
+  | ADoubt            (* a named constant, a type: typed or not, this pass cannot tell *)
+  | ANil              (* nil: tells nothing *)
+
+fun tvars_in ks (t : ty) : string list =
+  let
+    fun go t acc = (case t of
+        TVar k => if member (op =) ks k andalso not (member (op =) acc k) then k :: acc else acc
+      | TNamed (_, args) => fold go args acc
+      | TPtr t1 => go t1 acc
+      | TSlice t1 => go t1 acc
+      | TArray t1 => go t1 acc
+      | TMap (a, b) => go b (go a acc)
+      | TChan t1 => go t1 acc
+      | TFunc sg => gsig sg acc
+      | TStruct fs => fold (fn TF (_, _, t1, _) => go t1) fs acc
+      | TIface (ms, es) => fold go es (fold (fn TM (_, _, sg) => gsig sg) ms acc)
+      | TTuple ts => fold go ts acc
+      | TGeneric (_, sg) => gsig sg acc
+      | TTilde t1 => go t1 acc
+      | TUnion ts => fold go ts acc
+      | _ => acc)
+    and gsig (TSig (ps, rs, _)) acc = fold go rs (fold go ps acc)
+  in rev (go t []) end
+
+(* The core type of a constraint (with: is it a "~T" term), if it has a single one. *)
+fun core_type genv fuel (c : ty) : (bool * ty) option =
+  if fuel <= 0 then NONE
+  else
+    (case c of
+       TTilde t => SOME (true, t)
+     | TUnion [t] => core_type genv (fuel - 1) t
+     | TUnion _ => NONE
+     | TIface (_, es) =>
+         (case List.mapPartial (core_type genv (fuel - 1)) es of [x] => SOME x | _ => NONE)
+     | TNamed _ =>
+         (case under genv 20 c of
+            TUnknown => NONE
+          | TIface (ms, es) => core_type genv (fuel - 1) (TIface (ms, es))
+          | _ => SOME (false, c))
+     | TBasic "comparable" => NONE
+     | TBasic "error" => NONE
+     | TUnknown => NONE
+     | TVar _ => NONE
+     | t => SOME (false, t))
+
+(* Binds "k" to "a" in "bs"; a second, different type poisons it (a named type and a type literal
+   with the same structure give the named one), and an unknown type changes nothing known. *)
+fun bind_tparam genv k a bs =
+  (case AList.lookup (op =) bs k of
+     NONE => (k, a) :: bs
+   | SOME b =>
+       if b = a orelse b = TUnknown orelse a = TUnknown then bs
+       else if under genv 20 b = under genv 20 a
+            andalso (case (b, a) of (TNamed _, TNamed _) => false | (TNamed _, _) => true
+                                  | (_, TNamed _) => true | _ => false)
+       then AList.update (op =) (k, (case b of TNamed _ => b | _ => a)) bs
+       else AList.update (op =) (k, TUnknown) bs)
+
+fun poison_tparams ks p bs =
+  fold (fn k => fn b => if AList.defined (op =) b k then b else (k, TUnknown) :: b)
+    (tvars_in ks p) bs
+
+(* Unification of a parameter type "p" (with type parameters "ks") with the type "a" of an
+   argument; inexact like Go's: a type literal meets the structure of a defined type. *)
+fun unify genv ks (p : ty) (a : ty) bs : (string * ty) list =
+  let
+    fun all2 f xs ys b =
+      if length xs = length ys then fold (fn (x, y) => f x y) (xs ~~ ys) b
+      else poison_tparams ks p b
+  in
+    if null (tvars_in ks p) then bs
+    else
+      (case p of
+         TVar k => bind_tparam genv k a bs
+       | _ =>
+           let
+             val a' = (case (p, a) of (TNamed _, _) => a | (_, TNamed _) => under genv 20 a
+                                    | _ => a)
+           in
+             (case (p, a') of
+                (TPtr x, TPtr y) => unify genv ks x y bs
+              | (TSlice x, TSlice y) => unify genv ks x y bs
+              | (TArray x, TArray y) => unify genv ks x y bs
+              | (TChan x, TChan y) => unify genv ks x y bs
+              | (TMap (k1, v1), TMap (k2, v2)) => unify genv ks v1 v2 (unify genv ks k1 k2 bs)
+              | (TNamed (k1, xs), TNamed (k2, ys)) =>
+                  if k1 = k2 then all2 (unify genv ks) xs ys bs else poison_tparams ks p bs
+              | (TFunc (TSig (ps, rs, _)), TFunc (TSig (ps', rs', _))) =>
+                  if length ps = length ps' andalso length rs = length rs'
+                  then fold (fn (x, y) => unify genv ks x y) (rs ~~ rs')
+                         (fold (fn (x, y) => unify genv ks x y) (ps ~~ ps') bs)
+                  else poison_tparams ks p bs
+              | (TStruct fs, TStruct gs) =>
+                  if map (fn TF (n, _, _, _) => n) fs = map (fn TF (n, _, _, _) => n) gs
+                  then fold (fn (TF (_, _, x, _), TF (_, _, y, _)) => unify genv ks x y)
+                         (fs ~~ gs) bs
+                  else poison_tparams ks p bs
+              | _ => poison_tparams ks p bs)
+           end)
+  end
+
+(* Constraint type inference: for "S ~[]E" with S known, E is what S is a slice of; with a single
+   core type without "~" and S unknown, S is that type. *)
+fun infer_constraints genv ks bs =
+  let
+    fun one k bs =
+      (case Symtab.lookup (defs_of genv) k of
+         NONE => bs
+       | SOME (TDef {rhs, ...}) =>
+           (case core_type genv 8 rhs of
+              NONE => bs
+            | SOME (tilde, ct) =>
+                (case AList.lookup (op =) bs k of
+                   SOME TUnknown => bs
+                 | SOME b =>
+                     let
+                       val target =
+                         (case under genv 20 b of
+                            TVar kk =>
+                              (case Symtab.lookup (defs_of genv) kk of
+                                 SOME (TDef {rhs = c2, ...}) =>
+                                   (case core_type genv 8 c2 of SOME (_, t2) => t2 | NONE => TUnknown)
+                               | NONE => TUnknown)
+                          | u => if tilde then u else b)
+                     in unify genv ks ct target bs end
+                 | NONE =>
+                     if tilde then bs
+                     else
+                       let
+                         val m = List.mapPartial
+                                   (fn (k1, t) => if t = TUnknown then NONE else SOME (k1, t)) bs
+                         val ct' = subst m ct
+                       in if null (tvars_in ks ct') then (k, ct') :: bs else bs end)))
+    fun rounds 0 bs = bs
+      | rounds n bs = rounds (n - 1) (fold one ks bs)
+  in rounds 3 bs end
+
+fun untyped_rank t =
+  (case t of
+     TBasic "int" => 1 | TBasic "int32" => 2 | TBasic "float64" => 3 | TBasic "complex128" => 4
+   | _ => 0)
+
+(* The default type of a type parameter only untyped constants reach: the largest kind (int,
+   rune, float, complex); strings and booleans must agree. *)
+fun untyped_default (ts : ty list) : ty =
+  (case ts of
+     [] => TUnknown
+   | t :: _ =>
+       if forall (fn x => untyped_rank x > 0) ts then
+         fold (fn x => fn m => if untyped_rank x > untyped_rank m then x else m) ts t
+       else if forall (fn x => x = t) ts then t
+       else TUnknown)
 
 fun is_literal e =
   (case strip_paren e of
@@ -791,7 +973,7 @@ fun type_of genv (e : pos A.gExpr) : tv =
      | A.EInt _ => Val int_ty
      | A.EFloat _ => Val (TBasic "float64")
      | A.EImag _ => Val (TBasic "complex128")
-     | A.ERune _ => Val (TBasic "rune")
+     | A.ERune _ => Val (TBasic "int32")
      | A.EString _ => Val (TBasic "string")
      | A.EParen (e1, _) => type_of genv e1
      | A.ESelector (e1, A.Ident (n, _, _), _) =>
@@ -803,11 +985,19 @@ fun type_of genv (e : pos A.gExpr) : tv =
          (case type_of genv e1 of
             Ty (TNamed (k, _)) => Ty (TNamed (k, map (ty_of genv) args))
           | Ty _ => Ty TUnknown
+          | Val (TGeneric (ks, sg)) =>
+              let
+                val n = Int.min (length ks, length args)
+                val m = take n ks ~~ map (ty_of genv) (take n args)
+                val sg' = (case subst m (TFunc sg) of TFunc g => g | _ => sg)
+              in
+                Val (if n = length ks then TFunc sg' else TGeneric (drop n ks, sg'))
+              end
           | Val t => Val (elem_of genv t))
      | A.ESlice (e1, _, _, _, _) => Val (slice_of genv (val_of e1))
      | A.ETypeAssert (_, SOME t, _) => Val (ty_of genv t)
      | A.ETypeAssert (_, NONE, _) => Val TUnknown
-     | A.ECall (f, args, _, _) => call_type genv f args
+     | A.ECall (f, args, dots, _) => call_type genv f args dots
      | A.EStar (e1, _) =>
          (case type_of genv e1 of
             Ty t => Ty (TPtr t)
@@ -831,8 +1021,14 @@ fun type_of genv (e : pos A.gExpr) : tv =
      | _ => Ty (ty_of genv e))
   end
 
-and call_type genv f args : tv =
+and call_type genv f args dots : tv =
   let
+    fun results t =
+      (case t of
+         TFunc (TSig (_, [r], _)) => Val r
+       | TFunc (TSig (_, [], _)) => Val TUnknown
+       | TFunc (TSig (_, rs, _)) => Val (TTuple rs)
+       | _ => Val TUnknown)
     val builtin =
       (case f of
          A.EIdent (A.Ident (n, _, _)) =>
@@ -853,12 +1049,94 @@ and call_type genv f args : tv =
          (case type_of genv f of
             Ty t => Val t
           | Val t =>
-              (case under genv 20 t of
-                 TFunc (TSig (_, [r], _)) => Val r
-               | TFunc (TSig (_, [], _)) => Val TUnknown
-               | TFunc (TSig (_, rs, _)) => Val (TTuple rs)
-               | _ => Val TUnknown)))
+              (case t of
+                 TGeneric (ks, sg) => results (infer_call genv ks sg args dots)
+               | _ => results (under genv 20 t))))
   end
+
+and arg_class genv (e : pos A.gExpr) : acls =
+  let
+    fun typed () =
+      (case type_of genv e of Val t => ATyped t | Ty _ => ADoubt)
+  in
+    (case e of
+       A.EParen (e1, _) => arg_class genv e1
+     | A.EInt _ => AUntyped int_ty
+     | A.EFloat _ => AUntyped (TBasic "float64")
+     | A.EImag _ => AUntyped (TBasic "complex128")
+     | A.ERune _ => AUntyped (TBasic "int32")
+     | A.EString _ => AUntyped (TBasic "string")
+     | A.EIdent (A.Ident (n, _, _)) =>
+         (case Symtab.lookup (names_of genv) n of
+            NONE =>
+              if n = "true" orelse n = "false" then AUntyped bool_ty
+              else if n = "iota" then AUntyped int_ty
+              else if n = "nil" then ANil
+              else typed ()
+          | SOME (Const _) =>
+              (case Symtab.lookup (vtypes_of genv) n of
+                 SOME (t as TNamed _) => ATyped t
+               | _ => ADoubt)
+          | SOME _ => typed ())
+     | A.EUnary (A.UAnd, _, _) => typed ()
+     | A.EUnary (A.URecv, _, _) => typed ()
+     | A.EUnary (_, e1, _) => arg_class genv e1
+     | A.EBinary (opr, a, b, _) =>
+         if member (op =) [A.Eq, A.Ne, A.Lt, A.Le, A.Gt, A.Ge, A.LAnd, A.LOr] opr then
+           ATyped bool_ty
+         else if member (op =) [A.Shl, A.Shr] opr then arg_class genv a
+         else
+           (case (arg_class genv a, arg_class genv b) of
+              (ATyped t, _) => ATyped t
+            | (_, ATyped t) => ATyped t
+            | (AUntyped x, AUntyped y) =>
+                AUntyped (if untyped_rank x >= untyped_rank y then x else y)
+            | _ => ADoubt)
+     | _ => typed ())
+  end
+
+(* The signature of a generic function called with "args", its type parameters replaced by what
+   is inferred (the others by "TUnknown"). *)
+and infer_call genv ks (sg as TSig (ps, _, variadic)) args dots : ty =
+  let
+    val n = length ps
+    val classes =
+      (case map (arg_class genv) args of
+         [ATyped (TTuple ts)] => map ATyped ts
+       | cs => cs)
+    fun param_at i =
+      if variadic andalso i >= n - 1 then
+        (if dots then SOME (List.last ps)
+         else (case List.last ps of TSlice t => SOME t | _ => NONE))
+      else if i < n then SOME (nth ps i) else NONE
+    val pairs =
+      if (not variadic andalso length classes <> n) orelse (variadic andalso length classes < n - 1)
+      then []
+      else List.mapPartial (fn (i, c) => Option.map (fn p => (p, c)) (param_at i))
+             (tag_list 0 classes)
+    val bs1 =
+      fold (fn (p, c) => fn bs =>
+              (case c of
+                 ATyped t => unify genv ks p t bs
+               | _ => bs)) pairs []
+    val bs2 = infer_constraints genv ks bs1
+    val bs3 =
+      fold (fn k => fn bs =>
+              if AList.defined (op =) bs k then bs
+              else
+                let
+                  val cs = List.mapPartial (fn (TVar k', c) => if k' = k then SOME c else NONE
+                                             | _ => NONE) pairs
+                in
+                  if null cs then bs
+                  else if exists (fn ADoubt => true | _ => false) cs then (k, TUnknown) :: bs
+                  else
+                    (k, untyped_default (List.mapPartial (fn AUntyped t => SOME t | _ => NONE) cs))
+                      :: bs
+                end) ks bs2
+    val bs4 = infer_constraints genv ks bs3
+    val m = map (fn k => (k, the_default TUnknown (AList.lookup (op =) bs4 k))) ks
+  in subst m (TFunc sg) end
 
 fun val_ty genv e = (case type_of genv e of Val t => t | Ty _ => TUnknown)
 
@@ -890,7 +1168,7 @@ fun range_types genv (e : pos A.gExpr) : ty * ty =
      | TArray el => (int_ty, el)
      | TPtr p => (case under genv 20 p of TArray el => (int_ty, el) | _ => unk)
      | TMap (k, v) => (k, v)
-     | TBasic "string" => (int_ty, TBasic "rune")
+     | TBasic "string" => (int_ty, TBasic "int32")
      | TChan el => (el, TUnknown)
      | TBasic s => if member (op =) integer_type_names s then (t, TUnknown) else unk
      | TFunc (TSig ([y], _, _)) =>
@@ -950,13 +1228,13 @@ fun register_typespec genv (A.TypeSpec (name, tps, alias, t, _)) =
 fun register_func genv (A.DFunc (name, tps, sg, _, _)) =
       let
         val (g1, tpkeys) = register_tparams genv tps
-        (* the type parameters of a function are unknown to a caller: this pass does not infer
-           them *)
-        val fty = subst (map (fn k => (k, TUnknown)) tpkeys) (TFunc (ty_of_sig g1 sg))
+        val g = ty_of_sig g1 sg
+        (* a generic function is called with its type arguments inferred (see "infer_call") *)
+        val fty = if null tpkeys then TFunc g else TGeneric (tpkeys, g)
       in set_vty (restore_scope genv g1) name fty end
   | register_func genv _ = genv
 
-fun register_method genv (A.DMethod ([A.Param (_, rt, _, _)], A.Ident (mname, _, mni), _, sg, _, _)) =
+fun register_method genv (A.DMethod ([A.Param (_, rt, _, _)], A.Ident (mname, _, mni), mtps, sg, _, _)) =
       if mname = "_" then genv
       else
         (case (case recv_base rt of A.EIndex (b, _, _) => b | b => b) of
@@ -967,9 +1245,10 @@ fun register_method genv (A.DMethod ([A.Param (_, rt, _, _)], A.Ident (mname, _,
                     val targs = recv_targs rt
                     val g0 = fold (fn id => fn g => enter Tparam g id) targs genv
                     val ptr = (case strip_paren rt of A.EStar _ => true | _ => false)
-                    val m = MDef {pos = A.pos_of_NodeInfo mni, sg = ty_of_sig g0 sg, ptr = ptr,
-                                  rtvars = map id_key targs}
-                  in add_meth (meth_key (pos_key tp) mname) m genv end
+                    val (g1, mtkeys) = register_tparams g0 mtps
+                    val m = MDef {pos = A.pos_of_NodeInfo mni, sg = ty_of_sig g1 sg, ptr = ptr,
+                                  rtvars = map id_key targs, mtvars = mtkeys}
+                  in add_meth (meth_key (pos_key tp) mname) m (restore_scope genv g1) end
               | _ => genv)
          | _ => genv)
   | register_method genv _ = genv
