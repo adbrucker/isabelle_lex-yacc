@@ -67,9 +67,12 @@ the real sources).
 Everything described above builds and passes its tests. The grammar has two
 shift/reduce conflicts (the dangling `else`, and `_Atomic` as a qualifier or a
 type specifier) and one reduce/reduce conflict (a bare identifier is an `Id`, not
-an `Expr`), all resolved in the intended way. There is no symbol table in the
-lexer (identifiers are never typedef names), and the preprocessor is only
-recognised, not run. The manual's *Limitations* section has the details.
+an `Expr`), all resolved in the intended way. The lexer has one piece of
+feedback from the parser: the names declared by a `typedef` are lexed as type
+names from then on (`C11_Typedefs`, kept for the rest of the session and merged
+only from accepted parses; `c11_predef` uses it for headers). It is a flat set,
+not block-scoped, so a local variable that shadows a typedef name is still lexed
+as a type name. The preprocessor is only recognised, not run. The manual's *Limitations* section has the details.
 
 ## License
 
