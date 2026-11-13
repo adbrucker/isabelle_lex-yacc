@@ -131,6 +131,7 @@ datatype ty =
   | TGeneric of string list * tsig   (* a generic function: its type parameters (keys), signature *)
   | TTilde of ty                     (* ~T, a term of a constraint *)
   | TUnion of ty list                (* a union of terms, in a constraint *)
+  | TPkg of string                   (* an imported package, by import path *)
 and tsig = TSig of ty list * ty list * bool   (* parameters, results, variadic *)
 and tfield = TF of string * pos * ty * bool   (* name, declaration site, type, embedded *)
 and tmeth = TM of string * pos * tsig
@@ -165,10 +166,13 @@ datatype genv = mk of {names : ident_kind Symtab.table,
                        defs : tydef Symtab.table,
                        meths : methdef Symtab.table,
                        go_antiq : (genv type_antiq_fun0) Symtab.table,
-                       units : int}
+                       units : int,
+                       target : string}
   \<comment> \<open>"vtypes" holds the types of the names in "names" (scoped exactly like them), "defs" the
       type declarations by key, "meths" the methods by type key and name; "units" numbers the
-      program units internally.\<close>
+      program units internally; "target" says where the packages that are imported are read from
+      (the root of a Go tree, the operating system and the architecture, see "Go_AnaEval.thy"), or
+      is empty if there is none.\<close>
 
 type type_antiq_fun = genv type_antiq_fun0
 
@@ -181,20 +185,23 @@ fun lift_theory_antiq
 
 val empty_genv =
   mk {names = Symtab.empty, vtypes = Symtab.empty, defs = Symtab.empty, meths = Symtab.empty,
-      go_antiq = Symtab.empty, units = 0}
+      go_antiq = Symtab.empty, units = 0, target = ""}
 
 (* Merging must not reset to empty (Isabelle forks and merges theory state
    routinely during live editing - see the same note on "merge_cenv" in
    C11_Env.thy); "units" takes the larger counter so a merge can never re-issue
    an already-used "Ast_Store" key. *)
-fun merge_genv (mk {names = i1, vtypes = v1, defs = d1, meths = m1, go_antiq = a1, units = u1},
-                mk {names = i2, vtypes = v2, defs = d2, meths = m2, go_antiq = a2, units = u2}) =
+fun merge_genv (mk {names = i1, vtypes = v1, defs = d1, meths = m1, go_antiq = a1, units = u1,
+                    target = t1},
+                mk {names = i2, vtypes = v2, defs = d2, meths = m2, go_antiq = a2, units = u2,
+                    target = t2}) =
   mk {names = Symtab.merge (K true) (i1, i2),
       vtypes = Symtab.merge (K true) (v1, v2),
       defs = Symtab.merge (K true) (d1, d2),
       meths = Symtab.merge (K true) (m1, m2),
       go_antiq = Symtab.merge (K true) (a1, a2),
-      units = Int.max (u1, u2)}
+      units = Int.max (u1, u2),
+      target = if t1 = "" then t2 else t1}
 
 structure Env = Generic_Data
   (type T = genv
@@ -222,11 +229,11 @@ fun ast_store_key thy unit_no =
    "thy", bumping the counter. Returns the key and the updated theory. *)
 fun store_root (root : Position.T Go_Ast.root) (text : string) thy =
     let
-      val mk {names, vtypes, defs, meths, go_antiq, units} = get (Context.Theory thy)
+      val mk {names, vtypes, defs, meths, go_antiq, units, target} = get (Context.Theory thy)
       val key = ast_store_key thy units
       val genv' =
         mk {names = names, vtypes = vtypes, defs = defs, meths = meths, go_antiq = go_antiq,
-            units = units + 1}
+            units = units + 1, target = target}
       val thy' = thy
         |> Context.theory_map (put genv')
         |> Context.theory_map (Ast_Store.map (Symtab.update (key, root)))
@@ -240,11 +247,11 @@ fun get_source key thy =
 
 fun store_antiq (name, antiq_fun) thy =
     let
-       val mk {names, vtypes, defs, meths, go_antiq, units} = get (Context.Theory thy)
+       val mk {names, vtypes, defs, meths, go_antiq, units, target} = get (Context.Theory thy)
        val genv' =
          mk {names = names, vtypes = vtypes, defs = defs, meths = meths,
              go_antiq = Symtab.update (name, antiq_fun) go_antiq,
-             units = units}
+             units = units, target = target}
     in thy |> Context.theory_map (put genv') end
 
 fun get_antiq name thy =

@@ -271,6 +271,76 @@ val _ = ent "a type parameter can be used by the next one"
 val _ = ent "generic types" "type Pair[K comparable, V any] struct {\n\tk K\n\tv V\n}" 7
 \<close>
 
+subsection\<open>Imported packages\<close>
+
+text\<open>
+  A small Go tree is written to a temporary directory and named by \<open>go_root\<close>: the imported
+  packages are read from it, and what they declare is linked and typed like the program's own
+  declarations. The files that the Go tool would not build for the target (\<open>_windows.go\<close>, a
+  \<open>//go:build\<close> line, the tests) are not read.
+\<close>
+
+ML\<open>
+val _ = Isabelle_System.with_tmp_dir "gotest" (fn dir =>
+  let
+    fun put rel text =
+      let
+        val path = Path.append dir (Path.explode rel)
+        val _ = Isabelle_System.make_directory (Path.dir path)
+      in File.write path text end
+    val _ = put "src/io/io.go"
+      "package io\n\ntype Reader interface {\n\tRead(p []byte) (n int, err error)\n}\n"
+    val _ = put "src/mini/mini.go"
+      "package mini\n\nimport \"io\"\n\ntype Box struct {\n\tN int\n\tR io.Reader\n}\n\n\
+      \func (b *Box) Get() int { return b.N }\n\nfunc New() *Box { return &Box{} }\n\n\
+      \var Default = Box{}\n\nvar Reader io.Reader\n\nconst Limit = 10\n\n\
+      \type Wrapper struct {\n\tBox\n}\n\n\
+      \func Map[T, U any](xs []T, f func(T) U) []U { return nil }\n\nfunc hidden() {}\n"
+    val _ = put "src/mini/mini_windows.go" "package mini\n\nfunc (b *Box) OnlyWindows() {}\n"
+    val _ = put "src/mini/tag.go"
+      "//go:build !linux && !darwin\n\npackage mini\n\nfunc (b *Box) OnlyTag() {}\n"
+    val _ = put "src/mini/mini_test.go" "package mini\n\nfunc (b *Box) OnlyTest() {}\n"
+    fun thy_for os =
+      fresh |> Config.put_global AnaEval.go_root (Path.implode dir)
+            |> Config.put_global AnaEval.go_os os
+    val thy_linux = thy_for "linux"
+    val thy_windows = thy_for "windows"
+    fun ent_in thy name text n =
+      let val got = count "entity" (reports_in Go_Parse.Entry_Decls thy text)
+      in if got = n then writeln ("OK: " ^ name)
+         else fail ("FAILED: " ^ name ^ ": expected " ^ Int.toString n ^ ", got " ^ Int.toString got)
+      end
+    val ent_l = ent_in thy_linux
+  in
+    ent_in fresh "without a Go tree nothing of a package is seen"
+      "import \"mini\"\nfunc f() int { return mini.New().Get() }" 3;
+    ent_l "a function of a package and the method of its result"
+      "import \"mini\"\nfunc f() int { return mini.New().Get() }" 5;
+    ent_l "a type of a package, its field"
+      "import \"mini\"\nfunc f(b mini.Box) int { return b.N }" 7;
+    ent_l "files for another system, a build line, a test are not read"
+      "import \"mini\"\nfunc f(b *mini.Box) {\n\tb.OnlyWindows()\n\tb.OnlyTag()\n\tb.OnlyTest()\n\tb.Get()\n}" 10;
+    ent_in thy_windows "for another target they are"
+      "import \"mini\"\nfunc f(b *mini.Box) {\n\tb.OnlyWindows()\n\tb.OnlyTag()\n\tb.OnlyTest()\n\tb.Get()\n}" 12;
+    ent_l "a field promoted from an embedded type of the package"
+      "import \"mini\"\nfunc f(w mini.Wrapper) int { return w.N }" 7;
+    ent_l "a field of the type of another package"
+      "import \"mini\"\nfunc f(b mini.Box) { b.R.Read(nil) }" 8;
+    ent_l "the type arguments of a call of a function of a package are inferred"
+      "import \"mini\"\nfunc g(xs []int, h func(int) mini.Box) int { return mini.Map(xs, h)[0].N }" 11;
+    ent_l "an alias of the import, a constant"
+      "import m \"mini\"\nfunc f() int { return m.Limit }" 4;
+    ent_l "variables of a package"
+      "import \"mini\"\nfunc f() {\n\t_ = mini.Default.N\n\tmini.Reader.Read(nil)\n}" 8;
+    ent_l "the keys of a literal of the type of a package"
+      "import \"mini\"\nfunc f() { _ = mini.Box{N: 1} }" 5;
+    ent_l "what is not exported is not seen"
+      "import \"mini\"\nfunc f() { mini.hidden() }" 3;
+    ent_l "a package that is not there is not seen"
+      "import \"nowhere\"\nfunc f() { nowhere.F() }" 3
+  end)
+\<close>
+
 text\<open>The top-level names of a source file stay in the environment for the commands that follow;
   the names local to a function do not.\<close>
 

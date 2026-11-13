@@ -35,7 +35,10 @@ The concepts are those of the C11 project, carried over one for one:
 * **Binding**: every declaration and every resolved name use is reported with Isabelle's entity
   markup (hover, click-through), with Go's block scoping, the forward visibility of package-level
   names, short variable declarations, imports, generics and labels; names that resolve nowhere
-  (the universe block, a dot import) are not marked.
+  (the universe block, a dot import) are not marked. **Imported packages are read from a Go
+  tree** (`declare [[go_root = "/usr/local/go"]]`, else `$GOROOT`): `strings.Builder`,
+  `b.WriteString` and `slices.Index(xs, v)` link to their declarations in the standard library
+  and are typed like the program's own declarations.
 * **Antiquotations** in `//` and `/* */` comments, `//@ tag[navi](level) \<open>body\<close>`,
   with the same navigation (`u`, `U`, `r`, `d`), evaluation levels and the eight standard
   antiquotations as in the other front-ends (`probe_genv`, `probe_ast`, `highlight`, `term`, `ML`,
@@ -99,6 +102,22 @@ regenerates it from scratch. `Golang1.27/ROOTS` makes the manual's sub-session v
 `-d Golang1.27`. To work interactively, open a theory importing `Go` with
 `isabelle jedit -d Golang1.27 -l Golang1_27`.
 
+## Imported packages
+
+The front-end needs the sources of a Go installation (or of a checkout of `github.com/golang/go`)
+to see the packages a program imports. It looks, in this order, at the theory option `go_root`,
+at `$GOROOT`, and at `/usr/local/go`, `/opt/homebrew/opt/go/libexec`, `/usr/lib/go`; the tree
+must have a `src` directory. The files of a package that count are those the Go tool would build
+for `go_os`/`go_arch` (default `$GOOS`/`$GOARCH`, else the host):
+
+```isabelle
+declare [[go_root = "/usr/local/go", go_os = "linux", go_arch = "amd64"]]
+```
+
+A package is parsed the first time it is needed and kept for the session, so the cost is paid
+once: a program that uses `fmt`, `os`, `strings` and `net/http` is analysed in a few seconds.
+Without a tree nothing changes: the package name is linked, and nothing else.
+
 ## Tests
 
 `Go_Tests.thy` has round-trip tests for every construct. Its corpus test reads a Go source tree if
@@ -126,9 +145,10 @@ composite literal that are bare names are resolved only if the type of the liter
 selections `x.f` are resolved by a type pass that links a field or method only when it is certain
 (same-package types, signatures and methods in any order; embedding, pointers, interfaces, aliases,
 generic types and the inference of the type arguments of generic calls are handled, while the
-standard library is not seen), a name that resolves nowhere is not marked; the empty
-statement is not kept in the tree; and the untyped composite literal as an argument that the development version of Go
-(after 1.27) experiments with is not Go 1.27 and is rejected.
+packages of a Go tree are read, those of modules and a dot import are not seen), a name that
+resolves nowhere is not marked; the empty statement is not kept in the tree; and the untyped
+composite literal as an argument that the development version of Go (after 1.27) experiments with
+is not Go 1.27 and is rejected.
 
 The yacc grammar has no shift/reduce and no reduce/reduce conflict. Where shifting is the reading
 Go intends (a type name followed by `[`, `.` or `{`; a result type after a parameter list) the

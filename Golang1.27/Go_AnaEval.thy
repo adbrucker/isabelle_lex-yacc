@@ -49,7 +49,7 @@
  ******************************************************************************)
 
 theory Go_AnaEval
-  imports "Go_Env"
+  imports "Go_Env" "Go_Parser"
 begin
 
 section\<open>Analyse and Eval\<close>
@@ -96,8 +96,8 @@ text\<open>
     method) are inferred: from the typed arguments by unification (a type literal meeting the
     structure of a defined type), from the core types of the constraints (\<open>S ~[]E\<close>: E is the
     element type of S), and from untyped constants by their default type; a type parameter about
-    which anything is doubtful stays \<open>TUnknown\<close>. Everything else - the standard library, an
-    imported type - is \<open>TUnknown\<close>, on which nothing is ever linked. A named type is a \<^emph>\<open>reference\<close> to its declaration
+    which anything is doubtful stays \<open>TUnknown\<close>. Everything else - for instance an imported
+    type when no Go tree is found - is \<open>TUnknown\<close>, on which nothing is ever linked. A named type is a \<^emph>\<open>reference\<close> to its declaration
     (the position of its name), so types, fields and methods may be mutually recursive and
     declared in any order: the types, signatures and methods of a package are registered
     before anything is walked, and the types of package-level variables that are inferred are
@@ -112,8 +112,10 @@ text\<open>
     expressions; when the type of the literal is unknown a bare name as a key is left alone,
     as it could be either.
   \<^item> \<^bold>\<open>Imports\<close> declare the package name - the alias, or the last element of the import path -
-    at the import path; a use \<open>pkg.Name\<close> is hyperlinked to it. The standard library is not seen
-    by this pass.
+    at the import path; a use \<open>pkg.Name\<close> is hyperlinked to it. The imported package is read from
+    a Go tree if one is found (see \<open>Pkg_Store\<close>, \<open>load_package\<close> and \<open>target_string\<close> below): its
+    exported members are hyperlinked to their declarations in the files of the tree, and its
+    types, functions and methods are known to the type pass.
   \<^item> \<^bold>\<open>Names that resolve nowhere are not marked.\<close> A Go name very often comes from the universe
     block (\<open>int\<close>, \<open>len\<close>, \<open>nil\<close>), a dot import or another file of the package, none of which this
     pass sees; underlining them would drown the useful markup.
@@ -142,21 +144,27 @@ fun defs_of (mk {defs, ...} : genv) = defs
 fun meths_of (mk {meths, ...} : genv) = meths
 
 (* The scope of a name is that of its type: the two tables are always set together. *)
-fun set_scope (names', vtypes') (mk {names = _, vtypes = _, defs, meths, go_antiq, units}) =
+fun target_of (mk {target, ...} : genv) = target
+
+fun set_scope (names', vtypes') (mk {names = _, vtypes = _, defs, meths, go_antiq, units, target}) =
   mk {names = names', vtypes = vtypes', defs = defs, meths = meths, go_antiq = go_antiq,
-      units = units}
+      units = units, target = target}
 
-fun add_def key d (mk {names, vtypes, defs, meths, go_antiq, units}) =
+fun add_def key d (mk {names, vtypes, defs, meths, go_antiq, units, target}) =
   mk {names = names, vtypes = vtypes, defs = Symtab.update (key, d) defs, meths = meths,
-      go_antiq = go_antiq, units = units}
+      go_antiq = go_antiq, units = units, target = target}
 
-fun add_meth key m (mk {names, vtypes, defs, meths, go_antiq, units}) =
+fun add_meth key m (mk {names, vtypes, defs, meths, go_antiq, units, target}) =
   mk {names = names, vtypes = vtypes, defs = defs, meths = Symtab.update (key, m) meths,
-      go_antiq = go_antiq, units = units}
+      go_antiq = go_antiq, units = units, target = target}
 
-fun set_vtypes vtypes' (mk {names, vtypes = _, defs, meths, go_antiq, units}) =
+fun set_vtypes vtypes' (mk {names, vtypes = _, defs, meths, go_antiq, units, target}) =
   mk {names = names, vtypes = vtypes', defs = defs, meths = meths, go_antiq = go_antiq,
-      units = units}
+      units = units, target = target}
+
+fun set_target target' (mk {names, vtypes, defs, meths, go_antiq, units, target = _}) =
+  mk {names = names, vtypes = vtypes, defs = defs, meths = meths, go_antiq = go_antiq,
+      units = units, target = target'}
 
 (* The position a "root" itself spans: what a "type_antiq_fun" sees as its own "current term". A
    source file has no single span. *)
@@ -522,25 +530,34 @@ fun import_name path =
      | [] => inner)
   end
 
+(* The import path without its quotes. *)
+fun unquote_path path = String.substring (path, 1, Int.max (size path - 2, 0))
+
+(* The package name stands for the package: its type is the import path. *)
+fun set_pkg_path name path genv =
+  set_vtypes (Symtab.update (name, TPkg (unquote_path path)) (vtypes_of genv)) genv
+
 (* An import declares the package name at the import path (or at the alias). *)
 fun reg_import genv (A.ImportSpec (name, path, ni)) =
       (case name of
          SOME (id as A.Ident (n, _, _)) =>
-           if n = "_" orelse n = "." then genv else reg Pkg genv id
+           if n = "_" orelse n = "." then genv else set_pkg_path n path (reg Pkg genv id)
        | NONE =>
            let
              val pos = A.pos_of_NodeInfo ni
              val pname = import_name path
              val kind = Pkg pos
              val _ = report_decl (describe_kind kind) path pos
-           in declare kind genv pname end)
+           in set_pkg_path pname path (declare kind genv pname) end)
   | reg_import genv _ = genv
 
 fun enter_import genv (A.ImportSpec (name, path, ni)) =
       (case name of
          SOME (id as A.Ident (n, _, _)) =>
-           if n = "_" orelse n = "." then genv else enter Pkg genv id
-       | NONE => declare (Pkg (A.pos_of_NodeInfo ni)) genv (import_name path))
+           if n = "_" orelse n = "." then genv else set_pkg_path n path (enter Pkg genv id)
+       | NONE =>
+           let val pname = import_name path
+           in set_pkg_path pname path (declare (Pkg (A.pos_of_NodeInfo ni)) genv pname) end)
   | enter_import genv _ = genv
 
 (* The type parameters a method's receiver type declares: "func (l *List[T]) Push(x T)". *)
@@ -559,6 +576,71 @@ fun recv_head t = (case recv_base t of A.EIndex (b, _, _) => b | _ => t)
 
    Everything below is pure (no report, no antiquotation) and works on the "genv" it is given, so
    it can be asked about any expression at any point of the walk. See the top-of-theory note. *)
+
+(* ---- Packages that are imported --------------------------------------------------------------
+   The packages a program imports are read from a Go tree (see "target_string" below): the source
+   files of a package are parsed on first use, and their declarations are converted to types the
+   first time one of them is needed. What has been loaded lives in this store, shared by all
+   theories, keyed by the target (root, operating system, architecture) and the import path, so it
+   is read from disk once per session. The definitions of the types of an imported package are
+   found by their key, like those of the program itself (see "get_def"). *)
+structure Pkg_Store = struct
+  (* the package-level names, the conversion of its declarations (which also publishes the type
+     definitions and methods to "defs" and "meths"), the types of its variables and constants *)
+  datatype pkg = Pk of {members : ident_kind Symtab.table,
+                        conv : {ftypes : ty Symtab.table} Lazy.lazy,
+                        vtys : ty Symtab.table Lazy.lazy}
+  val defs = Synchronized.var "Go_Pkg.defs" (Symtab.empty : tydef Symtab.table)
+  val meths = Synchronized.var "Go_Pkg.meths" (Symtab.empty : methdef Symtab.table)
+  val pkgs = Synchronized.var "Go_Pkg.pkgs" (Symtab.empty : pkg option Symtab.table)
+  val owners = Synchronized.var "Go_Pkg.owners" (Symtab.empty : string Symtab.table)
+  fun k tgt key = tgt ^ "|" ^ key
+  fun def tgt key = Symtab.lookup (Synchronized.value defs) (k tgt key)
+  fun meth tgt key name = Symtab.lookup (Synchronized.value meths) (k tgt (key ^ "|" ^ name))
+  fun owner tgt key = Symtab.lookup (Synchronized.value owners) (k tgt key)
+  (* set once the loader below is defined *)
+  val load_hook : (string -> string -> pkg option) Unsynchronized.ref =
+    Unsynchronized.ref (fn _ => fn _ => NONE)
+  val member_hook : (genv -> string -> string -> (ident_kind * ty) option) Unsynchronized.ref =
+    Unsynchronized.ref (fn _ => fn _ => fn _ => NONE)
+  fun force tgt path =
+    (case !load_hook tgt path of SOME (Pk {conv, ...}) => ignore (Lazy.force conv) | NONE => ())
+end
+
+(* The definition of the type declared under "key", in the program or in an imported package
+   (whose conversion this forces). *)
+fun get_def genv key =
+  (case Symtab.lookup (defs_of genv) key of
+     SOME d => SOME d
+   | NONE =>
+       let val tgt = target_of genv
+       in
+         if tgt = "" then NONE
+         else
+           (case Pkg_Store.def tgt key of
+              SOME d => SOME d
+            | NONE =>
+                (case Pkg_Store.owner tgt key of
+                   SOME path => (try (Pkg_Store.force tgt) path; Pkg_Store.def tgt key)
+                 | NONE => NONE))
+       end)
+
+fun get_meth genv key name =
+  (case Symtab.lookup (meths_of genv) (key ^ "|" ^ name) of
+     SOME m => SOME m
+   | NONE =>
+       let val tgt = target_of genv
+       in
+         if tgt = "" then NONE
+         else
+           (case Pkg_Store.meth tgt key name of
+              SOME m => SOME m
+            | NONE =>
+                (case Pkg_Store.owner tgt key of
+                   SOME path => (try (Pkg_Store.force tgt) path; Pkg_Store.meth tgt key name)
+                 | NONE => NONE))
+       end)
+
 
 val int_ty = TBasic "int"
 val bool_ty = TBasic "bool"
@@ -584,6 +666,7 @@ fun lookup_ident genv name : tv =
    | SOME (Const _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
    | SOME (Param _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
    | SOME (Func _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
+   | SOME (Pkg _) => Val (the_default TUnknown (Symtab.lookup (vtypes_of genv) name))
    | SOME _ => Val TUnknown
    | NONE =>
        if name = "any" then Ty (TIface ([], []))
@@ -630,7 +713,7 @@ fun under genv fuel (t : ty) : ty =
      TNamed (k, args) =>
        if fuel <= 0 then TUnknown
        else
-         (case Symtab.lookup (defs_of genv) k of
+         (case get_def genv k of
             SOME (TDef {tparams, rhs, ...}) =>
               under genv (fuel - 1) (subst (inst_map (tparams, args)) rhs)
           | NONE => TUnknown)
@@ -663,6 +746,13 @@ fun ty_of genv (e : pos A.gExpr) : ty =
    | A.EMapType (k, v, _) => TMap (ty_of genv k, ty_of genv v)
    | A.EChanType (_, t, _) => TChan (ty_of genv t)
    | A.EFuncType (sg, _) => TFunc (ty_of_sig genv sg)
+   | A.ESelector (A.EIdent (A.Ident (p, _, _)), A.Ident (n, _, _), _) =>
+       (case lookup_ident genv p of
+          Val (TPkg path) =>
+            (case !Pkg_Store.member_hook genv path n of
+               SOME (Typ tp, _) => TNamed (pos_key tp, [])
+             | _ => TUnknown)
+        | _ => TUnknown)
    | A.ETilde (t, _) => TTilde (ty_of genv t)
    | A.EBinary (A.Or, _, _, _) =>
        let
@@ -706,7 +796,7 @@ fun direct genv fuel name (t : ty) : (ident_kind * ty) list * ty list =
        TNamed (k, args) =>
          let
            val own =
-             (case Symtab.lookup (meths_of genv) (meth_key k name) of
+             (case get_meth genv k name of
                 SOME (MDef {pos, sg, rtvars, mtvars, ...}) =>
                   [(Meth pos,
                     (case subst (inst_map (rtvars, args)) (TFunc sg) of
@@ -714,7 +804,7 @@ fun direct genv fuel name (t : ty) : (ident_kind * ty) list * ty list =
                      | t => t))]
               | NONE => [])
            val (ms, es) =
-             (case Symtab.lookup (defs_of genv) k of
+             (case get_def genv k of
                 SOME (TDef {tparams, rhs, alias}) =>
                   let val rhs' = subst (inst_map (tparams, args)) rhs
                   in
@@ -737,7 +827,7 @@ fun direct genv fuel name (t : ty) : (ident_kind * ty) list * ty list =
            val unk = exists (fn e => under genv 20 e = TUnknown) es
          in (inh, if unk then [TUnknown] else []) end
      | TVar k =>
-         (case Symtab.lookup (defs_of genv) k of
+         (case get_def genv k of
             SOME (TDef {rhs, ...}) =>
               (filter (fn (Meth _, _) => true | _ => false)
                  (#1 (direct genv (fuel - 1) name (under genv 20 rhs))), [])
@@ -910,7 +1000,7 @@ fun unify genv ks (p : ty) (a : ty) bs : (string * ty) list =
 fun infer_constraints genv ks bs =
   let
     fun one k bs =
-      (case Symtab.lookup (defs_of genv) k of
+      (case get_def genv k of
          NONE => bs
        | SOME (TDef {rhs, ...}) =>
            (case core_type genv 8 rhs of
@@ -923,7 +1013,7 @@ fun infer_constraints genv ks bs =
                        val target =
                          (case under genv 20 b of
                             TVar kk =>
-                              (case Symtab.lookup (defs_of genv) kk of
+                              (case get_def genv kk of
                                  SOME (TDef {rhs = c2, ...}) =>
                                    (case core_type genv 8 c2 of SOME (_, t2) => t2 | NONE => TUnknown)
                                | NONE => TUnknown)
@@ -978,7 +1068,12 @@ fun type_of genv (e : pos A.gExpr) : tv =
      | A.EParen (e1, _) => type_of genv e1
      | A.ESelector (e1, A.Ident (n, _, _), _) =>
          (case type_of genv e1 of
-            Val t => Val (case lookup_member genv n t of SOME (_, mt) => mt | NONE => TUnknown)
+            Val (TPkg path) =>
+              (case !Pkg_Store.member_hook genv path n of
+                 SOME (Typ tp, _) => Ty (TNamed (pos_key tp, []))
+               | SOME (_, t) => Val t
+               | NONE => Val TUnknown)
+          | Val t => Val (case lookup_member genv n t of SOME (_, mt) => mt | NONE => TUnknown)
           | Ty t => Val (case lookup_member genv n t of
                            SOME (Meth _, mt) => mt | _ => TUnknown))
      | A.EIndex (e1, args, _) =>
@@ -1296,6 +1391,313 @@ fun register_values genv (d : pos A.gDecl) =
      | _ => genv)
   end
 
+(* The names declared at the top level of a package are visible throughout it: they are entered
+   before anything is walked. *)
+fun predeclare senv (d : pos A.gDecl) =
+  let
+    fun enter_all mk_kind ids s = fold (fn id => fn s1 => enter mk_kind s1 id) ids s
+    fun values mk_kind specs =
+      fold (fn A.ConstSpec (ids, _, _, _) => enter_all mk_kind ids
+             | A.VarSpec (ids, _, _, _) => enter_all mk_kind ids
+             | A.TypeSpec (name, _, _, _, _) => (fn s => enter mk_kind s name)
+             | sp => (fn s => enter_import s sp)) specs senv
+  in
+    (case d of
+       A.DConst (specs, _, _) => values Const specs
+     | A.DVar (specs, _, _) => values Var specs
+     | A.DType (specs, _, _) => values Typ specs
+     | A.DImport (specs, _, _) => values Pkg specs
+     | A.DFunc (name, _, _, _, _) => enter Func senv name
+     | A.DMethod _ => senv)
+  end
+
+(* ---- Reading a package -----------------------------------------------------------------------
+   The files of a package that count are those the Go tool would build for the target: not the
+   tests, and those whose name (name_linux.go, name_windows_amd64.go) and "//go:build" line
+   match the operating system and the architecture. cgo, the race detector and the experiments
+   are off. *)
+
+val known_os =
+  ["aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios", "js", "linux",
+   "nacl", "netbsd", "openbsd", "plan9", "solaris", "wasip1", "windows", "zos"]
+
+val known_arch =
+  ["386", "amd64", "amd64p32", "arm", "armbe", "arm64", "arm64be", "loong64", "mips", "mipsle",
+   "mips64", "mips64le", "mips64p32", "mips64p32le", "ppc", "ppc64", "ppc64le", "riscv", "riscv64",
+   "s390", "s390x", "sparc", "sparc64", "wasm"]
+
+val unix_os =
+  ["aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios", "linux", "netbsd",
+   "openbsd", "solaris"]
+
+val go_version = 27
+
+fun os_matches os name =
+  name = os orelse (os = "android" andalso name = "linux") orelse
+  (os = "ios" andalso name = "darwin") orelse (os = "illumos" andalso name = "solaris")
+
+fun tag_true (os, arch) tag =
+  os_matches os tag orelse tag = arch orelse tag = "gc" orelse
+  (tag = "unix" andalso member (op =) unix_os os) orelse
+  (String.isPrefix "go1." tag andalso
+   (case Int.fromString (String.extract (tag, 4, NONE)) of SOME n => n <= go_version | NONE => false))
+
+(* The value of a "//go:build" expression: ||, &&, ! and parentheses over tags. *)
+fun eval_build target (expr : string) : bool =
+  let
+    fun is_tag_char c = Char.isAlphaNum c orelse c = #"_" orelse c = #"."
+    fun tokens cs =
+      (case cs of
+         [] => []
+       | #"&" :: #"&" :: r => "&&" :: tokens r
+       | #"|" :: #"|" :: r => "||" :: tokens r
+       | c :: r =>
+           if c = #"(" orelse c = #")" orelse c = #"!" then str c :: tokens r
+           else if is_tag_char c then
+             String.implode (take_prefix is_tag_char cs) :: tokens (drop_prefix is_tag_char cs)
+           else tokens r)
+    fun p_or ts =
+      let val (a, ts1) = p_and ts
+      in (case ts1 of "||" :: r => let val (b, ts2) = p_or r in (a orelse b, ts2) end
+                    | _ => (a, ts1)) end
+    and p_and ts =
+      let val (a, ts1) = p_not ts
+      in (case ts1 of "&&" :: r => let val (b, ts2) = p_and r in (a andalso b, ts2) end
+                    | _ => (a, ts1)) end
+    and p_not ts =
+      (case ts of
+         "!" :: r => let val (a, ts1) = p_not r in (not a, ts1) end
+       | "(" :: r =>
+           let val (a, ts1) = p_or r
+           in (a, (case ts1 of ")" :: r' => r' | _ => ts1)) end
+       | t :: r => (tag_true target t, r)
+       | [] => (false, []))
+  in #1 (p_or (tokens (String.explode expr))) end
+
+(* The "//go:build" line of a file, if its header (comments before the package clause) has one. *)
+fun build_line (text : string) : string option =
+  let
+    fun scan lines in_block =
+      (case lines of
+         [] => NONE
+       | l :: r =>
+           let val t = String.concat (String.tokens (fn c => c = #"\r") l)
+               val t = String.implode (drop_prefix Char.isSpace (String.explode t))
+           in
+             if in_block then
+               scan r (not (String.isSubstring "*/" t))
+             else if t = "" then scan r false
+             else if String.isPrefix "//go:build " t then
+               SOME (String.extract (t, size "//go:build ", NONE))
+             else if String.isPrefix "//" t then scan r false
+             else if String.isPrefix "/*" t then scan r (not (String.isSubstring "*/" t))
+             else NONE
+           end)
+  in scan (String.fields (fn c => c = #"\n") text) false end
+
+(* The rules about the name of a file: name_$GOOS.go, name_$GOARCH.go, name_$GOOS_$GOARCH.go. *)
+fun name_matches (os, arch) (fname : string) : bool =
+  let
+    val base = Path.implode (Path.base (Path.explode fname))
+    val stem = if String.isSuffix ".go" base then String.substring (base, 0, size base - 3) else base
+  in
+    (case String.fields (fn c => c = #"_") stem of
+       [] => true
+     | _ :: [] => true
+     | _ :: rest =>
+         let val parts = (case rev rest of "test" :: r => r | r => r)   (* reversed *)
+         in
+           (case parts of
+              [] => true
+            | l :: more =>
+                if member (op =) known_arch l then
+                  (case more of
+                     p :: _ => if member (op =) known_os p then os_matches os p andalso arch = l
+                               else arch = l
+                   | [] => arch = l)
+                else if member (op =) known_os l then os_matches os l
+                else true)
+         end)
+  end
+
+fun is_exported name =
+  size name > 0 andalso Char.isUpper (String.sub (name, 0))
+
+val parse_ctxt = Proof_Context.init_global @{theory}
+
+(* The parsed declarations of a source file, whose positions name the file. *)
+fun parse_go_file path_str text : pos A.gDecl list option =
+  let
+    val pos = Position.line_file 1 path_str
+    val source = Input.source false text (pos, pos)
+  in
+    (case try (Go_Parse.parse_quiet Go_Parse.Entry_File parse_ctxt) source of
+       SOME (SOME (A.Source (A.File (_, ds, _)))) => SOME ds
+     | _ => NONE)
+  end
+
+(* The directory of an import path in the Go tree: its standard library, or its vendored copies. *)
+fun package_dir root path =
+  let
+    val elems = String.fields (fn c => c = #"/") path
+    val ok = not (null elems) andalso
+      forall (fn e => e <> "" andalso e <> "." andalso e <> ".." andalso
+                      not (String.isSubstring "\\" e)) elems
+    fun under_src prefix =
+      Path.appends (Path.explode root :: Path.basic "src" :: map Path.basic (prefix @ elems))
+  in
+    if not ok then NONE
+    else find_first File.is_dir [under_src [], under_src ["vendor"]]
+  end
+
+(* The declarations of the files of a package. *)
+fun package_files (root, os, arch) path : (string * pos A.gDecl list) list =
+  (case package_dir root path of
+     NONE => []
+   | SOME dir =>
+       let
+         val names = sort_strings (File.read_dir dir)
+         val cand = filter (fn n => String.isSuffix ".go" n andalso not (String.isSuffix "_test.go" n)
+                                    andalso not (String.isPrefix "_" n)
+                                    andalso not (String.isPrefix "." n)
+                                    andalso name_matches (os, arch) n) names
+       in
+         map_filter (fn n =>
+           Option.join (try (fn () =>
+             let
+               val file = Path.append dir (Path.basic n)
+               val text = File.read file
+               val tagged =
+                 (case build_line text of SOME e => eval_build (os, arch) e | NONE => true)
+             in
+               if tagged then Option.map (fn ds => (Path.implode file, ds))
+                                         (parse_go_file (Path.implode file) text)
+               else NONE
+             end) ())) cand
+       end)
+
+fun split_target tgt =
+  (case String.fields (fn c => c = #"\n") tgt of [r, o, a] => (r, o, a) | _ => ("", "", ""))
+
+(* The package (not its conversion) at an import path of the target. The conversion of its
+   declarations - types, functions, methods - is lazy, and so is that of the types of its
+   variables and constants. *)
+fun build_package tgt path : Pkg_Store.pkg option =
+  let
+    val target = split_target tgt
+    val parsed = package_files target path
+  in
+    if null parsed then NONE
+    else
+      let
+        val empty = set_target tgt empty_genv
+        val is_import = (fn A.DImport _ => true | _ => false)
+        val names_genv =
+          fold (fn (_, ds) => fold (fn d => fn g => predeclare g d) (filter (not o is_import) ds))
+            parsed empty
+        val members = names_of names_genv
+        val _ = Synchronized.change Pkg_Store.owners
+                  (Symtab.fold (fn (_, Typ p) => Symtab.update (Pkg_Store.k tgt (pos_key p), path)
+                                 | _ => I) members)
+        (* the scope of a file: the names of the package, and its own imports *)
+        fun file_genv ds = fold (fn d => fn g => if is_import d then predeclare g d else g) ds names_genv
+        val conv = Lazy.lazy (fn () =>
+          let
+            val results = map (fn (_, ds) => (ds, fold (fn d => fn g => register_decl g d) ds (file_genv ds)))
+                            parsed
+            val _ = Synchronized.change Pkg_Store.defs
+                      (fold (fn (_, g) => Symtab.fold (fn (key, d) => Symtab.update (Pkg_Store.k tgt key, d))
+                                            (defs_of g)) results)
+            val _ = Synchronized.change Pkg_Store.meths
+                      (fold (fn (_, g) => Symtab.fold (fn (key, m) => Symtab.update (Pkg_Store.k tgt key, m))
+                                            (meths_of g)) results)
+            val ftypes =
+              fold (fn (ds, g) => fold (fn A.DFunc (A.Ident (n, _, _), _, _, _, _) =>
+                                           (case Symtab.lookup (vtypes_of g) n of
+                                              SOME t => Symtab.update (n, t) | NONE => I)
+                                         | _ => I) ds) results Symtab.empty
+          in (results, {ftypes = ftypes}) end)
+        val conv' = Lazy.lazy (fn () => #2 (Lazy.force conv))
+        val vtys = Lazy.lazy (fn () =>
+          let
+            val (results, _) = Lazy.force conv
+            fun value_ids ds = maps (fn d => (case d of
+                A.DVar (sps, _, _) => maps (fn A.VarSpec (ids, _, _, _) => ids | _ => []) sps
+              | A.DConst (sps, _, _) => maps (fn A.ConstSpec (ids, _, _, _) => ids | _ => []) sps
+              | _ => [])) ds
+          in
+            fold (fn (ds, g) =>
+                    let
+                      val g1 = funpow 3 (fn g0 => fold (fn d => fn g' => register_values g' d) ds g0) g
+                    in
+                      fold (fn A.Ident (n, _, _) =>
+                              (case Symtab.lookup (vtypes_of g1) n of
+                                 SOME t => Symtab.update (n, t) | NONE => I)) (value_ids ds)
+                    end) results Symtab.empty
+          end)
+      in SOME (Pkg_Store.Pk {members = members, conv = conv', vtys = vtys}) end
+  end
+
+fun load_package tgt path : Pkg_Store.pkg option =
+  let val key = Pkg_Store.k tgt path
+  in
+    (case Symtab.lookup (Synchronized.value Pkg_Store.pkgs) key of
+       SOME r => r
+     | NONE =>
+         let val r = Option.join (try (build_package tgt) path)
+             val _ = Synchronized.change Pkg_Store.pkgs (Symtab.update (key, r))
+         in r end)
+  end
+
+(* The member "n" of the package at the import path "path": its kind (with the declaration site in
+   the file of the package) and its type. Only the exported members are seen. *)
+fun package_member genv path n : (ident_kind * ty) option =
+  let val tgt = target_of genv
+  in
+    if tgt = "" orelse not (is_exported n) then NONE
+    else
+      Option.join (try (fn () =>
+        (case load_package tgt path of
+           NONE => NONE
+         | SOME (Pkg_Store.Pk {members, conv, vtys}) =>
+             (case Symtab.lookup members n of
+                NONE => NONE
+              | SOME (k as Func _) =>
+                  SOME (k, the_default TUnknown (Symtab.lookup (#ftypes (Lazy.force conv)) n))
+              | SOME (k as Var _) =>
+                  SOME (k, the_default TUnknown (Symtab.lookup (Lazy.force vtys) n))
+              | SOME (k as Const _) =>
+                  SOME (k, the_default TUnknown (Symtab.lookup (Lazy.force vtys) n))
+              | SOME k => SOME (k, TUnknown)))) ())
+  end
+
+val _ = Pkg_Store.load_hook := load_package
+val _ = Pkg_Store.member_hook := package_member
+
+(* Where the packages are read from: the configuration of the theory, the environment of Go
+   ($GOROOT, $GOOS, $GOARCH), the usual places of an installation. *)
+val go_root = Attrib.setup_config_string \<^binding>\<open>go_root\<close> (K "")
+val go_os = Attrib.setup_config_string \<^binding>\<open>go_os\<close> (K "")
+val go_arch = Attrib.setup_config_string \<^binding>\<open>go_arch\<close> (K "")
+
+fun target_string thy =
+  let
+    fun first xs = the_default "" (find_first (fn x => x <> "") xs)
+    val has_src = (fn d => d <> "" andalso File.is_dir (Path.append (Path.explode d) (Path.basic "src")))
+    val root =
+      first [Config.get_global thy go_root, getenv "GOROOT"]
+      |> (fn r => if has_src r then r
+                  else the_default "" (find_first has_src
+                         ["/usr/local/go", "/opt/homebrew/opt/go/libexec", "/usr/lib/go",
+                          "/usr/share/go"]))
+    val os = first [Config.get_global thy go_os, getenv "GOOS",
+                    (case getenv "ISABELLE_PLATFORM_FAMILY" of
+                       "macos" => "darwin" | "windows" => "windows" | _ => "linux")]
+    val arch = first [Config.get_global thy go_arch, getenv "GOARCH",
+                      if String.isPrefix "arm64" (getenv "ISABELLE_PLATFORM64") then "arm64"
+                      else "amd64"]
+  in if root = "" then "" else space_implode "\n" [root, os, arch] end
+
 (* Hyperlinks the use of a member (a field or a method) at "use_pos" to its declaration. *)
 fun report_member (name, use_pos) kind =
   Position.report (name_range (name, use_pos))
@@ -1323,7 +1725,10 @@ fun walk_exp senv ctx expect (e : pos A.gExpr) : acts =
            val a = w e1
            val found =
              (case type_of senv e1 of
-                Val t => lookup_member senv n t
+                Val (TPkg path) =>
+                  Option.map (fn (kind, _) => (kind, TUnknown))
+                    (!Pkg_Store.member_hook senv path n)
+              | Val t => lookup_member senv n t
               | Ty t => (case lookup_member senv n t of
                            SOME (m as (Meth _, _)) => SOME m | _ => NONE))
            val _ = (case found of
@@ -1660,26 +2065,6 @@ and walk_decl senv ctx blk (d : pos A.gDecl) : genv * string list * acts =
          in ret (senv, blk, a) end)
   end
 
-(* The names declared at the top level of a package are visible throughout it: they are entered
-   before anything is walked. *)
-fun predeclare senv (d : pos A.gDecl) =
-  let
-    fun enter_all mk_kind ids s = fold (fn id => fn s1 => enter mk_kind s1 id) ids s
-    fun values mk_kind specs =
-      fold (fn A.ConstSpec (ids, _, _, _) => enter_all mk_kind ids
-             | A.VarSpec (ids, _, _, _) => enter_all mk_kind ids
-             | A.TypeSpec (name, _, _, _, _) => (fn s => enter mk_kind s name)
-             | sp => (fn s => enter_import s sp)) specs senv
-  in
-    (case d of
-       A.DConst (specs, _, _) => values Const specs
-     | A.DVar (specs, _, _) => values Var specs
-     | A.DType (specs, _, _) => values Typ specs
-     | A.DImport (specs, _, _) => values Pkg specs
-     | A.DFunc (name, _, _, _, _) => enter Func senv name
-     | A.DMethod _ => senv)
-  end
-
 fun walk_top senv ctx (decls : pos A.gDecl list) : genv * acts =
   let
     val senv0 = fold (fn d => fn s => predeclare s d) decls senv
@@ -1695,7 +2080,7 @@ fun walk_top senv ctx (decls : pos A.gDecl list) : genv * acts =
 
 fun analyse_and_eval0 (root : pos A.root) thy =
   let
-    val genv0 = get (Context.Theory thy)
+    val genv0 = set_target (target_string thy) (get (Context.Theory thy))
     (* The bottom frame is always the top-level root itself, so "ctx" is never empty. *)
     val ctx0 = [root]
     fun drop acts = (thy, acts)

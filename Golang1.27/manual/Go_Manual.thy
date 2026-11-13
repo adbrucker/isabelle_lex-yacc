@@ -267,7 +267,20 @@ text\<open>
     are visible in the signature and the body.
   \<^item> \<^bold>\<open>Imports\<close> declare the package name - the alias, or the last element of the import path
     (without a major version suffix) - at the import path; a use \<open>fmt.Println\<close> is hyperlinked
-    to it. The standard library is not seen by this pass.
+    to it. If a Go tree is found - the option \<open>go_root\<close> of the theory (\<open>declare [[go_root =
+    "/usr/local/go"]]\<close>), else \<open>$GOROOT\<close>, else the usual places of an installation - the
+    imported package is also \<^emph>\<open>read\<close>: the files of \<open>src/path\<close> (or \<open>src/vendor/path\<close>) that the Go
+    tool would build for the target, that is not the tests, not the files of another operating
+    system or architecture (by name, or by a \<open>//go:build\<close> line; cgo, the race detector and
+    the experiments are off), are parsed the first time the package is needed. A use
+    \<open>pkg.Name\<close> of an exported member is then hyperlinked to its declaration in that file - a click
+    opens the source of the standard library - and the types, functions and methods of the
+    package are known to the type pass like those of the program: \<open>var b strings.Builder\<close> gives
+    \<open>b.WriteString\<close> its link, and the type arguments of \<open>slices.Index(xs, v)\<close> are inferred. The
+    target is \<open>go_os\<close> and \<open>go_arch\<close> (default: \<open>$GOOS\<close> and \<open>$GOARCH\<close>, else those of the host). A
+    package is read once per session, whatever the number of theories. Without a Go tree, and for
+    a package that is not in it (a module, \<open>import "C"\<close>), nothing changes: the package name is
+    linked and nothing else; a dot import is not seen.
   \<^item> \<^bold>\<open>Selections are resolved with types, and only when that is certain.\<close> Fields and methods are
     declared (their declaration sites are reported) but not entered into the table, since they
     are reached by selection. A selection \<open>x.f\<close> is hyperlinked to the field or method \<open>f\<close> when
@@ -289,8 +302,9 @@ text\<open>
     from untyped constants by their default type; whatever is doubtful stays unknown). The keys
     of a composite literal are fields of its struct type, also in elided elements
     (\<open>[]T{{a: 1}}\<close>); the keys of a map literal are expressions. What is not known - the standard
-    library and every imported type - gives no link, and neither does a match that an embedded
-    type of unknown content could have provided nearer.
+    library when no Go tree is found, a module - gives no link, and neither does a match that an embedded
+    type of unknown content could have provided nearer. The types of imported packages are known
+    when the package is read (see \<^emph>\<open>Imports\<close> above).
   \<^item> \<^bold>\<open>The top level persists.\<close> After \<open>go\<close> has analysed a source file (or \<open>go_decl\<close> a declaration),
     the names it declares at the top level, imports included, stay in \<open>genv\<close> for the following
     commands, as the files of a package do for each other. Nothing else does.
@@ -745,7 +759,7 @@ text\<open>
   \<^item> \<^bold>\<open>No semantics.\<close> There is no type checker, no method sets, no constant evaluation (\<open>iota\<close>
     is a name), no escape analysis. A name that resolves nowhere is silently left unmarked, a
     selection \<open>x.f\<close> is resolved only through types the pass knows (see \<open>\<section>2.2\<close>: a package
-    member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close>, and nothing is known about the standard library), the names of a function type's
+    member \<open>pkg.Name\<close> hyperlinks \<open>pkg\<close> and, if a Go tree is found, the member), the names of a function type's
     parameters are declared nowhere, and the keys of a composite literal are resolved only when
     the type of the literal is known.
   \<^item> \<^bold>\<open>Contract-free.\<close> Go has no contract language, and the front-end adds none: what a
@@ -779,9 +793,9 @@ text\<open>
   \<open>\<section>6\<close> as missing is, in every case, a scoping decision rather than an accident: the natural
   next steps are a semantic backend that translates Go programs into HOL - the antiquotations of
   \<open>\<section>2.5\<close> then state and discharge the specifications in the comments next to the program, as
-  the \<open>lemma\<close> above - and, on the analysis side, the loading of imported packages, which would
-  extend the type information the resolution of selections already has to the standard
-  library.
+  the \<open>lemma\<close> above - and, on the analysis side, the packages of modules (and of
+  \<open>GOPATH\<close>), dot imports, and the loading of a package from a stub instead of its sources,
+  which would extend the type information the resolution of selections already has.
 
   \pagebreak
 \<close>
