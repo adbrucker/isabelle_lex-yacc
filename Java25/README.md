@@ -91,6 +91,7 @@ end
 | `Java_AnaEval.thy` | scoped analysis: hyperlinking, navigation, antiquotation dispatch, standard antiquotations |
 | `Java_Tests.thy` | parser-level tests (round trip, idempotence, the decisions of the stream, rejection) and the JDK corpus |
 | `Java_Cmd_Tests.thy` | command-level tests: binding, navigation, levels, `java_file`, export, backend |
+| `manual/` | the manual (`Java_Manual.thy`, a sub-session `Java_Manual` with live examples; `ROOTS` makes it visible to `-d Java25`) |
 | `examples/` | Java programs (`Hello`, `Stack`, `Shapes`, `Flow`, a compact source file, a module declaration), read by `java_file` in the tests |
 
 ## Building
@@ -101,6 +102,12 @@ them. Isabelle2026 is the supported version.
 
 ```sh
 isabelle build -d Java25 Java25      # all theories and tests
+```
+
+The manual, with live examples run against the real commands, is a sub-session:
+
+```sh
+isabelle build -d Java25 Java_Manual     # writes Java25/manual/output/document.pdf
 ```
 
 To work interactively, open a theory importing `Java` with `isabelle jedit -d Java25 -l Java25`.
