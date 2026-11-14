@@ -2,40 +2,42 @@
 *~
 output
 
+# Export output of the front-ends: the paths are those below The_Isabelle_PL_DocMod_Toolkit/, the
+# comments name the front-end folders inside it.
 # c11_export_h/c11_export_c output (C11/*.thy worked examples regenerate
 # these on every build) - not C11/examples/*.c, which are genuine fixtures
-/C11/*.c
-/C11/*.h
+/The_Isabelle_PL_DocMod_Toolkit/C11/*.c
+/The_Isabelle_PL_DocMod_Toolkit/C11/*.h
 
 # occam2_export output of Occam2_Cmd_Tests.thy (regenerated on every build)
-/occam2/*.occ
-/occam2/manual/*.occ
+/The_Isabelle_PL_DocMod_Toolkit/occam2/*.occ
+/The_Isabelle_PL_DocMod_Toolkit/occam2/manual/*.occ
 
 # scala3_export output of Scala3_Cmd_Tests.thy (regenerated on every build)
-/scala3/*.scala
+/The_Isabelle_PL_DocMod_Toolkit/scala3/*.scala
 
 # microrust_export output of MicroRust_Cmd_Tests.thy (regenerated on every build) - not
 # MicroRust/examples/*.rs, which are genuine fixtures
-/MicroRust/*.rs
-/MicroRust/manual/*.rs
-/scala3/manual/*.scala
+/The_Isabelle_PL_DocMod_Toolkit/MicroRust/*.rs
+/The_Isabelle_PL_DocMod_Toolkit/MicroRust/manual/*.rs
+/The_Isabelle_PL_DocMod_Toolkit/scala3/manual/*.scala
 
 # adaspark_export output of AdaSpark_Cmd_Tests.thy and the manual (regenerated on every build) - not
 # AdaSpark/examples/*.ads|*.adb, which are genuine fixtures
-/AdaSpark/*.ada
-/AdaSpark/manual/*.ada
+/The_Isabelle_PL_DocMod_Toolkit/AdaSpark/*.ada
+/The_Isabelle_PL_DocMod_Toolkit/AdaSpark/manual/*.ada
 
 # go_export output of Go_Cmd_Tests.thy and the manual (regenerated on every build) - not Golang1.27/examples/*.go,
 # which are genuine fixtures
-/Golang1.27/*.go
-/Golang1.27/manual/*.go
+/The_Isabelle_PL_DocMod_Toolkit/Golang1.27/*.go
+/The_Isabelle_PL_DocMod_Toolkit/Golang1.27/manual/*.go
 
 # java_export output of Java25/Java_Cmd_Tests.thy (regenerated on every build) - not
 # Java25/examples/*.java, which are genuine fixtures
-/Java25/*.java
-/Java25/manual/*.java
+/The_Isabelle_PL_DocMod_Toolkit/Java25/*.java
+/The_Isabelle_PL_DocMod_Toolkit/Java25/manual/*.java
 
 # arm_export output of ARM_CortexM7/ARM_Cmd_Tests.thy and the manual (regenerated on every build) - not
 # ARM_CortexM7/examples/*.s, which are genuine fixtures
-/ARM_CortexM7/*.s
-/ARM_CortexM7/manual/*.s
+/The_Isabelle_PL_DocMod_Toolkit/ARM_CortexM7/*.s
+/The_Isabelle_PL_DocMod_Toolkit/ARM_CortexM7/manual/*.s

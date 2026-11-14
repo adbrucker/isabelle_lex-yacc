@@ -1,0 +1,21 @@
+chapter AFP
+
+(* Independent of the parent "../../Isabelle_Lex-Yacc" session and of the other front-ends
+   ("../C11", "../occam2", "../scala3", "../MicroRust", "../AdaSpark", "../Golang1.27",
+   "../Java25"): the "directories" entry reaches "LexYacc.thy"/"YaccLib.thy" for
+   "ARM_Parser.thy"'s own relative import, which makes the sessions unable to share one build
+   graph. Build with "isabelle build -d ARM_CortexM7 ARM_CortexM7" - never together with the other
+   front-ends in the same invocation. "ARM_CortexM7/ROOTS" makes the manual's sub-session visible
+   to "-d ARM_CortexM7". *)
+session "ARM_CortexM7" (AFP) = HOL +
+  options [timeout = 1200]
+  directories
+    "../../Isabelle_Lex-Yacc"
+  theories
+    ARM_Ast
+    ARM_Parser
+    ARM_Env
+    ARM_AnaEval
+    ARM (global)
+    ARM_Tests
+    ARM_Cmd_Tests

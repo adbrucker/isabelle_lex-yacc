@@ -1,0 +1,20 @@
+chapter AFP
+
+(* Independent of the parent "../../Isabelle_Lex-Yacc" session and of the other front-ends
+   ("../C11", "../occam2", "../scala3", "../MicroRust", "../AdaSpark", "../Golang1.27"): the
+   "directories" entry reaches "LexYacc.thy"/"YaccLib.thy" for "Java_Parser.thy"'s own relative
+   import, which makes the sessions unable to share one build graph. Build with
+   "isabelle build -d Java25 Java25" - never together with the other front-ends in the same
+   invocation. "Java25/ROOTS" makes the manual's sub-session visible to "-d Java25". *)
+session "Java25" (AFP) = HOL +
+  options [timeout = 1200]
+  directories
+    "../../Isabelle_Lex-Yacc"
+  theories
+    Java_Ast
+    Java_Parser
+    Java_Env
+    Java_AnaEval
+    Java (global)
+    Java_Tests
+    Java_Cmd_Tests
